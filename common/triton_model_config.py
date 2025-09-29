@@ -3,15 +3,17 @@ import os
 import sys
 
 if len(sys.argv) < 2:
-    print("Usage: python extract_model.py <onnx_model_relative_path>")
+    print("Usage: python triton_model_config.py <onnx_model_relative_path>")
     sys.exit(1)
 
 model_path = sys.argv[1]
 
-#model_path = "data-drift-model/gaussian-credit-model/1/model.onnx"
 model      = onnx.load(model_path)
 model_name = os.path.basename(os.path.dirname(os.path.dirname(model_path)))
 config_pbtxt_path = os.path.dirname(os.path.dirname(model_path)) + "/config.pbtxt"
+
+print("model path: %s", model_path)
+print("config.pbtxt: %s", config_pbtxt_path)
 
 model_metadata = {
     "name": model_name,
@@ -47,6 +49,7 @@ for output in model.graph.output:
     }
     model_metadata["output"].append(output_info)
 
+print("model data: \n:", model_metadata)
 
 with open(config_pbtxt_path, "w") as f:
     f.write('name: "{}"\n'.format(model_metadata["name"]))
