@@ -20,6 +20,8 @@ spec:
       modelFormat:
         name: vLLM
       name: ""
+      args:
+      - --disable-sliding-window
       resources:
         limits:
           cpu: "10"
