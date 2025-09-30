@@ -217,7 +217,7 @@ for batch in {0..595..5}; do
   curl -sk \
   -H "Authorization: Bearer ${TOKEN}" \
   -H "Content-Type: application/json" \
-  -d data/data_batches/$batch.json \
+  -d @data/data_batches/$batch.json \
   "${MODEL_ROUTE}"
   sleep 1
 done

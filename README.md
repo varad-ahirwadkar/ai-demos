@@ -26,6 +26,7 @@ default-dsc   True
 In this demo, we will be using all the models from IBM Cloud S3 bucket.
 Create the [s3-secret](common/setup/s3-secret.yaml) with creds for the accessing the models.
 ```
+oc new-project trustyai-demo || oc project trustyai-demo
 oc apply -f common/setup/s3-secret.yaml
 ```
 

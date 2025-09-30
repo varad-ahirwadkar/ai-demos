@@ -14,11 +14,6 @@ Enable TrustyAI as a prerequisite by following these instructions - [Configure t
 oc new-project trustyai-demo || oc project trustyai-demo
 ```
 
-Create the [s3-secret](common/setup/s3-secret.yaml) with creds.
-```
-oc apply -f common/setup/s3-secret.yaml
-```
-
 Deploy the model
 ```
 oc process -n redhat-ods-applications vllm-cpu-runtime-template | oc create -f -
@@ -30,7 +25,8 @@ Wait for the model pod to spin up, should look something like `phi3-predictor-XX
 
 Then, in a new terminal tab, we can send some prompts to the model via the included `prompt.py` helper script.
 ```bash
-curl -ks -X POST "https://phi3-trustyai-demo.apps.rdr-varad-418.ocp-rhoai.com/v1/chat/completions"   -H 'accept: application/json'   -H 'Content-Type: application/json'   -d '{
+RAW_MODEL=https://$(oc get route phi3 -o jsonpath='{.spec.host}')
+curl -ks -X POST "$RAW_MODEL/v1/chat/completions" -H 'accept: application/json' -H 'Content-Type: application/json'   -d '{
     "model": "phi3",
     "messages": [
       {

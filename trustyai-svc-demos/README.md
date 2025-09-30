@@ -84,11 +84,8 @@ metadata:
 spec:
   storage:
     format: "DATABASE"
-    folder: "/inputs"
     size: "1Gi"
     databaseConfigurations: "mariadb-credentials"
-  data:
-    filename: "data.csv"
   metrics:
     schedule: "5s"
 EOF

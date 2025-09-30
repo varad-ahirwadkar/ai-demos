@@ -33,11 +33,25 @@ onnx_data_type_mapping = {
     11: "TYPE_FP64"
 }
 
+def get_input_dims(input, max_batch_size):
+    dims = []
+    for dim in input.type.tensor_type.shape.dim:
+        if dim.dim_value is not None and dim.dim_value > 0:
+            dims.append(dim.dim_value)
+        else:
+            dims.append(-1)
+
+    # Fix: remove leading -1 if batching is enabled
+    if max_batch_size > 0 and len(dims) > 0 and dims[0] == -1:
+        dims = dims[1:]
+
+    return dims
+
 for input in model.graph.input:
     input_info = {
         "name": input.name,
         "data_type": onnx_data_type_mapping[input.type.tensor_type.elem_type],
-        "dims": [dim.dim_value if (dim.dim_value is not None and dim.dim_value>0) else -1 for dim in input.type.tensor_type.shape.dim]
+        "dims": get_input_dims(input, model_metadata["max_batch_size"])
     }
     model_metadata["input"].append(input_info)
 
@@ -45,7 +59,7 @@ for output in model.graph.output:
     output_info = {
         "name": output.name,
         "data_type": onnx_data_type_mapping[output.type.tensor_type.elem_type],
-        "dims": [dim.dim_value if (dim.dim_value is not None and dim.dim_value>0) else -1 for dim in output.type.tensor_type.shape.dim]
+        "dims": get_input_dims(output, model_metadata["max_batch_size"])
     }
     model_metadata["output"].append(output_info)
 

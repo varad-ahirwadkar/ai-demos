@@ -48,7 +48,8 @@ Wait for the model pod to spin up, should look something like `phi3-predictor-XX
 You can test the model by sending some inferences to it:
 
 ```bash
-curl -ks -X POST "https://phi3-trustyai-demo.apps.rdr-varad-418.ocp-rhoai.com/v1/chat/completions"   -H 'accept: application/json'   -H 'Content-Type: application/json'   -d '{
+RAW_MODEL=https://$(oc get route phi3 -o jsonpath='{.spec.host}')
+curl -ks -X POST "$RAW_MODEL/v1/chat/completions" -H 'accept: application/json' -H 'Content-Type: application/json'   -d '{
     "model": "phi3",
     "messages": [
       {
