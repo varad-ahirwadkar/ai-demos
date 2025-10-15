@@ -1,75 +1,79 @@
-# Fraud detection Classification with ONNX Runtime via Triton Inference Server
+# Iris Classification with ONNX Runtime via Triton Inference Server
 
-This guide explains how to run an Fraud detection classification model using ONNX Runtime served via the Triton Inference Server. The Fraud detection dataset is a classic dataset in machine learning, and this example demonstrates how to deploy a trained model for inference using modern serving infrastructure.
+This guide explains how to run an Iris classification model using ONNX Runtime served via the Triton Inference Server. The Iris dataset is a classic dataset in machine learning, and this example demonstrates how to deploy a trained model for inference using modern serving infrastructure.
+
+## Prerequisites
 
 ## Train/Generate the model:
-Build ONNX build_env container image
-```
+Build ONNX build_env container image from root directory of ai-demos repo.
+```shell
+cd ..
 podman build . -t localhost/build_env
 ```
 
-Run the container to train and generate the model using ONNX runtime
-```
-mkdir -p $(pwd)/model_repository
-podman run --rm  --name fraud_detection -v $(pwd):/app:Z -v $(pwd)/model_repository:/app/model_repository \
-    --entrypoint="/bin/sh" localhost/build_env -c "cd /app && make train && make prepare"
-```
+Run the container to train iris application and generate the model using ONNX runtime. Execute the below command from root directory of ai-demos repo.
 
-> Note: This will persist the generated model file in the path `<current_dir>/model_repository/fraud/1/model.onnx`
-
-Generate Model configuration file for fraud_detection application dynamically
-```
-make generate-config
+```shell
+mkdir -p $(pwd)/iris/model_repository
+podman run --rm  --name iris -v $(pwd)/iris:/app:Z -v $(pwd)/Makefile:/app/Makefile:Z --entrypoint="/bin/sh" localhost/build_env -c "cd /app && make train APP=iris"
 ```
 
-< Note: This will persist the generated model config file in the path `<current_dir>/model_repository/fraud/config.pbtxt`
+> Note: This will generate a model by name model.onnx and save it in the path `ai-demos/iris/model_repository/iris/1/model.onnx`
+
+Generate Model configuration file for iris application dynamically
+```shell
+make generate-config APP=iris
+```
+
+< Note: This will persist the generated model config file in the path `ai-demos/iris/model_repository/iris/1/model.onnx`
 
 
-## Running the triton server with fraud detection example
+## Running the example application served from triton server
 
 Use the model file generated in previus step to be served from triton server by mounting **model_repository** directory
 
-```
-make run
+```shell
+make run APP=iris
 ```
 
 After successful execution of above commands, triton inference server will run inside container on HTTP port 8000
 
-### Testing fraud detection example against Triton inference server
+### Testing Iris classification example against Triton inference server
 Check the models loaded on the inference server
 
-```
+```shell
 curl -X POST  http://0.0.0.0:8000/v2/repository/index
 ```
 
 You can expect below response as an output
-```
-[{"name":"fraud","version":"1","state":"READY"}]
+```json
+[{"name":"iris","version":"1","state":"READY"}]
 ```
 
-Inference the model with the fraudulent data
-```
-curl -X POST  http://0.0.0.0:8000/v2/models/fraud/infer   -H "Content-Type: application/json"   -H "Accept: application/json" -d @sample-fraud.json
+Inference the model with the data
+```shell
+curl -X POST -k http://0.0.0.0:8000/v2/models/iris/infer   -H "Content-Type: application/json"   -H "Accept: application/json" -d @data.json
 ```
 
 Sample output
 ```json
 {
-  "model_name":"fraud",
+  "model_name":"iris",
   "model_version":"1",
   "outputs":[
   {
     "name":"label",
     "datatype":"INT64",
     "shape":[1,1],
-    "data":[1]
+    "data":[0]
   },
   {
     "name":"probabilities",
     "datatype":"FP32",
-    "shape":[1,2],
-    "data":[4.172325134277344e-7,0.9999995827674866]
-  }]
+    "shape":[1,3],
+    "data":[1.0000001192092896,0.0,0.0]
+  }
+  ]
 }
 ```
 
@@ -109,24 +113,24 @@ Get the route from the `oc get route` command and use it to make inference reque
 In this example route is:
 
 ```
-fraud-mkumatag.apps.abhinav-rabari-21.ibm.com
+iris-mkumatag.apps.abhinav-rabari-21.ibm.com
 ```
 
 List the models:
 
 ```
-curl -X POST -k https://fraud-mkumatag.apps.abhinav-rabari-21.ibm.com/v2/repository/index
+curl -X POST -k https://iris-mkumatag.apps.abhinav-rabari-21.ibm.com/v2/repository/index
 ```
 
 Inference the model with the data
 ```
-curl -X POST -k https://fraud-mkumatag.apps.abhinav-rabari-21.ibm.com/v2/models/fraud/infer   -H "Content-Type: application/json"   -H "Accept: application/json" -d @sample-fraud.json
+curl -X POST -k https://iris-mkumatag.apps.abhinav-rabari-21.ibm.com/v2/models/iris/infer   -H "Content-Type: application/json"   -H "Accept: application/json" -d @data.json
 ```
 
 Sample formatted output:
 ```json
 {
-  "model_name": "fraud",
+  "model_name": "iris",
   "model_version": "1",
   "outputs": [
     {
@@ -137,7 +141,7 @@ Sample formatted output:
         1
       ],
       "data": [
-        1
+        0
       ]
     },
     {
@@ -145,11 +149,12 @@ Sample formatted output:
       "datatype": "FP32",
       "shape": [
         1,
-        2
+        3
       ],
       "data": [
+        1,
         0,
-        1
+        0
       ]
     }
   ]
