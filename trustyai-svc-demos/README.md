@@ -4,6 +4,30 @@ This guide provides steps to enable and deploy the TrustyAI component in RHOAI.
 ### Prerequisite
 If the TrustyAI component is not enabled in RHOAI, please follow these steps - [Configure the RHOAI for RawDeployment](../README.md)  
 
+Configuring monitoring of user-defined projects - [Configure Monitoring](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/2.25/html/managing_and_monitoring_models/managing_and_monitoring_models_on_the_single_model_serving_platform#configuring-monitoring-for-the-single-model-serving-platform_cluster-admin)  
+```
+oc create -f - <<EOF 
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    enableUserWorkload: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-workload-monitoring-config
+  namespace: openshift-user-workload-monitoring
+data:
+  config.yaml: |
+    prometheus:
+      logLevel: debug
+      retention: 15d
+EOF
+```
 ---
 
 ### 1. Enable TrustyAI for RawDeployment
