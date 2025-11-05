@@ -1,0 +1,5 @@
+numpy==2.3.3
+packaging==25.0
+pandas==2.3.2
+onnxscript
+torch==2.7.1
