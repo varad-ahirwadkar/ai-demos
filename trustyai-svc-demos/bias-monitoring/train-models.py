@@ -24,7 +24,6 @@ EPOCHS = 16
 INPUT_DTYPE = np.float64
 OUTPUT_DTYPE = np.int64
 
-
 def download_dataset():
     try:
         raw_file_url="https://raw.githubusercontent.com/trustyai-explainability/model-collection/refs/heads/main/loan-model-alpha-beta/data/data_truncated.csv"
@@ -329,7 +328,7 @@ output [
 def save_models(biased_model, unbiased_model):
 
     # Model configuration parameters
-    max_batch_size = 0  # 0 indicates dynamic/variable batch size is handled by the model itself
+    max_batch_size = 0  # 0 indicates variable batch size is handled by the model itself
     input_name = "customer_data_input"
     input_shape = [-1, 11] # [-1] indicates variable batch size
     output_name = "predict"
@@ -427,7 +426,7 @@ def save_data_batches(combined_train_test, batch_sizes):
 
 # === MAIN =========================================================================================
 if __name__ == "__main__":
-    # Create necessary directories
+    # Create necessary directories and download the data
     os.makedirs(os.path.join("data", "batches"), exist_ok=True)
     download_dataset()
 

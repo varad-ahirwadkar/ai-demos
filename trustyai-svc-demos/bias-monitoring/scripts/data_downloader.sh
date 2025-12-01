@@ -26,7 +26,6 @@ if ! command -v curl &> /dev/null || ! command -v unzip &> /dev/null; then
     exit 1
 fi
 
-# Prepare Variables
 # Extract the 'repo' part from the URL (e.g., "user/repo")
 REPO_NAME_WITH_USER=$(basename "$REPO_URL")
 TEMP_ZIP_FILE="${REPO_NAME_WITH_USER}-${BRANCH}.zip"
@@ -68,9 +67,7 @@ TEMP_EXTRACT_DIR="__temp_gh_extract_$$"
 mkdir -p "${TEMP_EXTRACT_DIR}"
 
 # Unzip only the files matching the desired path structure into the temp dir.
-# The pattern must include the root directory created by the zip file.
 if ! unzip -q "${TEMP_ZIP_FILE}" "${UNZIP_ROOT_DIR}/${DIR_PATH}/*" -d "${TEMP_EXTRACT_DIR}"; then
-    # This might happen if the directory is empty or the path is slightly off.
     echo "Warning: Initial extraction failed. Checking for files at the root of the path."
 fi
 

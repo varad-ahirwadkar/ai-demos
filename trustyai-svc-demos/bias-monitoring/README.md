@@ -60,11 +60,24 @@ export TOKEN=$(oc create token user-one)
 
 ### Building the Triton ONNX models for Bias Monitoring
 
-1. Set up the Python environment
+1. Set up the Python 3.12 environment
 ```
+# Create and activate a virtual environment
 python -m venv demo
 source demo/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
+
+# For ppc64le architecture, use the extra index for installing dependencies:
+pip install -r requirements.txt --prefer-binary --extra-index-url=https://wheels.developerfirst.ibm.com/ppc64le/linux
+```
+Note:
+If you installed dependencies using
+`--extra-index-url=https://wheels.developerfirst.ibm.com/ppc64le/linux`,
+make sure to set the `LD_LIBRARY_PATH` correctly for `libopenblas` and `libprotobuf`:
+```
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/<path>/python3.12/site-packages/openblas/lib/:/<path>/python3.12/site-packages/libprotobuf/lib64/
 ```
 
 2. Build the models
