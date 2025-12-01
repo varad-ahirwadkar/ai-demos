@@ -48,8 +48,9 @@ Demo - [Lemonade Stand Demo](guardails-lemonade-stand-demo/)
 How to detect if the production data your models are receiving matches the data they were trained on.  
 Demo - [Data Drift Demo](trustyai-svc-demos/data-drift/)
 
-#### 2. Bias Monitoring Demo [Coming Soon]  
+#### 2. Bias Monitoring Demo 
 How to use TrustyAI to examine your deployed models for unfair biases.  
+Demo - [Bias Monitoring Demo](trustyai-svc-demos/bias-monitoring/)
 
 #### 3. Anomaly Detection [Coming Soon] 
 How to identify and log anomalous inbound data, such as to clean or enrich your training data.  
