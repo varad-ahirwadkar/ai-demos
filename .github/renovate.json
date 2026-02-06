@@ -1,9 +1,12 @@
 {
-  "extends": ["config:base"],
-  "branchPrefix": "renovate/",
-  "onboarding": false,
-  "repositories": ["varad-ahirwadkar/ai-demos"],
-  "baseBranches": ["main","ta-eval-demo"],
-  "rebaseWhen": "conflicted",
-  "labels": ["dependencies"],
+    "extends": ["config:base"],
+    "branchPrefix": "renovate/",
+    "onboarding": false,
+    "repositories": ["IBM/ai-demos"],
+    "baseBranches": ["main"],
+    "rebaseWhen": "conflicted",
+    "labels": ["dependencies", "renovate"],
+    "automerge": false,
+    "assignees": ["varad-ahirwadkar"],
+    "reviewers": ["varad-ahirwadkar"]
 }
