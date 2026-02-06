@@ -1,6 +1,9 @@
 {
   "extends": ["config:base"],
-  "branchPrefix": "ta-",
+  "branchPrefix": "renovate/",
   "onboarding": false,
-  "repositories": ["varad-ahirwadkar/ai-demos"]
+  "repositories": ["varad-ahirwadkar/ai-demos"],
+  "baseBranches": ["main","ta-eval-demo"],
+  "rebaseWhen": "conflicted",
+  "labels": ["dependencies"],
 }
