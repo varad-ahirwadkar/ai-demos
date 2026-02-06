@@ -1,0 +1,6 @@
+{
+  "extends": ["config:base"],
+  "branchPrefix": "ta-",
+  "onboarding": false,
+  "repositories": ["varad-ahirwadkar/ai-demos"]
+}
