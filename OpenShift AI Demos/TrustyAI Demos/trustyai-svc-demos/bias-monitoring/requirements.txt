@@ -1,7 +1,7 @@
 libprotobuf==4.25.8 ; platform_machine == "ppc64le"
 numpy==2.3.1
 packaging==25.0
-pandas==2.2.3
+pandas==3.0.0
 requests==2.32.5
 onnxscript==0.5.6
 openblas==0.3.29 ; platform_machine == "ppc64le"
