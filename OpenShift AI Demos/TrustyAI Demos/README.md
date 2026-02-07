@@ -37,8 +37,9 @@ oc apply -f common/setup/s3-secret.yaml
 This demo will quickly get you started running an evaluation against an InferenceService which is already deployed and running in your namespace.  
 Demo - [Evaluating large language models](eval-quickstart-demo/)
 
-#### 2. Guardrail Demo  [Coming Soon]  
-A demo showing manual configuration of guardrails.
+#### 2. Guardrail Demo  
+A demo showing manual configuration of guardrails  
+Demo - [Lemonade Stand Demo](guardails-lemonade-stand-demo/)
 
 ## Machine Learning Models Demos
 #### 1. Data Drift Demo [Coming Soon]  
