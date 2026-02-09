@@ -4,6 +4,8 @@ The repository covers python based AI example applications like iris and fraud d
 The example applications can be containerized and their respective models can be trained by following the steps covered in [README.md](fraud_detection/README.md)
 
 
+The repository also includes TrustyAI demonstration examples.
+
 ## Contributing
 
 This project requires contributors to agree to the Developer Certificate of Origin.
