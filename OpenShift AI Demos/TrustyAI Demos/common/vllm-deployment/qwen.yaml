@@ -1,0 +1,32 @@
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  annotations:
+    openshift.io/display-name: qwen
+    opendatahub.io/connection-type-ref: s3
+    serving.kserve.io/deploymentMode: RawDeployment
+  labels:
+    opendatahub.io/dashboard: "true"
+    networking.kserve.io/visibility: exposed
+  name: qwen
+spec:
+  predictor:
+    automountServiceAccountToken: false
+    maxReplicas: 1
+    minReplicas: 1
+    model:
+      modelFormat:
+        name: vLLM
+      resources:
+        limits:
+          cpu: "32"
+          memory: 40Gi
+        requests:
+          cpu: "32"
+          memory: 40Gi
+      runtime: vllm-cpu-runtime
+      storage:
+        key: s3-creds
+        path: models/Qwen2.5-1.5B-Instruct
+    timeout: 900
