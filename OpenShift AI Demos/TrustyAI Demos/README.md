@@ -38,8 +38,13 @@ This demo will quickly get you started running an evaluation against an Inferenc
 Demo - [Evaluating large language models](eval-quickstart-demo/)
 
 #### 2. Guardrail Demo  
+**FMS Guardrail Demo:**  
 A demo showing manual configuration of guardrails  
 Demo - [Lemonade Stand Demo](guardails-lemonade-stand-demo/)
+
+**NeMo Guardrail Demo:**  
+Demonstrates conversational guardrails using NVIDIA NeMo Guardrails, including topic blocking, input validation, and sensitive data detection.  
+Demo - [NeMo-Guardrails Demo](nemo-guardrails-demo/)
 
 ## Machine Learning Models Demos
 #### 1. Data Drift Demo [Coming Soon]  
