@@ -1,0 +1,44 @@
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  annotations:
+    openshift.io/display-name: opt125m
+    opendatahub.io/connection-type-ref: s3
+    serving.kserve.io/deploymentMode: RawDeployment
+  labels:
+    opendatahub.io/dashboard: "true"
+    networking.kserve.io/visibility: exposed
+  name: opt125m
+spec:
+  predictor:
+    automountServiceAccountToken: false
+    maxReplicas: 1
+    minReplicas: 1
+    model:
+      modelFormat:
+        name: vLLM
+      args:
+      - --dtype=bfloat16
+      - --max-num-batched-tokens=8192
+      - --max-num-seqs=6
+      - --tokenizer=facebook/opt-125m
+      env:
+      - name: OMP_NUM_THREADS
+        value: "30"
+      - name: OPENBLAS_NUM_THREADS
+        value: "16"
+      - name: MKL_NUM_THREADS
+        value: "16"
+      resources:
+        limits:
+          cpu: "32"
+          memory: 40Gi
+        requests:
+          cpu: "6"
+          memory: 16Gi
+      runtime: vllm-cpu-runtime
+      storage:
+        key: s3-creds
+        path: models/opt-125m
+    timeout: 900
