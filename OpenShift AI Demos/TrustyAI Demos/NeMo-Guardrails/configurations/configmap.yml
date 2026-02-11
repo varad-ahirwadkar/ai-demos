@@ -8,27 +8,115 @@ data:
       - type: main
         engine: vllm_openai
         parameters:
-          openai_api_base: "http://opt125m-predictor.nemo.svc.cluster.local:8080/v1"
-          model_name: "opt125m"
+          openai_api_base: "http://qwen-predictor.nemo.svc.cluster.local:8080/v1"
+          model_name: "qwen"
+
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - EMAIL_ADDRESS
+          output:
+            entities:
+              - PERSON
+
+      input:
+        flows:
+          - detect sensitive data on input
+          - check message length
+          - check forbidden words
+
+      output:
+        flows:
+          - detect sensitive data on output
+
   rails.co: |
-    # define niceties
+    # colang_version: 1.x
+
+    # greetings
     define user express greeting
-        "hello"
-        "hi"
-        "what's up?"
+      "hello"
+      "hi"
+      "what's up?"
+
+    define bot express greeting
+      "Hello! Welcome to our service."
+
+    define bot ask how are you
+      "How can I help you today?"
+
     define flow greeting
-        user express greeting
-        bot express greeting
-        bot ask how are you
-    # define limits
+      user express greeting
+      bot express greeting
+      bot ask how are you
+      stop
+
+    # political topics
     define user ask politics
-        "what are your political beliefs?"
-        "thoughts on the president?"
-        "left wing"
-        "right wing"
+      "what are your political beliefs?"
+      "thoughts on the president?"
+      "left wing"
+      "right wing"
+
     define bot answer politics
-        "I'm a shopping assistant, I don't like to talk of politics."
+      "I'm a shopping assistant, I don't like to talk of politics."
+
     define flow politics
-        user ask politics
-        bot answer politics
-        bot offer help 
+      user ask politics
+      bot answer politics
+      bot offer help
+
+    # message length guardrail
+    define flow check message length
+      $length_result = execute check_message_length
+      if $length_result == "blocked_too_long"
+        bot inform message too long
+        stop
+      if $length_result == "warning_long"
+        bot warn message long
+
+    define bot inform message too long
+      "Please keep your message under 100 words for better assistance."
+
+    define bot warn message long
+      "That's quite detailed! I'll help as best I can."
+
+    # forbidden content guardrail
+    define flow check forbidden words
+      $forbidden_result = execute check_forbidden_words
+      if $forbidden_result != "allowed"
+        bot inform forbidden content
+        stop
+
+    define bot inform forbidden content
+      "I can't help with that type of request. Please ask something else."
+
+  actions.py: |
+    from typing import Optional
+    from nemoguardrails.actions import action
+
+    @action(is_system_action=True)
+    async def check_message_length(context: Optional[dict] = None) -> str:
+        user_message = (context or {}).get("user_message", "")
+        word_count = len(user_message.split())
+        MAX_WORDS = 100
+        if word_count > MAX_WORDS:
+            return "blocked_too_long"
+        elif word_count > MAX_WORDS * 0.8:
+            return "warning_long"
+        return "allowed"
+
+    @action(is_system_action=True)
+    async def check_forbidden_words(context: Optional[dict] = None) -> str:
+        user_message = (context or {}).get("user_message", "").lower()
+        forbidden_topics = {
+            "security": ["password", "hack", "exploit", "vulnerability"],
+            "inappropriate": ["violence", "illegal", "harmful"],
+            "competitors": ["chatgpt", "openai", "claude", "anthropic"],
+        }
+        for category, words in forbidden_topics.items():
+            for word in words:
+                if word in user_message:
+                    return f"blocked_{category}_{word}"
+        return "allowed"
