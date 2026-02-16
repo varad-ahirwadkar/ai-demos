@@ -11,8 +11,7 @@
     "reviewers": ["varad-ahirwadkar"],
     "python": {
     "registryUrls": [
-      "https://wheels.developerfirst.ibm.com/ppc64le/linux",
-      "https://console.redhat.com/api/pypi/public-rhai/rhoai/3.3/cpu-ubi9/simple/"
+      "https://wheels.developerfirst.ibm.com/ppc64le/linux"
     ]
   }
 }
