@@ -1,3 +1,5 @@
+--extra-index-url https://wheels.developerfirst.ibm.com/ppc64le/linux
+
 libprotobuf==4.25.8 ; platform_machine == "ppc64le"
 numpy==2.3.1
 onnxmltools==1.14.0
