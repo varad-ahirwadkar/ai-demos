@@ -1,5 +1,5 @@
 libprotobuf==4.25.8 ; platform_machine == "ppc64le"
-numpy==2.3.1
+numpy==2.4.2
 onnxmltools==1.14.0
 openblas==0.3.29 ; platform_machine == "ppc64le"
 packaging==25.0
