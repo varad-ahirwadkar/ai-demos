@@ -4,6 +4,7 @@
     "baseBranches": ["main", "ta-svc-bias", "ta-svc-drift"],
     "rebaseWhen": "conflicted",
     "labels": ["dependencies", "renovate"],
+    "repositories": ["varad-ahirwadkar/ai-demos"],
     "automerge": false,
     "assignees": ["varad-ahirwadkar"],
     "python": {
