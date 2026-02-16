@@ -1,6 +1,6 @@
 libprotobuf==4.25.8 ; platform_machine == "ppc64le"
 numpy==2.3.1
-packaging==25.0
+packaging==26.0
 pandas==2.2.3
 requests==2.32.5
 onnxscript==0.5.6
