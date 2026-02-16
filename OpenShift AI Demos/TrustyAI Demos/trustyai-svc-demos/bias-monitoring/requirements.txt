@@ -5,5 +5,5 @@ pandas==2.2.3
 requests==2.32.5
 onnxscript==0.5.6
 openblas==0.3.29 ; platform_machine == "ppc64le"
-scikit-learn==1.6.1
+scikit-learn==1.8.0
 torch==2.7.1
