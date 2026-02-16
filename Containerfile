@@ -1,4 +1,4 @@
-ARG BASE_UBI_IMAGE_TAG=9.6
+ARG BASE_UBI_IMAGE_TAG=9.7-1770267347
 ARG PYTHON_VERSION=3.12
 
 FROM registry.access.redhat.com/ubi9/ubi-minimal:${BASE_UBI_IMAGE_TAG} AS builder
