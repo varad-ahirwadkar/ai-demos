@@ -1,14 +1,11 @@
 {
     "extends": ["config:base"],
     "branchPrefix": "renovate/",
-    "onboarding": false,
-    "repositories": ["varad-ahirwadkar/ai-demos"],
     "baseBranches": ["main", "ta-svc-bias", "ta-svc-drift"],
     "rebaseWhen": "conflicted",
     "labels": ["dependencies", "renovate"],
     "automerge": false,
     "assignees": ["varad-ahirwadkar"],
-    "reviewers": ["varad-ahirwadkar"],
     "python": {
     "registryUrls": [
       "https://console.redhat.com/api/pypi/public-rhai/rhoai/3.3/cpu-ubi9/simple/"
