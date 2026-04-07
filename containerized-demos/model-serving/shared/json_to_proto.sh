@@ -2,6 +2,7 @@
 
 PYTHON_VERSION=3.12
 CURR_DIR=$(pwd)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Downloading default model_config.proto file"
 curl https://raw.githubusercontent.com/triton-inference-server/common/refs/heads/main/protobuf/model_config.proto -o ${CURR_DIR}/model_config.proto
@@ -15,7 +16,7 @@ echo "Generate python protobuf definition file.."
 protoc --python_out=. model_config.proto
 
 echo "Convert json model configuration file to protobuf format"
-python${PYTHON_VERSION} json_to_proto.py
+PYTHONPATH=${CURR_DIR}:${PYTHONPATH} python${PYTHON_VERSION} ${SCRIPT_DIR}/json_to_proto.py
 echo "Successfully generated config.pbtxt from json file.."
 
 exit 0
