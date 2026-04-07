@@ -1,0 +1,90 @@
+# Colang 1.x - TechGear Electronics Store Assistant
+# Defines greeting flow, general conversation flow, and guardrails
+
+# ============================================================================
+# GREETING FLOW (Predefined Responses)
+# ============================================================================
+
+define user express greeting
+    "hello"
+    "hi"
+    "hey"
+    "hi there"
+    "hi, how are you?"
+
+define bot express greeting
+    "Hello! Welcome to TechGear Electronics."
+
+define bot introduce store
+    "We have two great products: the TechGear Pro 15 laptop and TechGear Phone X1. How can I help you today?"
+
+define flow greeting
+    user express greeting
+    bot express greeting
+    bot introduce store
+    stop
+
+# ============================================================================
+# GENERAL CONVERSATION FLOW (LLM-Generated Responses)
+# ============================================================================
+
+# Wildcard pattern matches any user input not caught by other flows
+define user ask general question
+    "..."
+
+# Undefined 'bot provide response' triggers LLM to generate response using instructions
+define flow general conversation
+    user ask general question
+    bot provide response
+
+# ============================================================================
+# GUARDRAIL: COMPETITOR BLOCKING
+# ============================================================================
+
+define flow check competitor mentions
+    $competitor_result = execute check_competitor_mentions
+    if $competitor_result != "allowed"
+    bot redirect from competitor
+    stop
+
+define bot redirect from competitor
+    "I appreciate your interest, but I can only provide information about TechGear products. However, I'd be happy to help you find a comparable TechGear product that meets your needs!"
+
+# ============================================================================
+# GUARDRAIL: OUT-OF-SCOPE FILTERING
+# ============================================================================
+
+define flow check out of scope requests
+    $scope_result = execute check_out_of_scope
+    if $scope_result != "allowed"
+    bot decline out of scope
+    stop
+
+define bot decline out of scope
+    "I'm a TechGear Electronics assistant and can only help with product inquiries and tech support. Is there anything tech-related I can help you with?"
+
+# ============================================================================
+# GUARDRAIL: MESSAGE LENGTH
+# ============================================================================
+
+define flow check message length
+    $length_result = execute check_message_length
+    if $length_result == "blocked_too_long"
+    bot inform message too long
+    stop
+
+define bot inform message too long
+    "Your message is quite long. Could you please break it down into smaller questions?"
+
+# ============================================================================
+# GUARDRAIL: CONTENT FILTERING
+# ============================================================================
+
+define flow check forbidden content
+    $forbidden_result = execute check_forbidden_content
+    if $forbidden_result != "allowed"
+    bot inform forbidden content
+    stop
+
+define bot inform forbidden content
+    "I can't assist with that type of request. Please ask about our products or tech support."
