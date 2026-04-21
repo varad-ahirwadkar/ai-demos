@@ -1,0 +1,25 @@
+# Containerfile for TechMart MCP Server
+FROM python:3.12-slim
+
+LABEL name="techmart-mcp-server" \
+      version="1.0" \
+      description="TechMart Orders MCP Server"
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt --extra-index=https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple
+
+# Copy application files
+COPY scripts/orders_mcp_server.py .
+COPY data/orders.csv .
+
+# Expose MCP server port
+EXPOSE 9001
+
+# Run the MCP server
+CMD ["fastmcp", "run", "orders_mcp_server.py", "--transport", "sse", "--host", "0.0.0.0", "--port", "9001"]
