@@ -1,0 +1,19 @@
+# Containerfile for TechMart Database Initialization Job
+FROM python:3.12-slim
+
+LABEL name="techmart-db-init" \
+      version="1.0" \
+      description="TechMart Database Initialization Container"
+
+# Install PostgreSQL client and Python dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends postgresql-client && \
+    pip install --no-cache-dir psycopg2-binary && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Container will run scripts mounted from ConfigMaps
+CMD ["/bin/bash"]
