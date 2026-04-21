@@ -1,0 +1,36 @@
+# TechMart Customer Service UI - Containerfile
+FROM registry.access.redhat.com/ubi9/python-312:latest
+
+USER root
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt --extra-index=https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple
+
+# Copy application files
+COPY app/ /app/
+
+# Create necessary directories
+RUN mkdir -p /app/templates /app/static
+
+# Set permissions
+RUN chown -R 1001:0 /app && \
+    chmod -R g=u /app
+
+# Switch to non-root user
+USER 1001
+
+# Expose port
+EXPOSE 8080
+
+# Set environment variables
+ENV FLASK_APP=app.py
+ENV PYTHONUNBUFFERED=1
+
+# Run the application
+CMD ["python", "app.py"]

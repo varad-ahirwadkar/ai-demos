@@ -1,0 +1,20 @@
+# TechMart Customer Service Demo - Requirements
+
+# Web Framework
+Flask>=3.0.0
+
+# Llama Stack Client
+llama-stack-client>=0.7.1
+
+# HTTP Requests
+requests>=2.31.0
+
+# Database
+psycopg2-binary>=2.9.9
+
+# MCP - Model Context Protocol
+fastmcp>=0.2.0
+mcp>=1.0.0
+
+# Async support
+asyncio
