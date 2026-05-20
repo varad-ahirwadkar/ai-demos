@@ -3,6 +3,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from skl2onnx.common.data_types import FloatTensorType
 from skl2onnx import convert_sklearn
+from pathlib import Path
 
 print('Loading Iris data...')
 iris = load_iris()
@@ -19,5 +20,13 @@ options = {id(model): {'zipmap': False}}
 model_onnx = convert_sklearn(
     model, initial_types=initial_type, options=options)
 
-with open('model.onnx', 'wb') as f:
+# Create model directory structure
+model_dir = Path('model-repository/iris-classification/1')
+model_dir.mkdir(parents=True, exist_ok=True)
+
+# Save model directly to the target directory
+model_path = model_dir / 'model.onnx'
+with open(model_path, 'wb') as f:
     f.write(model_onnx.SerializeToString())
+
+print(f"\nModel saved successfully to: {model_path}")
