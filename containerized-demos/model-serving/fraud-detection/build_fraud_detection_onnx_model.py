@@ -6,6 +6,7 @@ from collections import Counter
 from sklearn.ensemble import RandomForestClassifier
 from skl2onnx import convert_sklearn
 from skl2onnx.common.data_types import FloatTensorType
+from pathlib import Path
 
 # Download dataset from the kaggle hub
 path = kagglehub.dataset_download("dhanushnarayananr/credit-card-fraud")
@@ -61,5 +62,13 @@ initial_type = [('float_input', FloatTensorType([None, X_train.shape[1]]))]
 options = {id(model): {'zipmap': False}}
 model_onnx = convert_sklearn(model, initial_types=initial_type, options=options)
 
-with open('model.onnx', 'wb') as f:
+# Create model directory structure
+model_dir = Path('model-repository/fraud-detection/1')
+model_dir.mkdir(parents=True, exist_ok=True)
+
+# Save model directly to the target directory
+model_path = model_dir / 'model.onnx'
+with open(model_path, 'wb') as f:
     f.write(model_onnx.SerializeToString())
+
+print(f"\nModel saved successfully to: {model_path}")
