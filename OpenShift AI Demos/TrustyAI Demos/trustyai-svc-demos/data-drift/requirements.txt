@@ -2,7 +2,7 @@ libprotobuf==4.25.8 ; platform_machine == "ppc64le"
 numpy==2.3.1
 onnxmltools==1.14.0
 openblas==0.3.29 ; platform_machine == "ppc64le"
-packaging==25.0
+packaging==26.2
 pandas==2.2.3
 protobuf==3.20.3
 skl2onnx==1.19.1
