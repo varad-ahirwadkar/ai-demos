@@ -29,24 +29,32 @@ Response
 ```
 
 ---
-### Prerequisites  
+### Prerequisites
 
-Enable TrustyAI by following:  [Configure the RHOAI for RawDeployment](../README.md)
+Complete the setup steps in the [OpenShift AI README](../../../../README.md#getting-started):
+1. Configure DSCInitialization and DataScienceCluster
+2. Create S3 secret with your storage credentials
 
 ### 1. Model Configuration
 
 We will be deploying the `Qwen2.5-1.5B-Instruct` model and use it as self-hosted vLLM backend (with an OpenAI-compatible API) for NeMo Guardrails.
 
 #### Deploy the Model
+
+Navigate to this demo directory:
+```bash
+cd ai-demos/openshift-ai/trustyai/guardrails/nemo-guardrails/techgear-assistant
+```
+
 Create and switch to the demo project:
 ```bash
 oc new-project trustyai-demo || oc project trustyai-demo
 ```
 
-Deploy the vLLM runtime and model:
+Deploy the vLLM runtime and model (see [Model Serving guide](../../../../model-serving/README.md) for details):
 ```bash
 oc process -n redhat-ods-applications vllm-cpu-runtime-template | oc create -f -
-oc apply -f ../common/vllm-deployment/qwen.yaml
+oc apply -f ../../../../model-serving/qwen.yaml
 ```
 
 Wait for the model pod to be ready, for example `qwen-predictor-XXXXXX`. It may take a approximately 5-8 minutes to be ready.

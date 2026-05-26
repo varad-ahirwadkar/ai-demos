@@ -5,19 +5,28 @@ agent so our customers can learn more about our products. We'll want to make sur
 the agent are family friendly, and that it does not promote our rival fruit juice vendors. 
 
 ---
-### Prerequisites  
+### Prerequisites
 
-Enable TrustyAI as a prerequisite by following these instructions - [Configure the RHOAI for RawDeployment](../README.md)
+Complete the setup steps in the [OpenShift AI README](../../../../README.md#getting-started):
+1. Configure DSCInitialization and DataScienceCluster
+2. Create S3 secret with your storage credentials
 
 ### 1. Deploy Phi3 Model
+
+Navigate to this demo directory:
+```bash
+cd ai-demos/openshift-ai/trustyai/guardrails/fms-guardrails/lemonade-stand
+```
+
+Create project:
 ```bash
 oc new-project trustyai-demo || oc project trustyai-demo
 ```
 
-Deploy the model
-```
+Deploy the model (see [Model Serving guide](../../../../model-serving/README.md) for details):
+```bash
 oc process -n redhat-ods-applications vllm-cpu-runtime-template | oc create -f -
-oc apply -f ../common/vllm-deployment/phi3.yaml
+oc apply -f ../../../../model-serving/phi3.yaml 
 ```
 
 Wait for the model pod to spin up, should look something like `phi3-predictor-XXXXXX`

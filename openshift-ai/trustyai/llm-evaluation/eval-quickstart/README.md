@@ -8,22 +8,26 @@ In this example, we'll deploy a Phi3 model and run an Arc-Easy evaluation agains
 
 ---
 ### Prerequisites
-1. Cluster with default Storage Class 
 
-2. Sufficient cluster resources available: 
-- At least 10 vCPUs available on a worker node
-- At least 24 GB of memory available on a worker node
+1. Complete the setup steps in the [OpenShift AI README](../../../README.md):
+   - Configure DSCInitialization and DataScienceCluster
+   - Create S3 secret with your storage credentials
 
-3. Before deploying LMEval job, please follow [Configure the RHOAI for RawDeployment](../README.md) and make sure that DSC should set following variables to allow downloading remote datasets
-```
-spec:
-  trustyai:
-    eval:
-      lmeval:
-        permitCodeExecution: true
-        permitOnline: true
-    managementState: Managed
-```
+2. **Important**: Ensure your DataScienceCluster ([`../../../shared/dsc.yaml`](../../../shared/dsc.yaml)) has TrustyAI eval settings configured to allow downloading remote datasets:
+   ```yaml
+   spec:
+     trustyai:
+       eval:
+         lmeval:
+           permitCodeExecution: allow
+           permitOnline: allow
+       managementState: Managed
+   ```
+
+3. Cluster requirements:
+   - Default Storage Class configured
+   - At least 10 vCPUs available on a worker node
+   - At least 24 GB of memory available on a worker node
 
 By default, TrustyAI prevents evaluation jobs from accessing the internet or running downloaded code.
 A typical evaluation job will download two items from Huggingface:
@@ -37,14 +41,21 @@ In our case, we'll be downloading:
 
 ---
 ### 1. Deploy Phi3 Model
+
+Navigate to this demo directory:
+```bash
+cd ai-demos/openshift-ai/trustyai/llm-evaluation/eval-quickstart
+```
+
+Create project:
 ```bash
 oc new-project trustyai-demo || oc project trustyai-demo
 ```
 
-Deploy the model
-```
+Deploy the model (see [Model Serving guide](../../../model-serving/README.md) for details):
+```bash
 oc process -n redhat-ods-applications vllm-cpu-runtime-template | oc create -f -
-oc apply -f ../common/vllm-deployment/phi3.yaml
+oc apply -f ../../../model-serving/phi3.yaml
 ```
 
 Wait for the model pod to spin up, should look something like `phi3-predictor-XXXXXX`
