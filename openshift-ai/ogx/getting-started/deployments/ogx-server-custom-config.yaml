@@ -179,7 +179,7 @@ metadata:
   name: ogxserver-with-inline-emb
 spec:
   distribution:
-    image: quay.io/vahirwad/llama-stack-dist:3.5-ea2-ogx
+    image: quay.io/rhoai/odh-ogx-core-rhel9:rhoai-3.5-ea.2
   overrideConfig:
     name: ogx-server-config-inline-emb
     key: config.yaml
@@ -193,11 +193,11 @@ spec:
         - name: POSTGRES_PORT
           value: "5432"
         - name: POSTGRES_DB
-          value: "llamastack"
+          value: "ogx"
         - name: POSTGRES_USER
-          value: "llamastack"
+          value: "ogx"
         - name: POSTGRES_PASSWORD
-          value: "llamastack"
+          value: "ogx"
         - name: VLLM_URL
           value: http://llama-32-3b-instruct-predictor.llama.svc.cluster.local:8080/v1
         - name: VLLM_TLS_VERIFY

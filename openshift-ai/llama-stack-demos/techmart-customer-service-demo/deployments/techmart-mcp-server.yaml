@@ -85,6 +85,4 @@ spec:
     name: techmart-mcp-server
   port:
     targetPort: sse
-  tls:
-    termination: edge
-    insecureEdgeTerminationPolicy: Redirect
+

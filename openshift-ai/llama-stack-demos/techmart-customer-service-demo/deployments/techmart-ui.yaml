@@ -26,7 +26,7 @@ spec:
               protocol: TCP
               name: http
           env:
-            - name: LLAMA_STACK_URL
+            - name: OGX_CONNECTION_URL
               value: "http://techmart-ogx-service.llama.svc.cluster.local:8321"
             - name: MCP_SERVER_URL
               value: "http://techmart-mcp-server.llama.svc.cluster.local:9001/sse"

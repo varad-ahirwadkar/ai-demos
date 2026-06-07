@@ -601,8 +601,8 @@
                 <h3>⚙️ System Status</h3>
                 <div class="status-panel" id="statusPanel">
                     <div class="status-item">
-                        <span>Llama Stack:</span>
-                        <span class="status-value" id="llamaStatus">Checking...</span>
+                        <span>OGX:</span>
+                        <span class="status-value" id="ogxStatus">Checking...</span>
                     </div>
                     <div class="status-item">
                         <span>MCP Server:</span>
@@ -946,8 +946,8 @@
                 const response = await fetch('/api/status');
                 const data = await response.json();
 
-                document.getElementById('llamaStatus').textContent = data.llama_stack.status;
-                document.getElementById('llamaStatus').className = `status-value ${data.llama_stack.status}`;
+                document.getElementById('ogxStatus').textContent = data.ogx.status;
+                document.getElementById('ogxStatus').className = `status-value ${data.ogx.status}`;
 
                 document.getElementById('mcpStatus').textContent = data.mcp_server.status;
                 document.getElementById('mcpStatus').className = `status-value ${data.mcp_server.status}`;

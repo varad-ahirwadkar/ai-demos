@@ -56,7 +56,7 @@ build_and_push() {
     fi
     
     echo -e "${YELLOW}Building image: ${image}${NC}"
-    podman build --platform linux/amd64,linux/arm64,linux/ppc64le --network host -f "${dockerfile}" -t "${image}" "${context}"
+    podman build --network host -f "${dockerfile}" -t "${image}" "${context}"
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ Build successful${NC}"

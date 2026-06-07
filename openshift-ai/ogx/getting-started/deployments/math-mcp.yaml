@@ -1,0 +1,67 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: math-mcp-server
+  labels:
+    app: math-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: math-mcp-server
+  template:
+    metadata:
+      labels:
+        app: math-mcp-server
+    spec:
+      containers:
+        - name: mcp-server
+          image: quay.io/vahirwad/mcp:mathserver-ppc
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 9000
+              protocol: TCP
+              name: sse
+          env:
+            - name: PORT
+              value: "9000"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: math-mcp-server
+  labels:
+    app: math-mcp-server
+spec:
+  selector:
+    app: math-mcp-server
+  ports:
+    - protocol: TCP
+      port: 9000
+      targetPort: 9000
+      name: sse
+  type: ClusterIP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: math-mcp-server
+  labels:
+    app: math-mcp-server
+spec:
+  to:
+    kind: Service
+    name: math-mcp-server
+  port:
+    targetPort: sse
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

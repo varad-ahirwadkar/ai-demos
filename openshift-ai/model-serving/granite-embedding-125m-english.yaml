@@ -3,20 +3,17 @@ kind: InferenceService
 metadata:
   annotations:
     modelFormat: vLLM
-    opendatahub.io/connection-path: models/llama-32-3b-instruct
+    opendatahub.io/connection-path: models/granite-embedding-125m-english
     opendatahub.io/connections: odh-bucket
     opendatahub.io/model-type: generative
-    openshift.io/display-name: llama-32-3b-instruct
+    openshift.io/display-name: granite-embeddings
     security.opendatahub.io/enable-auth: "false"
     serving.kserve.io/deploymentMode: Standard
     serving.kserve.io/stop: "false"
-  finalizers:
-  - odh.inferenceservice.finalizers
-  - inferenceservice.finalizers
   labels:
     networking.kserve.io/visibility: exposed
     opendatahub.io/dashboard: "true"
-  name: llama-32-3b-instruct
+  name: granite-embeddings
 spec:
   predictor:
     automountServiceAccountToken: false
@@ -26,27 +23,21 @@ spec:
     minReplicas: 1
     model:
       args:
-      - --enable-chunked-prefill
-      - --enable-auto-tool-choice
-      - --tool-call-parser=llama3_json
-      - --max-model-len=8192
-      - --chat-template=/app/data/template/tool_chat_template_llama3.2_json.jinja
-      env:
-      - name: VLLM_CPU_KVCACHE_SPACE
-        value: "14"
+      - --hf-overrides
+      - '{"is_matryoshka":true,"matryoshka_dimensions":[768]}'
       modelFormat:
         name: vLLM
       name: ""
       resources:
         limits:
-          cpu: "32"
-          memory: 48Gi
+          cpu: "8"
+          memory: 16Gi
         requests:
-          cpu: "32"
-          memory: 48Gi
+          cpu: "8"
+          memory: 16Gi
       runtime: vllm-cpu-runtime
       storage:
         key: odh-bucket
-        path: models/llama-32-3b-instruct
+        path: models/granite-embedding-125m-english
     serviceAccountName: odh-bucket-sa
     timeout: 600
