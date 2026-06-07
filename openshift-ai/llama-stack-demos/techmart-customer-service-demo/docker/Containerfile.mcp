@@ -12,7 +12,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt --extra-index=https://console.redhat.com/api/pypi/public-rhai/rhoai/3.4/cpu-ubi9/simple
+RUN pip install --no-cache-dir -r requirements.txt --extra-index=https://packages.redhat.com/api/pypi/public-rhai/rhoai/3.5-EA2/cpu-ubi9-test/simple
 
 # Copy application files
 COPY scripts/orders_mcp_server.py .

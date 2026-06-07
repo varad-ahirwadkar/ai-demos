@@ -1,18 +1,14 @@
-apiVersion: llamastack.io/v1alpha1
-kind: LlamaStackDistribution
+apiVersion: ogx.io/v1beta1
+kind: OGXServer
 metadata:
-  name: techmart-llama-stack
+  name: techmart-ogx
 spec:
-  replicas: 1
-  server:
-    podDisruptionBudget:
-      minAvailable: 1
-    autoscaling:
-      minReplicas: 1
-      maxReplicas: 1
-    targetCPUUtilizationPercentage: 20
-    targetMemoryUtilizationPercentage: 40
-    containerSpec:
+  distribution:
+    image: quay.io/vahirwad/llama-stack-dist:3.5-ea2-ogx
+  network:
+    port: 8321
+  workload:
+    overrides:
       env:
         # PostgreSQL metadata store (from secret)
         - name: POSTGRES_HOST
@@ -41,15 +37,7 @@ spec:
               name: postgres-credentials
               key: POSTGRES_PASSWORD
 
-        # Inline embeddings (sentence-transformers)
-        - name: ENABLE_SENTENCE_TRANSFORMERS
-          value: "true"
-        - name: EMBEDDING_PROVIDER
-          value: "sentence-transformers"
-
         # Remote LLM configuration
-        - name: INFERENCE_MODEL
-          value: "llama-32-3b-instruct"
         - name: VLLM_URL
           value: http://llama-32-3b-instruct-predictor.llama.svc.cluster.local:8080/v1
         - name: VLLM_TLS_VERIFY
@@ -59,17 +47,26 @@ spec:
         - name: VLLM_MAX_TOKENS
           value: "80"
 
-        # Ragas inline configuration
-        - name: TRUSTYAI_EMBEDDING_MODEL
-          value: sentence-transformers/ibm-granite/granite-embedding-125m-english
+        # Remote Vector DB configuration
+        - name: ENABLE_PGVECTOR
+          value: "pgvector"
+        - name: PGVECTOR_PORT
+          value: "5433"
+        - name: PGVECTOR_DB
+          value: "ogx"
+        - name: PGVECTOR_USER
+          value: "ogx"
+        - name: PGVECTOR_PASSWORD
+          value: "ogx"
+        - name: PGVECTOR_HOST
+          value: "10.20.180.75"
 
-        # Enable inline FAISS
-        - name: ENABLE_FAISS
-          value: "faiss"
-
-        - name: LLAMA_STACK_PORT
-          value: "8321"
-      name: llama-stack
-      port: 8321
-    distribution:
-      name: rh-dev
+        # Remote Embedding configuration 
+        - name: VLLM_EMBEDDING_URL
+          value: http://granite-embeddings-predictor.llama.svc.cluster.local:8080/v1
+        - name: EMBEDDING_MODEL
+          value: "granite-embeddings"
+        - name: EMBEDDING_PROVIDER_MODEL_ID
+          value: "granite-embeddings"
+        - name: EMBEDDING_DIMENSION
+          value: "768"

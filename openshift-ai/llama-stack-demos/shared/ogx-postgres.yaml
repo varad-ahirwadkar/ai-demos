@@ -1,30 +1,30 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: postgres
+  name: ogx-techmart-postgres
   labels:
-    app: postgres
+    app: ogx-techmart-postgres
 spec:
   containers:
     - name: postgres
       image: registry.redhat.io/rhel9/postgresql-16  #postgres:17
       env:
         - name: POSTGRESQL_USER
-          value: llamastack
+          value: ogx_techmart_user
         - name: POSTGRESQL_PASSWORD
-          value: llamastack
+          value: abc123
         - name: POSTGRESQL_DATABASE
-          value: llamastack
+          value: ogx_techmart_db
       ports:
         - containerPort: 5432
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres
+  name: ogx-techmart-postgres
 spec:
   selector:
-    app: postgres
+    app: ogx-techmart-postgres
   ports:
     - port: 5432
       targetPort: 5432
@@ -32,12 +32,12 @@ spec:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: postgres-credentials
+  name: ogx-techmart-postgres-credentials
 type: Opaque
 stringData:
-  POSTGRES_HOST: postgres.llama.svc.cluster.local
+  POSTGRES_HOST: ogx-techmart-postgres.llama.svc.cluster.local
   POSTGRES_PORT: "5432"
-  POSTGRES_DB: llamastack
-  POSTGRES_USER: llamastack
-  POSTGRES_PASSWORD: llamastack
+  POSTGRES_DB: ogx_techmart_db
+  POSTGRES_USER: ogx_techmart_user
+  POSTGRES_PASSWORD: abc123
 ---

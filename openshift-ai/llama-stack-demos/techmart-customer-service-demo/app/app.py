@@ -101,7 +101,7 @@ def get_or_create_vector_store():
             return None
         
         embedding_model_id = embedding_model.identifier
-        embedding_dimension = int(embedding_model.metadata.get("embedding_dimension", 384))
+        embedding_dimension = int(embedding_model.metadata.get("embedding_dimension", 768))
         
         # Create new vector store
         vector_store = client.vector_stores.create(
@@ -109,7 +109,7 @@ def get_or_create_vector_store():
             extra_body={
                 "embedding_model": embedding_model_id,
                 "embedding_dimension": embedding_dimension,
-                "provider_id": "faiss",
+                "provider_id": "pgvector",
             },
         )
         
