@@ -40,4 +40,3 @@ stringData:
   POSTGRES_DB: ogx
   POSTGRES_USER: ogx
   POSTGRES_PASSWORD: ogx
----

@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgvector-secret
+type: Opaque
+stringData:
+  POSTGRES_DB: ogx
+  POSTGRES_USER: ogx
+  POSTGRES_PASSWORD: ogx
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgvector
+spec:
+  selector:
+    app: pgvector
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pgvector
+spec:
+  serviceName: pgvector
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgvector
+
+  template:
+    metadata:
+      labels:
+        app: pgvector
+
+    spec:
+      volumes:
+        - name: postgres-run
+          emptyDir: {}
+
+      containers:
+        - name: postgres
+          image: quay.io/vahirwad/pgvector:pg16-ocp
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - postgres
+
+          args:
+            - "-c"
+            - "unix_socket_directories=/var/run/postgresql"
+
+          ports:
+            - containerPort: 5432
+
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-secret
+                  key: POSTGRES_DB
+
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-secret
+                  key: POSTGRES_USER
+
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pgvector-secret
+                  key: POSTGRES_PASSWORD
+
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+
+            - name: postgres-run
+              mountPath: /var/run/postgresql
+
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER"
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi

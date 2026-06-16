@@ -6,11 +6,11 @@ metadata:
     ogx.io/watch: "true"
 data:
   config.yaml: |
-    # OGX Server Configuration
     version: 2
     image_name: rh
     apis:
     - responses
+    - messages
     - batches
     - inference
     - tool_runtime
@@ -35,9 +35,46 @@ data:
           api_token: ${env.VLLM_EMBEDDING_API_TOKEN:=fake}
           tls_verify: ${env.VLLM_EMBEDDING_TLS_VERIFY:=true}
           refresh_models: ${env.VLLM_EMBEDDING_REFRESH_MODELS:=false}
-      - provider_id: sentence-transformers
+      - provider_id: ${env.ENABLE_SENTENCE_TRANSFORMERS:+sentence-transformers}
         provider_type: inline::sentence-transformers
         config: {}
+      - provider_id: ${env.AWS_BEARER_TOKEN_BEDROCK:+bedrock}
+        provider_type: remote::bedrock
+        config:
+          api_key: ${env.AWS_BEARER_TOKEN_BEDROCK:=}
+          region_name: ${env.AWS_DEFAULT_REGION:=us-east-2}
+      - provider_id: ${env.WATSONX_API_KEY:+watsonx}
+        provider_type: remote::watsonx
+        config:
+          base_url: ${env.WATSONX_BASE_URL:=https://us-south.ml.cloud.ibm.com}
+          api_key: ${env.WATSONX_API_KEY:=}
+          project_id: ${env.WATSONX_PROJECT_ID:=}
+      - provider_id: ${env.AZURE_API_KEY:+azure}
+        provider_type: remote::azure
+        config:
+          api_key: ${env.AZURE_API_KEY:=}
+          api_base: ${env.AZURE_API_BASE:=}
+          api_version: ${env.AZURE_API_VERSION:=}
+          api_type: ${env.AZURE_API_TYPE:=}
+      - provider_id: ${env.VERTEX_AI_PROJECT:+vertexai}
+        provider_type: remote::vertexai
+        config:
+          project: ${env.VERTEX_AI_PROJECT:=}
+      - provider_id: ${env.OPENAI_API_KEY:+openai}
+        provider_type: remote::openai
+        config:
+          api_key: ${env.OPENAI_API_KEY:=}
+          base_url: ${env.OPENAI_BASE_URL:=https://api.openai.com/v1}
+      - provider_id: ${env.ENABLE_GEMINI:+gemini}
+        provider_type: remote::gemini
+        config:
+          api_key: ${env.GEMINI_API_KEY:=}
+          access_token: ${env.GEMINI_ACCESS_TOKEN:=}
+          project: ${env.GEMINI_AI_PROJECT:=}
+      - provider_id: ${env.ANTHROPIC_API_KEY:+anthropic}
+        provider_type: remote::anthropic
+        config:
+          api_key: ${env.ANTHROPIC_API_KEY:=}
       vector_io:
       - provider_id: ${env.ENABLE_FAISS:+faiss}
         provider_type: inline::faiss
@@ -53,6 +90,46 @@ data:
           persistence:
             backend: kv_default
             namespace: vector_io::milvus
+      - provider_id: ${env.MILVUS_ENDPOINT:+milvus-remote}
+        provider_type: remote::milvus
+        config:
+          uri: ${env.MILVUS_ENDPOINT:=}
+          token: ${env.MILVUS_TOKEN:=}
+          secure: ${env.MILVUS_SECURE:=}
+          consistency_level: ${env.MILVUS_CONSISTENCY_LEVEL:=}
+          ca_pem_path: ${env.MILVUS_CA_PEM_PATH:=}
+          client_pem_path: ${env.MILVUS_CLIENT_PEM_PATH:=}
+          client_key_path: ${env.MILVUS_CLIENT_KEY_PATH:=}
+          persistence:
+            backend: kv_default
+            namespace: vector_io::milvus_remote
+      - provider_id: ${env.ENABLE_PGVECTOR:+pgvector}
+        provider_type: remote::pgvector
+        config:
+          host: ${env.PGVECTOR_HOST:=localhost}
+          port: ${env.PGVECTOR_PORT:=5432}
+          db: ${env.PGVECTOR_DB:=}
+          user: ${env.PGVECTOR_USER:=}
+          password: ${env.PGVECTOR_PASSWORD:=}
+          persistence:
+            backend: kv_default
+            namespace: vector_io::pgvector
+      - provider_id: ${env.ENABLE_QDRANT:+qdrant-remote}
+        provider_type: remote::qdrant
+        config:
+          location: ${env.QDRANT_LOCATION:=}
+          url: ${env.QDRANT_URL:=}
+          port: ${env.QDRANT_PORT:=6333}
+          grpc_port: ${env.QDRANT_GRPC_PORT:=6334}
+          prefer_grpc: ${env.QDRANT_PREFER_GRPC:=false}
+          https: ${env.QDRANT_HTTPS:=}
+          api_key: ${env.QDRANT_API_KEY:=}
+          prefix: ${env.QDRANT_PREFIX:=}
+          timeout: ${env.QDRANT_TIMEOUT:=}
+          host: ${env.QDRANT_HOST:=}
+          persistence:
+            backend: kv_default
+            namespace: vector_io::qdrant_remote
       responses:
       - provider_id: meta-reference
         provider_type: inline::builtin
@@ -66,7 +143,31 @@ data:
               table_name: agents_responses
               max_write_queue_size: 10000
               num_writers: 4
+      messages:
+      # Implements the Anthropic Messages API (/v1/messages). Native passthrough for
+      # providers that support it (e.g. vLLM); translates Anthropic <-> OpenAI Chat
+      # Completions for all other providers. Depends on the inference API.
+      - provider_id: builtin
+        provider_type: inline::builtin
+        config:
+          kvstore:
+            backend: kv_default
+            namespace: message_batches
       tool_runtime:
+      # NOTE: inline::file-search requires a 'files' provider at runtime
+      # (currently inline::localfs). Do not add inline::localfs to
+      # STRIPPED_PROVIDER_TYPES in build.py without also removing
+      # inline::file-search here.
+      - provider_id: brave-search
+        provider_type: remote::brave-search
+        config:
+          api_key: ${env.BRAVE_SEARCH_API_KEY:=}
+          max_results: 3
+      - provider_id: tavily-search
+        provider_type: remote::tavily-search
+        config:
+          api_key: ${env.TAVILY_SEARCH_API_KEY:=}
+          max_results: 3
       - provider_id: file-search
         provider_type: inline::file-search
         config: {}
@@ -79,6 +180,18 @@ data:
         provider_type: inline::localfs
         config:
           storage_dir: /opt/app-root/src/.ogx/distributions/rh/files
+          metadata_store:
+            backend: sql_default
+            table_name: files_metadata
+      - provider_id: ${env.ENABLE_S3:+s3}
+        provider_type: remote::s3
+        config:
+          bucket_name: ${env.S3_BUCKET_NAME:=}
+          region: ${env.AWS_DEFAULT_REGION:=us-east-1}
+          aws_access_key_id: ${env.AWS_ACCESS_KEY_ID:=}
+          aws_secret_access_key: ${env.AWS_SECRET_ACCESS_KEY:=}
+          endpoint_url: ${env.S3_ENDPOINT_URL:=}
+          auto_create_bucket: ${env.S3_AUTO_CREATE_BUCKET:=false}
           metadata_store:
             backend: sql_default
             table_name: files_metadata
@@ -128,6 +241,9 @@ data:
         connectors:
           table_name: connectors
           backend: sql_default
+        vector_stores:
+          backend: sql_default
+          table_name: vector_store_metadata
     registered_resources:
       models:
       - metadata:
@@ -150,6 +266,7 @@ data:
       enabled: true
     server:
       port: 8321
+      registry_refresh_interval_seconds: ${env.REGISTRY_REFRESH_INTERVAL_SECONDS:=300}
       auth:
         provider_config:
           type: ${env.AUTH_ISSUER:+oauth2_token}
@@ -176,10 +293,10 @@ data:
 apiVersion: ogx.io/v1beta1
 kind: OGXServer
 metadata:
-  name: ogxserver-with-inline-emb
+  name: ogxserver
 spec:
   distribution:
-    image: quay.io/rhoai/odh-ogx-core-rhel9:rhoai-3.5-ea.2
+    image: quay.io/rhoai/odh-ogx-core-rhel9@sha256:3f1d8935ebc92c92e2f57086ff75ca8dfc37fc7a839be259137ab5621b2ec37a
   overrideConfig:
     name: ogx-server-config-inline-emb
     key: config.yaml
@@ -189,26 +306,37 @@ spec:
     overrides:
       env:
         - name: POSTGRES_HOST
-          value: "postgres.llama.svc.cluster.local"
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_HOST
         - name: POSTGRES_PORT
-          value: "5432"
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_PORT
         - name: POSTGRES_DB
-          value: "ogx"
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_DB
         - name: POSTGRES_USER
-          value: "ogx"
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_USER
         - name: POSTGRES_PASSWORD
-          value: "ogx"
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_PASSWORD
         - name: VLLM_URL
           value: http://llama-32-3b-instruct-predictor.llama.svc.cluster.local:8080/v1
-        - name: VLLM_TLS_VERIFY
-          value:  "false"
-        - name: VLLM_API_TOKEN
-          value: "fake"
         - name: VLLM_MAX_TOKENS
           value: "80"
-        - name: ENABLE_FAISS
-          value: "faiss"
         - name: ENABLE_INLINE_MILVUS
           value: "milvus"
-        - name: EMBEDDING_PROVIDER
+        - name: ENABLE_SENTENCE_TRANSFORMERS
           value: "sentence-transformers"
+        - name: ENABLE_FAISS
+          value: "faiss"
