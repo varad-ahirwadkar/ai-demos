@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: qdrant-credentials
+type: Opaque
+stringData:
+  QDRANT_API_KEY: "abc12345"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qdrant-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant-app-label
+  template:
+    metadata:
+      labels:
+        app: qdrant-app-label
+    spec:
+      containers:
+      - name: qdrant
+        image: icr.io/ppc64le-oss/qdrant-ppc64le:1.14.1
+        ports:
+        - name: http
+          containerPort: 6333
+        - name: grpc
+          containerPort: 6334
+        env:
+        - name: qdrant-service_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: qdrant-credentials
+              key: QDRANT_API_KEY
+        volumeMounts:
+        - name: qdrant-storage
+          mountPath: /qdrant/storage
+        - name: qdrant-storage
+          mountPath: /qdrant/snapshots
+          subPath: snapshots
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 6333
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 6333
+          initialDelaySeconds: 10
+          periodSeconds: 20
+      volumes:
+      - name: qdrant-storage
+        persistentVolumeClaim:
+          claimName: qdrant-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant-service
+spec:
+  selector:
+    app: qdrant-app-label
+  ports:
+  - name: http
+    port: 6333
+    targetPort: 6333
+  - name: grpc
+    port: 6334
+    targetPort: 6334
+  type: ClusterIP

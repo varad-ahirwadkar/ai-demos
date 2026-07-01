@@ -5,6 +5,7 @@ This guide walks you through deploying and configuring OGX (Open GenAI Stack) on
 For more details on the individual files inside these subdirectories, refer to:
 - **[Deployments README](./deployments/README.md)** - Details on deployment manifests and Custom Resources.
 - **[Notebooks README](./notebooks/README.md)** - Breakdown of all 10 demonstration and test notebooks.
+- **[Getting Started Blog Post](./getting_started_blog.md)** - A developer's quickstart blog-style guide to OGX on RHOAI.
 
 ---
 
@@ -97,7 +98,8 @@ For standalone databases, you must deploy the services and ensure the OGX server
   - Deploy standalone Milvus (along with etcd) inside your OpenShift project by following the instructions in the **[Shared Infrastructure Guide](../shared/README.md)**.
   - Verified via `ogx-remote-milvus.ipynb`.
 - **Qdrant**:
-  - Ensure you have a Qdrant deployment running and accessible inside OCP, with its endpoint and API key mapped (e.g. `http://qdrant-service.llama.svc.cluster.local:6333`).
+  - Deploy standalone Qdrant inside your OpenShift project by applying the shared configuration: `oc apply -f ../shared/qdrant.yaml`.
+  - Ensure the OGX Server connects to its endpoint (e.g. `http://qdrant-service.ogx-sandbox.svc.cluster.local:6333`).
   - Verified via `ogx-remote-qdrant.ipynb`.
 
 ---
