@@ -4,11 +4,11 @@ Large Language Models (LLMs) are powerful, but they can generate inaccurate answ
 
 **Retrieval-Augmented Generation (RAG)** improves accuracy by retrieving relevant information from your documents before the model generates a response. This enables AI applications to deliver answers that are grounded in your organization's data.
 
-Building a RAG application typically requires integrating multiple components, including an LLM, an embedding model, a vector database, and application logic to orchestrate them.
+Building a RAG application typically requires integrating multiple components, including an LLM, an embedding model, a vector database, and complex application logic to orchestrate them. Without a dedicated mediator layer, this orchestration logic is handled directly inside your application code, leading to major development bottlenecks. If you switch your LLM provider (e.g., from vLLM to Ollama), change your vector store, or upgrade your file storage backend (e.g., from local volumes to S3), you have to change and re-test your application's core codebase.
 
-**OGX (Open GenAI Stack)** simplifies this process by exposing all these services through a single OpenAI-compatible API. Instead of managing multiple AI components, your application interacts only with OGX, which handles document indexing, embedding generation, vector search, and prompt orchestration behind the scenes.
+**OGX (Open GenAI Stack)** solves this by acting as an effective GenAI service layer. It exposes all these services through a single, unified OpenAI-compatible API. Once you build your application using OGX, the stack natively handles all supported downstream providers. This enables a "build once, run anywhere" architecture: you can easily replace your inference host (vLLM with Ollama, Azure, AWS, etc.) or transition your database storage to an S3 backend simply by changing the `OGXServer` Custom Resource configuration — without modifying a single line of your application code.
 
-This guide introduces a simpler approach: **[OGX (Open GenAI Stack)](https://github.com/ogx-ai/ogx)** deployed on **Red Hat OpenShift AI (RHOAI)**. 
+This guide introduces how to deploy **[OGX (Open GenAI Stack)](https://github.com/ogx-ai/ogx)** on **Red Hat OpenShift AI (RHOAI)**. 
 
 ### What You'll Build
 
@@ -32,9 +32,9 @@ By the end of this guide, you'll understand how OGX simplifies enterprise AI dev
 - OpenShift CLI (oc) 
 - Python 3.12 or later
 - Permissions to create Pods, Services, Secrets, Routes, and Custom Resources
-- Model artifacts for [Llama-3.2-3B-Instruct](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct) and [granite-embedding-125m-english](https://huggingface.co/ibm-granite/granite-embedding-125m-english) uploaded to an S3-compatible object storage bucket. Alternatively, you can store the model artifacts on a PersistentVolumeClaim (PVC)
+- Model artifacts for [Llama-3.2-3B-Instruct](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct) and [granite-embedding-125m-english](https://huggingface.co/ibm-granite/granite-embedding-125m-english) uploaded to an S3-compatible object storage bucket (refer to the [Hugging Face Model Downloading Guide](https://huggingface.co/docs/hub/en/models-downloading) and the [S3 AWS CLI Upload Guide](https://oneuptime.com/blog/post/2026-02-12-upload-files-to-s3-using-aws-cli/view#uploading-an-entire-directory) for reference). Alternatively, you can store the model artifacts on a PersistentVolumeClaim (PVC).
 
-> Basic familiarity with OpenShift is helpful, but no deep Kubernetes experience is required.
+> Basic familiarity with OpenShift is helpful, but no deep experience is required.
 
 ---
 
@@ -649,6 +649,10 @@ print(response.output_text)
 #### Expected Output
 When running the final script, you should receive a response grounded strictly in the contents of `return-policy.txt`:
 ```text
+Created vector store: vs_5714073f-15ad-46d0-9b77-c0fb012d12fd
+Uploaded file: file-ec96b488ddb046ecaf21f9af80f46b42
+Indexed file: file-ec96b488ddb046ecaf21f9af80f46b42
+
 --- Answer ---
 Electronics must be returned within 15 days of delivery.
 ```
