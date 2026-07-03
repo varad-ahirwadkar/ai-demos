@@ -27,11 +27,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: qdrant-app-label
+      app: qdrant-app
   template:
     metadata:
       labels:
-        app: qdrant-app-label
+        app: qdrant-app
     spec:
       containers:
       - name: qdrant
@@ -77,7 +77,7 @@ metadata:
   name: qdrant-service
 spec:
   selector:
-    app: qdrant-app-label
+    app: qdrant-app
   ports:
   - name: http
     port: 6333

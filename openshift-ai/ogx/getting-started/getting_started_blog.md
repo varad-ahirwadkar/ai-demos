@@ -72,7 +72,7 @@ flowchart TD
 
 > [!IMPORTANT]
 > **Technology Preview Warning**  
-> OGX integration is currently available in Red Hat OpenShift AI 3.5 as a Technology Preview feature.
+> OGX integration is currently available in Red Hat OpenShift AI 3.4 as a Technology Preview feature.
 
 ### Key OGX Concepts
 
@@ -454,7 +454,7 @@ EOF
 #### Verification Step
 Verify that the Qdrant service and pod have started and are running:
 ```bash
-# oc get pods -l app=qdrant-app-label
+# oc get pods -l app=qdrant-app
 NAME                                       READY   STATUS    RESTARTS   AGE
 qdrant-deployment-cf77cd4cd-cwbhq   1/1     Running   0          18d
 
@@ -652,3 +652,7 @@ When running the final script, you should receive a response grounded strictly i
 --- Answer ---
 Electronics must be returned within 15 days of delivery.
 ```
+
+Reference:
+-  RHOAI deployment - https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/installing_and_uninstalling_openshift_ai_self-managed/index
+- OGX Examples on RHOAI - https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5/html/working_with_ogx/ogx-adv-examples_rag 
