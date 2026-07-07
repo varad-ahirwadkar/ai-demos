@@ -212,5 +212,5 @@ def get_server_info():
 if __name__ == "__main__":
     logger.info("🚀 Orders MCP Server starting...")
     logger.info(f"📊 Loaded {len(ORDERS)} orders from PostgreSQL database")
-    logger.info(f"🌐 Server will run on http://0.0.0.0:{port}")
+    logger.info(f"🌐 Server will run on http://0.0.0.0:9001")
     logger.info("🔧 Available tools: get_order, check_return_eligibility")
