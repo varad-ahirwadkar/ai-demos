@@ -26,10 +26,10 @@ spec:
               protocol: TCP
               name: http
           env:
-            - name: LLAMA_STACK_URL
-              value: "http://techmart-llama-stack-service.llama.svc.cluster.local:8321"
+            - name: OGX_URL
+              value: "http://techmart-ogx-service.ogx-sandbox.svc.cluster.local:8321"
             - name: MCP_SERVER_URL
-              value: "http://techmart-mcp-server.llama.svc.cluster.local:9001/sse"
+              value: "http://techmart-mcp-server.ogx-sandbox.svc.cluster.local:9001/sse"
             - name: PORT
               value: "8080"
             - name: SECRET_KEY

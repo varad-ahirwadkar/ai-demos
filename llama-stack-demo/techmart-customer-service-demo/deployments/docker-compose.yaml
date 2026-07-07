@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # MCP Server - Provides order data tools
+  mcp-server:
+    build:
+      context: ..
+      dockerfile: deployments/Containerfile.mcp
+    container_name: techmart-mcp-server
+    ports:
+      - "9001:9001"
+    networks:
+      - techmart-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # UI Application - Customer service interface
+  ui-app:
+    build:
+      context: ..
+      dockerfile: deployments/Containerfile.ui
+    container_name: techmart-ui-app
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - LLAMA_STACK_URL=http://llama-stack:5001
+      - MCP_SERVER_URL=http://mcp-server:9001/sse
+    depends_on:
+      - mcp-server
+    networks:
+      - techmart-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  techmart-network:
+    driver: bridge
+
+# Note: Llama Stack should be running separately and accessible at the configured URL
+# You can add it to this compose file or run it separately
+
+# Made with Bob

@@ -1,12 +1,11 @@
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+import csv
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 import os
 import logging
-import psycopg2
-from psycopg2.extras import RealDictCursor
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,14 +15,13 @@ logger = logging.getLogger(__name__)
 # This ensures the demo works regardless of when it's run
 DEMO_TODAY = datetime(2024, 4, 21)
 
-# Database connection parameters from environment
-# Use host.containers.internal for containers to reach host PostgreSQL
-# Use localhost for local Python execution
-DB_HOST = os.getenv('DB_HOST', 'host.containers.internal')
-DB_PORT = os.getenv('DB_PORT', '5432')
-DB_NAME = os.getenv('DB_NAME', 'techmart')
-DB_USER = os.getenv('DB_USER', 'llamastack')
-DB_PASSWORD = os.getenv('DB_PASSWORD', 'llamastack')
+# Determine data path (handle both development and container environments)
+if os.path.exists('orders.csv'):
+    ORDERS_PATH = 'orders.csv'
+elif os.path.exists('../data/orders.csv'):
+    ORDERS_PATH = '../data/orders.csv'
+else:
+    ORDERS_PATH = 'data/orders.csv'
 
 # Initialize FastMCP server
 mcp = FastMCP(
@@ -35,49 +33,38 @@ mcp = FastMCP(
     )
 )
 
-def get_db_connection():
-    """Get database connection"""
-    return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        cursor_factory=RealDictCursor
-    )
-
 def load_orders() -> list[dict[str, Any]]:
-    """Load orders from PostgreSQL database"""
+    """Load orders from CSV file"""
     orders = []
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM orders ORDER BY order_date DESC")
-        rows = cursor.fetchall()
-        for row in rows:
-            # Convert RealDictRow to regular dict and format dates as strings
-            order = dict(row)
-            if 'order_date' in order and order['order_date']:
-                order['order_date'] = order['order_date'].strftime('%Y-%m-%d')
-            if 'delivery_date' in order and order['delivery_date']:
-                order['delivery_date'] = order['delivery_date'].strftime('%Y-%m-%d')
-            if 'price' in order:
-                order['price'] = str(order['price'])
-            orders.append(order)
-        cursor.close()
-        conn.close()
-        logger.info(f"Loaded {len(orders)} orders from database")
-    except Exception as e:
-        logger.error(f"Error loading orders from database: {e}")
+        with open(ORDERS_PATH, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                orders.append(row)
+        logger.info(f"Loaded {len(orders)} orders from {ORDERS_PATH}")
+    except FileNotFoundError:
+        logger.error(f"orders.csv not found at {ORDERS_PATH}")
     return orders
 
 # Load orders at startup
 ORDERS = load_orders()
 
+@mcp.resource("orders://info")
+def get_orders_resource() -> str:
+    """Get information about currently loaded orders as an MCP resource"""
+    return json.dumps({
+        "orders_count": len(ORDERS),
+        "orders_file": ORDERS_PATH,
+        "demo_date": DEMO_TODAY.strftime('%Y-%m-%d'),
+        "sample_orders": [order['order_id'] for order in ORDERS[:5]]
+    })
+
 @mcp.tool()
 def reload_orders() -> dict[str, Any]:
     """
-    Reload orders from the database without restarting the server
+    Reload orders from the CSV file
+    
+    Use this after manually updating the orders.csv file to refresh the data
     
     Returns:
         Status message with count of loaded orders
@@ -85,21 +72,10 @@ def reload_orders() -> dict[str, Any]:
     global ORDERS
     ORDERS = load_orders()
     return {
-        "success": True,
-        "message": f"Reloaded {len(ORDERS)} orders from database",
+        "status": "success",
+        "message": f"Reloaded {len(ORDERS)} orders from {ORDERS_PATH}",
         "orders_count": len(ORDERS)
     }
-
-@mcp.resource("orders://info")
-def get_orders_resource() -> str:
-    """Get information about currently loaded orders as an MCP resource"""
-    return json.dumps({
-        "orders_count": len(ORDERS),
-        "data_source": "PostgreSQL Database",
-        "demo_date": DEMO_TODAY.strftime('%Y-%m-%d'),
-        "sample_orders": [order['order_id'] for order in ORDERS[:5]]
-    })
-
 
 @mcp.tool()
 def get_order(order_id: str) -> dict[str, Any]:
@@ -174,14 +150,9 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
     
     # Generate message
     if is_eligible:
-        if days_remaining == 0:
-            message = "Order is eligible for return. This is the LAST DAY of the return window - must be returned TODAY."
-        elif days_remaining == 1:
-            message = "Order is eligible for return. 1 day remaining - must be returned by tomorrow."
-        else:
-            message = f"Order is eligible for return. {days_remaining} days remaining in the return window."
+        message = f"Order is eligible for return. {days_remaining} days remaining in the return window."
     else:
-        message = f"Order is NOT eligible for return. Return window expired {abs(days_remaining)} days ago."
+        message = f"Order is not eligible for return. Return window expired {abs(days_remaining)} days ago."
     
     return {
         "order_id": order_id,
@@ -210,8 +181,17 @@ def get_server_info():
     }
 
 if __name__ == "__main__":
+    # Configure transport security to allow connections from containers
+    security_settings = TransportSecuritySettings(
+        allowed_hosts=["*"]  # Allow all hosts for container networking
+    )
     
     logger.info("🚀 Orders MCP Server starting...")
-    logger.info(f"📊 Loaded {len(ORDERS)} orders from PostgreSQL database")
+    logger.info(f"📊 Loaded {len(ORDERS)} orders from {ORDERS_PATH}")
     logger.info("🌐 Server will run on http://0.0.0.0:9001")
     logger.info("🔧 Available tools: get_order, check_return_eligibility")
+    
+    # Note: Port and host are configured via CLI when running with fastmcp
+    # Example: fastmcp run orders_mcp_server.py --transport sse --host 0.0.0.0 --port 9001
+
+# Made with Bob

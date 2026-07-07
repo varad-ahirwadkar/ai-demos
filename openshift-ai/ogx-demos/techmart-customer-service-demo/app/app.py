@@ -1,10 +1,10 @@
 """
 TechMart Customer Service Assistant - Web UI
-Integrates with Llama Stack (RAG + MCP) for intelligent customer support
+Integrates with OGX (RAG + MCP) for intelligent customer support
 """
 
 from flask import Flask, render_template, request, jsonify, session
-from llama_stack_client import LlamaStackClient
+from ogx_client import OgxClient
 import os
 import uuid
 import logging
@@ -23,7 +23,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'techmart-demo-secret-key-change-in-production')
 
 # Configuration
-LLAMA_STACK_URL = os.environ.get('LLAMA_STACK_URL', 'http://localhost:8321')
+OGX_URL = os.environ.get('OGX_URL', 'http://localhost:8321')
 MCP_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:9001/sse')
 
 # Database configuration
@@ -32,8 +32,8 @@ MCP_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:9001/sse')
 DB_HOST = os.environ.get('DB_HOST', 'host.containers.internal')
 DB_PORT = os.environ.get('DB_PORT', '5432')
 DB_NAME = os.environ.get('DB_NAME', 'techmart')
-DB_USER = os.environ.get('DB_USER', 'llamastack')
-DB_PASSWORD = os.environ.get('DB_PASSWORD', 'llamastack')
+DB_USER = os.environ.get('DB_USER', 'techmart')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', 'techmart123')
 
 # Universal instruction for all scenarios
 INSTRUCTIONS = """You are a helpful and professional customer service assistant.
@@ -52,24 +52,24 @@ RESPONSE REQUIREMENTS:
 
 IMPORTANT: You MUST provide a final answer after using tools. Be helpful, accurate, and thorough."""
 
-# Initialize Llama Stack client
+# Initialize OGX client
 try:
-    client = LlamaStackClient(base_url=LLAMA_STACK_URL)
-    logger.info(f"✅ Connected to Llama Stack at {LLAMA_STACK_URL}")
+    client = OgxClient(base_url=OGX_URL)
+    logger.info(f"✅ Connected to OGX at {OGX_URL}")
     
     # Extract LLM model ID dynamically
     models = client.models.list()
     llm_model = next((m for m in models if m.model_type == "llm"), None)
     
     if not llm_model:
-        logger.error("❌ No LLM model found in Llama Stack")
+        logger.error("❌ No LLM model found in OGX")
         raise RuntimeError("No LLM model available")
     
     MODEL_ID = llm_model.identifier
     logger.info(f"✅ Using LLM model: {MODEL_ID}")
         
 except Exception as e:
-    logger.error(f"❌ Failed to initialize Llama Stack: {e}")
+    logger.error(f"❌ Failed to initialize OGX: {e}")
     client = None
     MODEL_ID = None
 
@@ -137,7 +137,7 @@ def chat():
             return jsonify({'error': 'Message cannot be empty'}), 400
         
         if not client:
-            return jsonify({'error': 'Llama Stack client not initialized'}), 500
+            return jsonify({'error': 'OGX client not initialized'}), 500
         
         logger.info(f"Processing message: {user_message[:50]}...")
         
@@ -159,7 +159,7 @@ def chat():
             "server_url": MCP_SERVER_URL,
         })
         
-        # Create response using Llama Stack
+        # Create response using OGX
         response = client.with_options(timeout=600.0).responses.create(
             model=MODEL_ID,
             input=user_message,
@@ -201,7 +201,7 @@ def upload_rag_document():
         if not vector_store_id:
             return jsonify({'error': 'Failed to create vector store'}), 500
         
-        # Upload file to Llama Stack
+        # Upload file to OGX
         file_info = client.files.create(
             file=(file.filename, file.stream),
             purpose="assistants",  # API only accepts "assistants" or "batch"
@@ -311,7 +311,7 @@ def upload_mcp_data():
         
         logger.info(f"✅ Saved {row_count} orders to PostgreSQL database")
         
-        # Automatically trigger reload via Llama Stack (calls MCP reload_orders tool)
+        # Automatically trigger reload via OGX (calls MCP reload_orders tool)
         reload_success = False
         reload_message = ""
         try:
@@ -357,7 +357,7 @@ def upload_mcp_data():
 def status():
     """Check system status"""
     try:
-        llama_stack_status = "connected" if client else "disconnected"
+        ogx_stack_status = "connected" if client else "disconnected"
         
         # Try to ping MCP server
         mcp_status = "unknown"
@@ -380,9 +380,9 @@ def status():
             mcp_status = "disconnected"
         
         return jsonify({
-            'llama_stack': {
-                'status': llama_stack_status,
-                'url': LLAMA_STACK_URL
+            'ogx_stack': {
+                'status': ogx_stack_status,
+                'url': OGX_URL
             },
             'mcp_server': {
                 'status': mcp_status,

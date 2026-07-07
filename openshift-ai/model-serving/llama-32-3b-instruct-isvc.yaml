@@ -4,19 +4,15 @@ metadata:
   annotations:
     modelFormat: vLLM
     opendatahub.io/connection-path: models/llama-32-3b-instruct
-    opendatahub.io/connections: odh-bucket
+    opendatahub.io/connections: s3-creds
     opendatahub.io/model-type: generative
     openshift.io/display-name: llama-32-3b-instruct
     security.opendatahub.io/enable-auth: "false"
     serving.kserve.io/deploymentMode: Standard
     serving.kserve.io/stop: "false"
-  finalizers:
-  - odh.inferenceservice.finalizers
-  - inferenceservice.finalizers
   labels:
     opendatahub.io/dashboard: "true"
   name: llama-32-3b-instruct
-  namespace: llama
 spec:
   predictor:
     automountServiceAccountToken: false
@@ -46,7 +42,6 @@ spec:
           memory: 48Gi
       runtime: vllm-cpu-runtime
       storage:
-        key: odh-bucket
+        key: s3-creds
         path: models/llama-32-3b-instruct
-    serviceAccountName: odh-bucket-sa
     timeout: 600

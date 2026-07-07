@@ -1,15 +1,15 @@
 # TechMart Customer Service Assistant
 
-An intelligent customer service assistant built on Red Hat OpenShift AI Llama Stack, showcasing a hybrid RAG (Retrieval-Augmented Generation) + MCP (Model Context Protocol) architecture for e-commerce support.
+An intelligent customer service assistant built on Red Hat OpenShift AI OGX, showcasing a hybrid RAG (Retrieval-Augmented Generation) + MCP (Model Context Protocol) architecture for e-commerce support.
 
-Llama Stack is an OpenAI-compatible platform that enables you to build and run AI applications anywhere, without changing your code. It provides a unified interface for models, tools and data. Ensures a consistent API layer across environments
+OGX is an OpenAI-compatible platform that enables you to build and run AI applications anywhere, without changing your code. It provides a unified interface for models, tools and data. Ensures a consistent API layer across environments
 
-In this demo, Llama Stack acts as the core orchestration layer, seamlessly combining RAG, MCP and model inference.
+In this demo, OGX acts as the core orchestration layer, seamlessly combining RAG, MCP and model inference.
 
 
 ## Demo Overview
 
-This demo showcases an **e-commerce customer service scenario** for **TechMart**, a fictional electronics retailer, demonstrating how Llama Stack can:
+This demo showcases an **e-commerce customer service scenario** for **TechMart**, a fictional electronics retailer, demonstrating how OGX can:
 
 - **Answer policy questions** using RAG to retrieve information from company documents
 - **Look up order details** using MCP tools that query a PostgreSQL database
@@ -22,9 +22,9 @@ The configuration utilizes a [meta-llama/Llama-3.2-3B-Instruct](https://huggingf
 ```
 User Question
     ↓
-Flask UI (Llama Stack Client)
+Flask UI (OGX Client)
     ↓
-Llama Stack Distribution
+OGX Distribution
     ├─→ RAG (FAISS Vector Store)
     │   └─→ Policy Documents (return-policy.txt, shipping-policy.txt)
     ├─→ MCP (FastMCP Server)
@@ -42,7 +42,7 @@ AI Response (combines policy info + order data)
 
 1. OpenShift Cluster with OpenShift AI
 - KServe enabled via Data Science Cluster (DSC)
-- Llama Stack enabled via Data Science Cluster (DSC)
+- OGX enabled via Data Science Cluster (DSC)
 
 2. Container Registry
 Access to a registry (for example, Quay.io) to push and pull images
@@ -50,12 +50,12 @@ Access to a registry (for example, Quay.io) to push and pull images
 ### Project Setup
 Create and switch to the demo project:
 ```bash
-oc new-project llama || oc project llama
+oc new-project ogx-sandbox || oc project ogx-sandbox
 ```
 
 Reference base directory:
 ```
-cd ai-demos/openshift-ai/llama-stack-demos/techmart-customer-service-demo
+cd ai-demos/openshift-ai-demos
 ```
 ---
 
@@ -66,7 +66,7 @@ We will be deploying the [meta-llama/Llama-3.2-3B-Instruct](https://huggingface.
 Deploy the vLLM runtime and model:
 ```bash
 oc process -n redhat-ods-applications vllm-cpu-runtime-template | oc create -f -
-oc create -f ../../model-serving/llama-32-3b-instruct-isvc.yaml
+oc create -f model-serving/llama-32-3b-instruct-isvc.yaml
 ```
 
 Model arguments:
@@ -92,19 +92,19 @@ Resources:
           memory: 48Gi
 ```
 
-## Llama Stack Deployment Steps
-#### Step 1: Deploy Postgres for llama stack
+## OGX Deployment Steps
+#### Step 1: Deploy Postgres for OGX
 ```
-oc create -f ../shared/postgres.yaml
+oc create -f ogx-demos/shared/postgres.yaml
 ```
 
-#### Step 2: Deploy Llama Stack Distribution
+#### Step 2: Deploy OGX Distribution
 
 ```bash
-oc apply -f deployments/llama-stack-distribution.yaml
+oc apply -f deployments/ogx-server.yaml
 
-# Wait for Llama Stack to be ready
-oc wait --for=condition=ready pod -l app=llama-stack --timeout=300s
+# Wait for OGX to be ready
+oc wait --for=condition=ready pod -l app=ogxserver --timeout=300s
 ```
 
 ## MCP and UI Deployment Steps
@@ -238,9 +238,9 @@ The MCP server provides three tools:
 - Reloads orders from database without restarting the server
 - Useful for refreshing data after database updates
 
-### Llama Stack Configuration
+### OGX Configuration
 
-Key settings in [`llama-stack-distribution.yaml`](deployments/llama-stack-distribution.yaml):
+Key settings in [`ogx-server.yaml`](deployments/ogx-server.yaml):
 
 ```yaml
 env:
@@ -393,7 +393,7 @@ oc apply -f deployments/db-init-job.yaml
 
 ## References
 
-- [Llama Stack Documentation](https://github.com/meta-llama/llama-stack)
+- [OGX Documentation](https://ogx-ai.github.io/)
 - [FastMCP Documentation](https://github.com/jlowin/fastmcp)
 - [OpenShift AI Documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed)
 - [FAISS Vector Store](https://github.com/facebookresearch/faiss)
