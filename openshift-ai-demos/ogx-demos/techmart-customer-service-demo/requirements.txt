@@ -13,10 +13,7 @@ requests>=2.31.0
 psycopg2-binary>=2.9.9
 
 # MCP - Model Context Protocol
-# Pin below 2.0 to avoid the joserfc/cryptography dependency that breaks on
-# python:3.12-slim (OpenSSL symbol mismatch: EVP_idea_ecb not found)
-fastmcp>=0.2.0,<2.0.0
-mcp>=1.0.0
+mcp>=1.28.0
 
 # Async support
 asyncio
