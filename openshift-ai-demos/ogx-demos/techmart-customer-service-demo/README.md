@@ -101,10 +101,10 @@ oc create -f ogx-demos/shared/postgres.yaml
 #### Step 2: Deploy OGX Distribution
 
 ```bash
-oc apply -f deployments/ogx-server.yaml
+oc create -f ogx-demos/techmart-customer-service-demo/deployments/ogx-server.yaml 
 
 # Wait for OGX to be ready
-oc wait --for=condition=ready pod -l app=ogxserver --timeout=300s
+oc wait --for=condition=ready pod -l app=ogx --timeout=300s
 ```
 
 ## MCP and UI Deployment Steps
@@ -117,7 +117,7 @@ Build and push all required images:
 # - TechMart UI application
 # - PostgreSQL (for MCP)
 
-sh scripts/build-and-push-all.sh
+sh ogx-demos/techmart-customer-service-demo/scripts/build-and-push-all.sh
 ```
 
 **Quick Deployment Option**
@@ -131,10 +131,14 @@ sh scripts/deploy-with-postgresql.sh
 Deploy the database with persistent storage:
 ```bash
 # Deploy PostgreSQL with persistent volume
-oc apply -f deployments/postgresql-mcp.yaml
+% oc apply -f ogx-demos/techmart-customer-service-demo/deployments/postgresql-mcp.yaml
+secret/techmart-db-secret created
+persistentvolumeclaim/techmart-postgresql-pvc created
+deployment.apps/techmart-postgresql created
 
 # Wait for PostgreSQL to be ready
-oc wait --for=condition=ready pod -l app=techmart-postgresql --timeout=300s
+% oc wait --for=condition=ready pod -l app=techmart-postgresql --timeout=300s
+pod/techmart-postgresql-58cccdd7f4-s6fdb condition met
 ```
 
 #### Step 3: Initialize Database
@@ -142,22 +146,50 @@ Load schema and sample order data:
 
 ```bash
 # Run database initialization Job
-oc apply -f deployments/db-init-job.yaml
+% oc apply -f ogx-demos/techmart-customer-service-demo/deployments/db-init-job.yaml 
+job.batch/techmart-db-init created
+configmap/techmart-db-scripts created
+configmap/techmart-db-data created
 
 # Check Job status
-oc logs job/techmart-db-init
+% oc logs job/techmart-db-init
+🗄️  Creating database schema...
+psql:/scripts/schema.sql:4: NOTICE:  table "orders" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE FUNCTION
+CREATE TRIGGER
+📊 Loading sample data...
+📊 Loading orders from CSV...
+   Found 10 orders
+💾 Inserting orders into database...
+✅ Inserted 10 orders
+✅ Database initialization complete!
+✅ Database initialization complete!
 
 # Verify data was loaded
 oc exec -it deployment/techmart-postgresql -- psql -U postgres -d techmart -c "SELECT COUNT(*) FROM orders;"
+ count 
+-------
+    10
+(1 row)
 ```
 
 #### Step 4: Deploy MCP Server
 Deploy the MCP server connected to PostgreSQL:
 ```bash
-oc apply -f deployments/techmart-mcp-server.yaml
+% oc apply -f  ogx-demos/techmart-customer-service-demo/deployments/techmart-mcp-server.yaml 
+deployment.apps/techmart-mcp-server created
+service/techmart-mcp-server created
+route.route.openshift.io/techmart-mcp-server created
 
 # Verify MCP server is running
-oc wait --for=condition=ready pod -l app=techmart-mcp-server --timeout=300s
+% oc wait --for=condition=ready pod -l app=techmart-mcp-server --timeout=300s
+pod/techmart-mcp-server-6b55b64f9b-tjj96 condition met
 ```
 
 
@@ -165,10 +197,15 @@ oc wait --for=condition=ready pod -l app=techmart-mcp-server --timeout=300s
 
 ```bash
 # Deploy Flask UI
-oc apply -f deployments/techmart-ui.yaml
+% oc apply -f ogx-demos/techmart-customer-service-demo/deployments/techmart-ui.yaml 
+deployment.apps/techmart-ui created
+service/techmart-ui created
+route.route.openshift.io/techmart-ui created
+secret/techmart-ui-secret created
 
 # Wait for TechMart UI to be ready
-oc wait --for=condition=ready pod -l app=techmart-ui --timeout=300s
+% oc wait --for=condition=ready pod -l app=techmart-ui --timeout=300s
+pod/techmart-ui-86784bf7b8-np6rp condition met
 
 # Get the route URL
 UI_ROUTE=https://$(oc get route techmart-ui -o jsonpath='{.spec.host}')

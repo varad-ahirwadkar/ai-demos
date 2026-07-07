@@ -210,9 +210,7 @@ def get_server_info():
     }
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "9001"))
     logger.info("🚀 Orders MCP Server starting...")
     logger.info(f"📊 Loaded {len(ORDERS)} orders from PostgreSQL database")
     logger.info(f"🌐 Server will run on http://0.0.0.0:{port}")
     logger.info("🔧 Available tools: get_order, check_return_eligibility")
-    mcp.run(transport="sse", host="0.0.0.0", port=port)
