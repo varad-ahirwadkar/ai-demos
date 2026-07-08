@@ -58,7 +58,8 @@ try:
     logger.info(f"✅ Connected to OGX at {OGX_URL}")
     
     # Extract LLM model ID dynamically
-    models = client.models.list()
+    # .list() returns a SyncPage; use .data to get the list of model objects
+    models = client.models.list().data
     llm_model = next((m for m in models if m.model_type == "llm"), None)
     
     if not llm_model:
@@ -93,7 +94,7 @@ def get_or_create_vector_store():
                 return VECTOR_STORE_ID
         
         # Get models to find embedding model
-        models = client.models.list()
+        models = client.models.list().data
         embedding_model = next((m for m in models if m.model_type == "embedding"), None)
         
         if not embedding_model:
