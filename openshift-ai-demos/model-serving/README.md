@@ -2,7 +2,6 @@
 
 Deploy and serve models on Red Hat OpenShift AI using KServe InferenceService.
 
-
 ---
 
 ## Prerequisites
@@ -10,7 +9,9 @@ Deploy and serve models on Red Hat OpenShift AI using KServe InferenceService.
 Before deploying models, complete the setup steps described in the [OpenShift AI README](/openshift-ai-demos/README.md#getting-started):
 
 1. Configure `DSCInitialization` and `DataScienceCluster`
-2. Create the S3 secret with your object storage credentials
+2. Choose a model storage option:
+   - **S3:** Create the S3 secret with your object storage credentials
+   - **PVC:** Use the [HuggingFace downloader](#option-2-pvc-huggingface-download) — no S3 required
 
 ---
 
@@ -23,6 +24,13 @@ Deploy and serve Large Language Models (LLMs) and other generative AI models on 
 
 ---
 
+### Embedding Models
+Deploy and serve embedding models for vector search and RAG pipelines on Red Hat OpenShift AI.
+
+[→ Explore Embedding Models](embedding-models/)
+
+---
+
 ### Safety Models
 Deploy content moderation, guardrails, and safety detection models on Red Hat OpenShift AI.
 
@@ -30,9 +38,11 @@ Deploy content moderation, guardrails, and safety detection models on Red Hat Op
 
 ---
 
-## S3 Model Storage
+## Model Storage Options
 
-Models must be stored in your S3-compatible object storage with the following structure:
+### Option 1: S3 Object Storage
+
+Models stored in S3-compatible object storage with the following structure:
 
 ```
 s3://<bucket-name>/
@@ -43,7 +53,54 @@ s3://<bucket-name>/
         └── [model files]
 ```
 
-Update the `storageUri` in each model's YAML file to match your S3 bucket structure.
+Update the `storage` section in each model's YAML file to match your S3 bucket structure:
+
+```yaml
+storage:
+  key: s3-creds
+  path: models/<model-name>
+```
+
+---
+
+### Option 2: PVC (HuggingFace Download)
+
+Download models directly from HuggingFace into a PersistentVolumeClaim using the shared downloader. This is an alternative to S3 when object storage is not available.
+
+**Download a model:**
+```bash
+export NAMESPACE=<your-project>
+export MODEL_REPO=<hf-org>/<hf-model-name>   # e.g. ibm-granite/granite-embedding-125m-english
+export MODEL_NAME=<model-name>                # e.g. granite-embedding-125m-english
+export STORAGE_SIZE=5Gi
+export STORAGE_CLASS=<your-storage-class>
+export HF_TOKEN=<your-hf-token>               # optional, needed for private/gated models
+
+envsubst '${MODEL_NAME},${NAMESPACE},${STORAGE_SIZE},${STORAGE_CLASS},${MODEL_REPO},${HF_TOKEN}' \
+  < model-serving/shared/model-download.yaml | oc apply -f -
+```
+
+**Monitor the download:**
+```bash
+oc logs -f ${MODEL_NAME}-downloader
+```
+
+**Verify files after download:**
+```bash
+oc run verify --image=registry.access.redhat.com/ubi9/python-312:9.8-1783442686 \
+  --restart=Never --rm -it \
+  --overrides='{"spec":{"securityContext":{"runAsUser":1000,"fsGroup":1000},"containers":[{"name":"verify","image":"registry.access.redhat.com/ubi9/python-312:9.8-1783442686","command":["ls","-lh","/mnt/models/'"$MODEL_NAME"'/"],"volumeMounts":[{"mountPath":"/mnt/models","name":"v"}]}],"volumes":[{"name":"v","persistentVolumeClaim":{"claimName":"'"$MODEL_NAME"'-pvc"}}]}}'
+```
+
+**Clean up downloader pod:**
+```bash
+oc delete pod ${MODEL_NAME}-downloader
+```
+
+**Reference the PVC in your InferenceService:**
+```yaml
+storageUri: pvc://<model-name>-pvc/<model-name>
+```
 
 ---
 
@@ -55,11 +112,17 @@ Update the `storageUri` in each model's YAML file to match your S3 bucket struct
 - Check pod logs: `oc logs <predictor-pod-name>`
 - Verify S3 endpoint is accessible from cluster
 
+**PVC download fails:**
+- Check downloader pod logs: `oc logs ${MODEL_NAME}-downloader`
+- Ensure `HF_TOKEN` is set for private/gated models
+- Verify storage class exists: `oc get storageclass`
+
 **Insufficient resources:**
 - Adjust resource limits in YAML files
 - Verify cluster capacity: `oc describe nodes`
 - Check if nodes have required CPU/memory available
 
+---
 
 ## Resources
 
