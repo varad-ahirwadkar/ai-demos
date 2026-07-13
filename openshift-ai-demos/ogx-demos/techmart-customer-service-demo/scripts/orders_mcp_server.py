@@ -84,23 +84,6 @@ def load_orders() -> list[dict[str, Any]]:
     return orders
 
 
-def _normalize_is_opened(value: Any) -> bool:
-    """Normalize the is_opened DB value to a Python bool."""
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() == 'yes'
-
-
-def _normalize_status(value: str) -> tuple[str, str]:
-    """
-    Return (status_enum, status_display) from a raw DB status string.
-    status_enum is uppercase with underscores for machine reasoning.
-    status_display is the original human-readable form.
-    """
-    display = value or ""
-    return display.upper().replace(" ", "_"), display
-
-
 def _order_not_found(order_id: str) -> dict[str, Any]:
     """Return a structured error payload for a missing order."""
     return {
@@ -166,11 +149,9 @@ def get_order(order_id: str) -> dict[str, Any]:
     """
     Look up a single order by its order ID and return its details.
 
-    USE THIS TOOL when the customer asks about:
-    - Order status or tracking: "Where is my order?", "What is the status of ORD-2024-001?"
-    - Delivery information: "When was it delivered?", "Has it arrived?"
-    - Product details: "What product did I buy?", "What did I order?"
-    - Price or receipt: "How much did I pay?", "What was the cost?"
+    USE THIS TOOL when:
+    - The customer asks about an order (status, product, delivery date, price, etc.).
+    - You need order details before calling check_return_eligibility.
 
     DO NOT USE THIS TOOL for:
     - Return eligibility, refund amounts, or restocking fees
@@ -181,18 +162,15 @@ def get_order(order_id: str) -> dict[str, Any]:
         order_id: The order ID to look up, e.g. "ORD-2024-001".
 
     Returns on success:
-        success (True), order_id, customer_email, product_name, category,
-        order_date, delivery_date, price (float), status, status_display,
-        is_opened (bool).
+        order_id, customer_email, product_name, category, order_date,
+        delivery_date, price (float), status, is_opened.
 
     Returns on failure:
         success (False), error ("ORDER_NOT_FOUND"), message (str).
     """
     for order in ORDERS:
         if order['order_id'] == order_id:
-            status_enum, status_display = _normalize_status(order['status'])
             return {
-                "success": True,
                 "order_id": order['order_id'],
                 "customer_email": order['customer_email'],
                 "product_name": order['product_name'],
@@ -200,9 +178,8 @@ def get_order(order_id: str) -> dict[str, Any]:
                 "order_date": order['order_date'],
                 "delivery_date": order['delivery_date'],
                 "price": float(order['price']),
-                "status": status_enum,
-                "status_display": status_display,
-                "is_opened": _normalize_is_opened(order['is_opened']),
+                "status": order['status'],
+                "is_opened": order['is_opened'],
             }
 
     return _order_not_found(order_id)
@@ -214,11 +191,11 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
     Check whether an order is eligible for return and calculate the refund.
 
     USE THIS TOOL when the customer asks about:
-    - Returning an order: "Can I return ORD-2024-001?", "I want to return my order."
-    - Refund amounts: "How much refund will I get?", "What will I be refunded?"
-    - Return window: "Is my return window still open?", "How many days do I have left?"
-    - Restocking fees: "What is the restocking fee?", "Will I be charged a fee?"
-    - Eligibility: "Am I eligible for a return?", "Can I still return this?"
+    - Returning an order or product.
+    - Refund amount or estimated refund.
+    - Return window, return deadline, or days remaining to return.
+    - Restocking fee for a specific order.
+    - Whether they can still return something they bought.
 
     DO NOT USE THIS TOOL for:
     - General order status or delivery information (use get_order instead).
@@ -228,9 +205,9 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
         order_id: The order ID to check, e.g. "ORD-2024-001".
 
     Returns on success:
-        success (True), order_id (str)
+        order_id (str)
         eligible (bool)              — True if the return window is still open.
-        reason (str)                 — RETURN_WINDOW_OPEN | RETURN_WINDOW_EXPIRED.
+        reason (str)                 — Machine-readable reason code.
         days_since_delivery (int)    — Days elapsed since delivery.
         return_window_days (int)     — Total return window for this category.
         days_remaining (int)         — Days left; negative means window expired.
@@ -239,15 +216,14 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
         restocking_fee_percent (int) — Fee percentage (0 if ineligible or unopened).
         restocking_fee_amount (float)— Fee in currency units (0 if ineligible).
         estimated_refund (float)     — Refund amount (0 if ineligible).
-        order (dict)                 — Summary of the order (product_name, category, status, is_opened).
         message (str)                — Customer-friendly explanation.
 
     Returns on failure:
-        success (False), error (ORDER_NOT_FOUND | INVALID_DELIVERY_DATE), message (str).
+        success (False), error (str), message (str).
     """
     # Resolve the order — propagate structured errors immediately
     order = get_order(order_id)
-    if not order["success"]:
+    if "error" in order:
         return order
 
     # Parse delivery date
@@ -266,13 +242,12 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
 
     # Return window and restocking fee policy by category
     category = order['category'].lower()
-    is_opened = order['is_opened']  # already a bool after get_order normalisation
     if 'electronics' in category:
         return_window_days = 15
-        restocking_fee_percent = 15 if is_opened else 0
+        restocking_fee_percent = 15 if order['is_opened'] == 'yes' else 0
     else:
         return_window_days = 30
-        restocking_fee_percent = 10 if is_opened else 0
+        restocking_fee_percent = 10 if order['is_opened'] == 'yes' else 0
 
     days_remaining = return_window_days - days_since_delivery
     eligible = days_remaining >= 0
@@ -286,7 +261,7 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
     if eligible:
         restocking_fee_amount = round(price * restocking_fee_percent / 100, 2)
         estimated_refund = round(price - restocking_fee_amount, 2)
-        reason = "RETURN_WINDOW_OPEN"
+        reason = "ELIGIBLE"
 
         if days_remaining == 0:
             message = (
@@ -320,7 +295,6 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
         )
 
     return {
-        "success": True,
         "order_id": order_id,
         # Structured fields for LLM reasoning
         "eligible": eligible,
@@ -335,14 +309,6 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
         "restocking_fee_percent": restocking_fee_percent if eligible else 0,
         "restocking_fee_amount": restocking_fee_amount,
         "estimated_refund": estimated_refund,
-        # Order summary — avoids requiring the LLM to call get_order separately
-        "order": {
-            "product_name": order["product_name"],
-            "category": order["category"],
-            "status": order["status"],
-            "status_display": order["status_display"],
-            "is_opened": order["is_opened"],
-        },
         # Human-readable summary
         "message": message,
     }
