@@ -1,0 +1,39 @@
+# rhoai-automation default configuration
+# All values are overridden by the user config file or RHOAI_ environment variables.
+# See config/loader.py for override priority and environment variable mapping.
+
+log_level: INFO
+
+cluster:
+  url: ""             # set via oc login before running, or RHOAI_CLUSTER_URL
+  namespace: redhat-ods-applications
+  kubeconfig: ""      # defaults to ~/.kube/config when empty
+
+# Absolute path to the root of the openshift-ai-demos repository.
+# Used by platform/manifests.py and usecases/*/assets.py to resolve
+# manifest file paths. Set via RHOAI_REPO_ROOT or the user config file.
+repo_root: ""
+
+operator:
+  name: rhods-operator
+  namespace: redhat-ods-operator
+  channel: stable
+
+dsc:
+  name: default-dsc
+  dsci_name: default-dsci
+
+storage:
+  class_name: ""        # empty = accept any available RWO class
+  s3_secret_name: s3-credentials
+
+fraud_detection:
+  model_name: qwen2.5-1.5b-instruct   # YAML filename under model-serving/generative-models/vllm/
+  inference_service_name: qwen         # metadata.name inside that YAML
+  serving_runtime_name: vllm-cpu-runtime
+
+timeouts:
+  operator_ready: 300   # seconds
+  dsc_ready: 600
+  inference_ready: 600
+  download_complete: 1800
