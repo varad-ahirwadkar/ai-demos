@@ -31,8 +31,7 @@ def wait_until_ready(name: str, timeout: int) -> None:
     Raises TimeoutError if the condition is not met within timeout seconds.
     """
     log.info("Waiting for DSC '%s' (timeout: %ss)", name, timeout)
-    wait.wait_until(lambda: _is_reconciled(name), f"DataScienceCluster/{name} Ready", timeout, interval=5)
-
+    wait.wait_until(lambda: _is_reconciled(name), f"DataScienceCluster/{name} Ready", timeout)
 
 
 def wait_dsci_ready(name: str, timeout: int) -> None:

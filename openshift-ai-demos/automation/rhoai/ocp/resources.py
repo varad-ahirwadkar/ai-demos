@@ -49,8 +49,6 @@ _API_HINTS: dict[str, str] = {
     "ClusterRole":             "rbac.authorization.k8s.io/v1",
     "ServiceAccount":          "v1",
     "Template":                "template.openshift.io/v1",
-    "ConsoleLink":             "console.openshift.io/v1",
-    "Route":                   "route.openshift.io/v1",
     # RHOAI CRDs
     "DataScienceCluster":      "datasciencecluster.opendatahub.io/v2",
     "DSCInitialization":       "dscinitialization.opendatahub.io/v1",

@@ -62,25 +62,19 @@ Configuration is assembled from three sources, merged in priority order:
 | `RHOAI_LOG_LEVEL` | `log_level` | `DEBUG`, `INFO` |
 | `RHOAI_CONFIG` | — | Path to a config YAML file (replaces `--config`) |
 
-### Minimal config file
+---
 
-```yaml
-# my-cluster.yaml
-repo_root: /path/to/ai-demos/openshift-ai-demos   # absolute path to the repo root
+## CLI usage
 
-operator:
-  channel: stable-3.x
+All commands accept `--config`/`-c` at the subcommand level to specify a
+config file. Log verbosity is set with `--log-level`/`-l` on the root
+command, **before** the subcommand.
 
-components:              # DSC components 'rhoai platform setup' should enable
-  - dashboard
-  - workbenches
-  - kserve
-  - trustyai
+```bash
+rhoai --help
+rhoai platform --help
+rhoai usecase  --help
 ```
-
-See [`rhoai/platform/README.md`](rhoai/platform/README.md#configuration) for
-the full set of defaults and every available config key.
-
 ---
 
 ## `rhoai platform`
@@ -131,20 +125,6 @@ rhoai usecase verify fraud-detection --config config-fraud-detection.yaml
 
 Worked example, sample output, and config reference for the Fraud Detection
 use case: **[`rhoai/usecases/README.md`](rhoai/usecases/README.md)**.
-
----
-
-## CLI usage
-
-All commands accept `--config`/`-c` at the subcommand level to specify a
-config file. Log verbosity is set with `--log-level`/`-l` on the root
-command, **before** the subcommand.
-
-```bash
-rhoai --help
-rhoai platform --help
-rhoai usecase  --help
-```
 
 ---
 

@@ -59,7 +59,7 @@ deployment:
     - name: demo-loan-nn-onnx-alpha
       model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
       inference_request: automation/rhoai/usecases/inputs/demo-loan.json
-    
+
     - name: demo-loan-nn-onnx-beta
       model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
       inference_request: automation/rhoai/usecases/inputs/demo-loan.json

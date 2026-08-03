@@ -23,7 +23,6 @@ from rhoai.ocp import resources
 from rhoai.platform import dsc, operators, prepare
 from rhoai.platform import verify as platform_verify
 from rhoai.utils.logger import get_logger
-from rhoai.utils.progress import step as progress_step
 
 app = typer.Typer(help="Manage the RHOAI platform.")
 log = get_logger(__name__)
@@ -39,57 +38,6 @@ _components_arg = typer.Argument(..., help="Component names, e.g. kserve trustya
 def _step(msg: str) -> None:
     """Print an indented progress line."""
     typer.echo(f"    {msg}")
-
-
-def _print_dashboard_url(config: dict) -> None:
-    """Print the RHOAI dashboard URL if dashboard is currently Managed.
-
-    Reads the URL from the ConsoleLink 'rhodslink' which the dashboard
-    component creates — this is the exact URL Red Hat intends users to visit.
-    Falls back to constructing the URL from the rhods-dashboard Route if the
-    ConsoleLink is absent (older installs).
-
-    Only prints when dashboard is confirmed Managed in the DSC.
-    """
-    dsc_name   = config["dsc"]["name"]
-    cluster_ns = config["platform"]["namespace"]
-
-    # Only show when dashboard component is Managed
-    try:
-        states = dsc.get_component_states(dsc_name)
-        if states.get("dashboard") != "Managed":
-            return
-    except Exception:  # noqa: BLE001
-        return
-
-    url = ""
-
-    # Primary: ConsoleLink created by the dashboard component
-    try:
-        cl  = resources.get("ConsoleLink", "rhodslink")
-        url = cl.get("spec", {}).get("href", "").rstrip("/")
-    except Exception:  # noqa: BLE001
-        pass
-
-    # Fallback: rhods-dashboard Route
-    if not url:
-        try:
-            route = resources.get("Route", "rhods-dashboard", cluster_ns)
-            host  = route.get("spec", {}).get("host", "")
-            tls   = route.get("spec", {}).get("tls")
-            if host:
-                url = f"{'https' if tls else 'http'}://{host}"
-        except Exception:  # noqa: BLE001
-            pass
-
-    if not url:
-        return
-
-    from urllib.parse import urlparse
-    hostname = urlparse(url).hostname or url
-    typer.echo(f"\n  \U0001f310  Dashboard")
-    typer.echo(f"    URL    {url}")
-    typer.echo(f"    Note   Add to /etc/hosts:  <ingress-ip>  {hostname}")
 
 
 def _print_platform_summary(config: dict) -> None:
@@ -128,7 +76,6 @@ def _print_platform_summary(config: dict) -> None:
                     typer.echo(f"    \u2714  {comp}")
         except Exception:  # noqa: BLE001
             pass
-        _print_dashboard_url(config)
 
 
 def _status_row(
@@ -194,86 +141,8 @@ def init_cmd(
     if source:
         config["operator"]["source"] = source
 
-    import rhoai.platform.operators as _ops
-    import rhoai.platform.dsc as _dsc
-    import rhoai.platform.prepare as _prep
-
-    _orig_validate_login   = _prep.validate_login
-    _orig_validate_storage = _prep.validate_storage
-    _orig_install          = _ops.install
-    _orig_verify           = _ops.verify
-    _orig_apply_dsci       = _dsc.apply_dsci
-    _orig_wait_dsci        = _dsc.wait_dsci_ready
-
-    _spinners: dict = {}
-
-    def _open_step(key: str, label: str) -> None:
-        if key not in _spinners:
-            ctx = progress_step(label)
-            ctx.__enter__()
-            _spinners[key] = ctx
-
-    def _close_step(key: str) -> None:
-        ctx = _spinners.pop(key, None)
-        if ctx:
-            ctx.__exit__(None, None, None)
-
-    def _close_all() -> None:
-        for key in list(_spinners):
-            _close_step(key)
-
-    ch  = config["operator"]["channel"]
-    src = config["operator"].get("source", "redhat-operators")
-    ver = config["operator"].get("version", "")
-    op_label = f"channel: {ch}, source: {src}" + (f", version: {ver}" if ver else "")
-
-    def _patched_validate_login():
-        _open_step("prereq", "Prerequisites (login, RBAC, storage, namespaces)")
-        _orig_validate_login()
-        _close_step("prereq")
-
-    def _patched_validate_storage(class_name):
-        _orig_validate_storage(class_name)
-
-    def _patched_install(name, ns, ch_, repo_root, timeout, **kwargs):
-        _open_step("operator", f"Installing RHOAI operator ({op_label})")
-        _orig_install(name, ns, ch_, repo_root, timeout, **kwargs)
-        _close_step("operator")
-
-    def _patched_verify(name, ns):
-        _open_step("operator", "Operator already installed — skipping install")
-        _orig_verify(name, ns)
-        _close_step("operator")
-
-    def _patched_apply_dsci(manifest_path):
-        _open_step("dsci", "Applying DSCInitialization")
-        _orig_apply_dsci(manifest_path)
-
-    def _patched_wait_dsci(name, timeout):
-        _orig_wait_dsci(name, timeout)
-        _close_step("dsci")
-
-    _prep.validate_login   = _patched_validate_login
-    _prep.validate_storage = _patched_validate_storage
-    _ops.install           = _patched_install
-    _ops.verify            = _patched_verify
-    _dsc.apply_dsci        = _patched_apply_dsci
-    _dsc.wait_dsci_ready   = _patched_wait_dsci
-
     typer.echo("\nInitializing RHOAI platform...")
-
-    try:
-        prepare.init_platform(config)
-    except Exception:
-        _close_all()
-        raise
-    finally:
-        _prep.validate_login   = _orig_validate_login
-        _prep.validate_storage = _orig_validate_storage
-        _ops.install           = _orig_install
-        _ops.verify            = _orig_verify
-        _dsc.apply_dsci        = _orig_apply_dsci
-        _dsc.wait_dsci_ready   = _orig_wait_dsci
+    prepare.init_platform(config)
 
     op_name   = config["operator"]["name"]
     op_ns     = config["operator"]["namespace"]
@@ -288,9 +157,9 @@ def init_cmd(
 
     dsci_phase = resources.status("DSCInitialization", dsci_name).get("phase", "Unknown")
 
-    typer.echo("\n  ✔  RHOAI Platform initialized")
-    typer.echo(f"  Operator    {op_display}")
-    typer.echo(f"  DSCI        {dsci_name}  {dsci_phase}")
+    typer.echo("\n  ✔  RHOAI platform initialized")
+    typer.echo(f"     Operator  : {op_display}")
+    typer.echo(f"     Platform  : {dsci_phase}")
     typer.echo("")
 
 
@@ -310,11 +179,8 @@ def enable_cmd(
     config = load_config(config_file)
     comp_list = ", ".join(components)
 
-    typer.echo(f"\nEnabling component(s): {comp_list}")
-    _step("Setting component state(s) on DSC to Managed")
-
+    typer.echo(f"\nEnabling: {comp_list}")
     prepare.install_component(config, components)
-
     typer.echo(f"\n  ✔  Enabled: {comp_list}")
 
     # Show all currently-managed components
@@ -328,9 +194,6 @@ def enable_cmd(
                 typer.echo(f"    \u2714  {comp}")
     except Exception:  # noqa: BLE001
         pass
-
-    # If dashboard is enabled (just requested or already managed), print its URL
-    _print_dashboard_url(config)
     typer.echo("")
 
 
@@ -350,11 +213,8 @@ def disable_cmd(
     config = load_config(config_file)
     comp_list = ", ".join(components)
 
-    typer.echo(f"\nDisabling component(s): {comp_list}")
-    _step("Setting component state(s) on DSC to Removed")
-
+    typer.echo(f"\nDisabling: {comp_list}")
     prepare.remove_component(config, components)
-
     typer.echo(f"\n  ✔  Disabled: {comp_list}")
 
     dsc_name = config["dsc"]["name"]
@@ -400,6 +260,7 @@ def uninstall_cmd(
     import rhoai.platform.dsc as _dsc
     from rhoai.ocp import resources as _res
 
+    R = "⟳"  # ⟳  fires before work starts
     D = "✔"  # ✔  fires after work completes
 
     _orig_delete_dsc      = _dsc.delete_dsc
@@ -407,83 +268,41 @@ def uninstall_cmd(
     _orig_delete_manifest = _res.delete_manifest
     _orig_exists          = _res.exists
 
-    # Spinner for the slow DSC/DSCI phase — opened on first hook, closed after DSCI done
-    _dsc_spinner = None
+    # Each flag ensures its step line prints exactly once
+    _printed = {"dsc": False, "olm": False, "ns": False}
 
-    def _open_dsc_spinner(label: str) -> None:
-        nonlocal _dsc_spinner
-        if _dsc_spinner is None:
-            _dsc_spinner = progress_step(label)
-            _dsc_spinner.__enter__()
+    def _once(key: str, msg: str) -> None:
+        if not _printed[key]:
+            typer.echo(f"  {R}  {msg}")
+            _printed[key] = True
 
-    def _close_dsc_spinner() -> None:
-        nonlocal _dsc_spinner
-        if _dsc_spinner is not None:
-            _dsc_spinner.__exit__(None, None, None)
-            _dsc_spinner = None
-
-    # Spinners for OLM and namespace phases
-    _olm_spinner = None
-    _ns_spinner  = None
-
-    def _open_olm_spinner(label: str) -> None:
-        nonlocal _olm_spinner
-        if _olm_spinner is None:
-            _olm_spinner = progress_step(label)
-            _olm_spinner.__enter__()
-
-    def _close_olm_spinner() -> None:
-        nonlocal _olm_spinner
-        if _olm_spinner is not None:
-            _olm_spinner.__exit__(None, None, None)
-            _olm_spinner = None
-
-    def _open_ns_spinner(label: str) -> None:
-        nonlocal _ns_spinner
-        if _ns_spinner is None:
-            _ns_spinner = progress_step(label)
-            _ns_spinner.__enter__()
-
-    def _close_ns_spinner() -> None:
-        nonlocal _ns_spinner
-        if _ns_spinner is not None:
-            _ns_spinner.__exit__(None, None, None)
-            _ns_spinner = None
-
-    def _close_all_spinners() -> None:
-        _close_dsc_spinner()
-        _close_olm_spinner()
-        _close_ns_spinner()
-
-    # Hook 1: DSC deletion — opens spinner; work (delete + pod drain) runs inside
+    # Hook 1: DSC deletion (first thing uninstall_platform does)
     def _patched_delete_dsc(name):
-        _open_dsc_spinner("Removing DataScienceCluster and DSCInitialization")
+        _once("dsc", "Removing DataScienceCluster and DSCInitialization")
         _orig_delete_dsc(name)
 
     # Hook 1b: DSCI-only path (when DSC was already absent)
     def _patched_delete_dsci(name):
-        _open_dsc_spinner("Removing DSCInitialization")
+        _once("dsc", "Removing DSCInitialization")
         _orig_delete_dsci(name)
-        _close_dsc_spinner()  # DSCI is the last dsc-phase call — close spinner here
 
-    # Hook 2: OLM phase — first CSV delete opens the spinner;
-    # stays open until namespace hook fires (next phase)
+    # Hook 2: OLM phase — first CSV delete triggers the step line
     def _patched_delete_manifest(kind, name, namespace=None):
         if kind == "ClusterServiceVersion":
-            _close_dsc_spinner()  # safety — DSC spinner may still be open if DSCI was absent
-            _open_olm_spinner("Removing operator (CSV, Subscription, OperatorGroup, InstallPlans)")
+            _once("olm", "Removing operator (CSV, Subscription, OperatorGroup, InstallPlans)")
         _orig_delete_manifest(kind, name, namespace)
 
-    # Hook 3: Namespace phase — first existing namespace closes the OLM spinner
-    # and opens the namespace spinner
+    # Hook 3: Namespace phase — _delete_namespace inside uninstall_platform
+    # calls resources.exists("Namespace", ns) before every deletion attempt.
+    # The first call where the namespace actually exists triggers the step line,
+    # so it prints right before the first namespace deletion starts.
     def _patched_exists(kind, name, namespace=None):
         result = _orig_exists(kind, name, namespace)
         if kind == "Namespace" and result:
-            _close_olm_spinner()
             if keep_workload_ns:
-                _open_ns_spinner("Removing operator namespace (workload namespaces preserved)")
+                _once("ns", "Removing operator namespace  (workload namespaces preserved)")
             else:
-                _open_ns_spinner("Removing namespaces")
+                _once("ns", "Removing namespaces")
         return result
 
     _dsc.delete_dsc      = _patched_delete_dsc
@@ -491,27 +310,21 @@ def uninstall_cmd(
     _res.delete_manifest = _patched_delete_manifest
     _res.exists          = _patched_exists
 
-    typer.echo("\nUninstalling RHOAI platform...")
+    typer.echo("\nRemoving RHOAI platform...")
 
     try:
         prepare.uninstall_platform(config, keep_workload_ns=keep_workload_ns)
-    except Exception:
-        _close_all_spinners()
-        raise
     finally:
         _dsc.delete_dsc      = _orig_delete_dsc
         _dsc.delete_dsci     = _orig_delete_dsci
         _res.delete_manifest = _orig_delete_manifest
         _res.exists          = _orig_exists
 
-    # Namespace deletions are done — close the spinner
-    _close_ns_spinner()
+    # CRDs / webhooks / RBAC run as batch oc calls with no Python-level hook.
+    # Print with ✔ after completion — they always run.
+    typer.echo(f"  {D}  Removed CRDs, webhooks and cluster-scoped RBAC")
 
-    # CRDs / webhooks / RBAC ran as batch oc calls inside uninstall_platform.
-    # Print as a plain completed line — consistent present-continuous tense.
-    typer.echo("  ✔  Removing CRDs, webhooks and cluster-scoped RBAC  (done)")
-
-    typer.echo("\n  ✔  RHOAI platform uninstalled.")
+    typer.echo("\n  ✔  RHOAI platform removed.")
 
 
 @app.command(name="setup")
@@ -537,107 +350,11 @@ def setup_cmd(
     if source:
         config["operator"]["source"] = source
 
-    import rhoai.platform.operators as _ops
-    import rhoai.platform.dsc as _dsc
-    import rhoai.platform.prepare as _prep
-
-    _orig_validate_login   = _prep.validate_login
-    _orig_validate_storage = _prep.validate_storage
-    _orig_install          = _ops.install
-    _orig_verify           = _ops.verify
-    _orig_apply_dsci       = _dsc.apply_dsci
-    _orig_wait_dsci        = _dsc.wait_dsci_ready
-    _orig_apply_dsc        = _dsc.apply_dsc
-    _orig_set_states       = _dsc.set_component_states
-    _orig_wait_dsc         = _dsc.wait_until_ready
-
-    _spinners: dict = {}
-
-    def _open_step(key: str, label: str) -> None:
-        if key not in _spinners:
-            ctx = progress_step(label)
-            ctx.__enter__()
-            _spinners[key] = ctx
-
-    def _close_step(key: str) -> None:
-        ctx = _spinners.pop(key, None)
-        if ctx:
-            ctx.__exit__(None, None, None)
-
-    def _close_all() -> None:
-        for key in list(_spinners):
-            _close_step(key)
-
     ch  = config["operator"]["channel"]
     src = config["operator"].get("source", "redhat-operators")
-    ver = config["operator"].get("version", "")
-    op_label = f"channel: {ch}, source: {src}" + (f", version: {ver}" if ver else "")
-
-    def _patched_validate_login():
-        _open_step("prereq", "Prerequisites (login, RBAC, storage, namespaces)")
-        _orig_validate_login()
-        _close_step("prereq")
-
-    def _patched_validate_storage(class_name):
-        _orig_validate_storage(class_name)
-
-    def _patched_install(name, ns, ch_, repo_root, timeout, **kwargs):
-        _open_step("operator", f"Installing RHOAI operator ({op_label})")
-        _orig_install(name, ns, ch_, repo_root, timeout, **kwargs)
-        _close_step("operator")
-
-    def _patched_verify(name, ns):
-        _open_step("operator", "Operator already installed — skipping install")
-        _orig_verify(name, ns)
-        _close_step("operator")
-
-    def _patched_apply_dsci(manifest_path):
-        _open_step("dsci", "Applying DSCInitialization")
-        _orig_apply_dsci(manifest_path)
-
-    def _patched_wait_dsci(name, timeout):
-        _orig_wait_dsci(name, timeout)
-        _close_step("dsci")
-
-    def _patched_apply_dsc(manifest_path):
-        _open_step("dsc", "Enabling components")
-        _orig_apply_dsc(manifest_path)
-
-    def _patched_set_states(name, states):
-        _open_step("dsc", "Enabling components")
-        _orig_set_states(name, states)
-
-    def _patched_wait_dsc(name, timeout):
-        _orig_wait_dsc(name, timeout)
-        _close_step("dsc")
-
-    _prep.validate_login      = _patched_validate_login
-    _prep.validate_storage    = _patched_validate_storage
-    _ops.install              = _patched_install
-    _ops.verify               = _patched_verify
-    _dsc.apply_dsci           = _patched_apply_dsci
-    _dsc.wait_dsci_ready      = _patched_wait_dsci
-    _dsc.apply_dsc            = _patched_apply_dsc
-    _dsc.set_component_states = _patched_set_states
-    _dsc.wait_until_ready     = _patched_wait_dsc
 
     typer.echo("\nSetting up RHOAI platform...")
-
-    try:
-        prepare.bootstrap_platform(config)
-    except Exception:
-        _close_all()
-        raise
-    finally:
-        _prep.validate_login      = _orig_validate_login
-        _prep.validate_storage    = _orig_validate_storage
-        _ops.install              = _orig_install
-        _ops.verify               = _orig_verify
-        _dsc.apply_dsci           = _orig_apply_dsci
-        _dsc.wait_dsci_ready      = _orig_wait_dsci
-        _dsc.apply_dsc            = _orig_apply_dsc
-        _dsc.set_component_states = _orig_set_states
-        _dsc.wait_until_ready     = _orig_wait_dsc
+    prepare.bootstrap_platform(config)
 
     _print_platform_summary(config)
     typer.echo("")
