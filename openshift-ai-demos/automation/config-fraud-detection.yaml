@@ -1,0 +1,32 @@
+# Fraud Detection — deployment configuration
+# Override only what differs from config/defaults.yaml.
+
+# Absolute path to the root of the openshift-ai-demos repository.
+repo_root: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos
+
+operator:
+  channel: stable-3.5
+
+# DSC components to enable during platform setup.
+components:
+  - dashboard
+  - workbenches
+  - kserve
+  - trustyai
+
+storage:
+  class_name: ""   # empty = accept any available ReadWriteOnce class
+
+deployment:
+  namespace: test-fraud
+  trustyai_service_name: trustyai-service
+  trustyai_service_account: trustyai-user
+
+  models:
+    - name: demo-loan-nn-onnx-alpha
+      model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
+      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
+
+    - name: demo-loan-nn-onnx-beta
+      model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
+      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json

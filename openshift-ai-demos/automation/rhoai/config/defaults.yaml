@@ -1,0 +1,59 @@
+# rhoai-automation default configuration
+# All values are overridden by the user config file or RHOAI_ environment variables.
+# See config/loader.py for override priority and environment variable mapping.
+
+log_level: INFO
+
+platform:
+  url: ""             # set via oc login before running, or RHOAI_PLATFORM_URL
+  namespace: redhat-ods-applications   # namespace where RHOAI operands run
+  kubeconfig: ""      # defaults to ~/.kube/config when empty
+
+# Absolute path to the root of the openshift-ai-demos repository.
+# Used by platform/manifests.py and usecases/*/assets.py to resolve
+# manifest file paths. Set via RHOAI_REPO_ROOT or the user config file.
+repo_root: ""
+
+operator:
+  name: rhods-operator
+  namespace: redhat-ods-operator
+  channel: stable
+  source: redhat-operators
+  source_namespace: openshift-marketplace
+
+# Restrict 'rhoai platform setup' to only enable these components.
+# Empty list (default) applies the full base DSC manifest.
+components: []
+
+dsc:
+  name: default-dsc
+  dsci_name: default-dsci
+
+storage:
+  class_name: ""        # empty = accept any available RWO class
+  s3_secret_name: s3-credentials
+
+deployment:
+  namespace: ""                             # workload namespace; falls back to platform.namespace when empty
+  trustyai_service_name: trustyai-service   # metadata.name in trustyai/service/trustyai-service.yaml
+  trustyai_service_account: trustyai-user   # ServiceAccount used to call the TrustyAI REST API
+
+  # List of models to deploy. Each entry is an independent InferenceService.
+  # For bias monitoring, supply two entries (e.g. baseline + candidate).
+  # model_uri formats:
+  #   pvc://<claim-name>/<path>   — model pre-loaded on a PersistentVolumeClaim
+  #   hf://<org>/<repo>           — model downloaded directly from Hugging Face
+  #   oci://<registry>/<image>    — model stored as an OCI artifact
+  #   <s3-path>                   — plain S3 path; also fills shared/s3-secret.yaml values
+  models:
+    - name: fraud-detection
+      model_uri: pvc://fraud-model-pvc/models
+      # Path to the KServe v2 JSON inference request used for smoke-testing.
+      # Relative to repo_root; required for deployment validation and verify.
+      inference_request: ""
+
+timeouts:
+  operator_ready: 300   # seconds
+  dsc_ready: 600
+  inference_ready: 120
+  trustyai_ready: 300
