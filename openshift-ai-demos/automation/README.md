@@ -81,14 +81,14 @@ and waits for each step to be healthy before continuing.
     │  platform/    │    │  usecases/          │
     │  prepare.py   │    │  fraud_detection/   │
     │  operators.py │    │  deploy.py          │
-    │  dsc.py       │    │  verify.py          │
+    │  dsc.py       │<---│  verify.py          │
     │  inference.py │    │  cleanup.py         │
-    │  trustyai.py  │    │  assets.py          │
-    │  storage.py   │    └──────┬──────────────┘
-    │  verify.py    │           │ (calls platform/,
-    └────────────┬──┘           │  never ocp/ directly)
-                 │              │
-    ┌────────────▼──────────────▼─────────────┐
+    │  trustyai.py  │    │  assets.py          │ (calls platform/,
+    │  storage.py   │    └─────────────────────┘ never ocp/ directly)
+    │  verify.py    │             
+    └────────────┬──┘              
+                 │               
+    ┌────────────▼────────────────────────────┐
     │  ocp/                                   │  Only layer that
     │  resources.py   — Kubernetes API        │  talks to the
     │  wait.py        — polling helpers       │  cluster.
