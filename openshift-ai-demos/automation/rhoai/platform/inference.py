@@ -14,6 +14,19 @@ def apply_serving_runtime(manifest_path: Path, namespace: str) -> None:
     resources.apply_manifest(manifest_path, namespace)
 
 
+def apply_serving_runtime_from_template(template_path: Path, namespace: str) -> None:
+    """Instantiate an OpenShift Template and apply the resulting ServingRuntime.
+
+    Equivalent to:
+        oc process -n <namespace> -f <template_path> | oc apply -f -
+
+    Use this when the ServingRuntime is defined inside a Template object
+    (e.g. triton-ppc64le-runtime-template.yaml).
+    """
+    log.info("Processing ServingRuntime template %s", template_path.name)
+    resources.process_template(template_path, namespace)
+
+
 def apply_inference_service(manifest_path: Path, namespace: str) -> None:
     """Apply an InferenceService manifest. Does not block — call wait_until_ready() after."""
     log.info("Applying InferenceService from %s", manifest_path.name)

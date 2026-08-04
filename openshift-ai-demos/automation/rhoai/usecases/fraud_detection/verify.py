@@ -19,14 +19,15 @@ def verify(config: dict[str, Any]) -> None:
 
     platform_verify.verify_platform(config)
 
-    namespace = config["cluster"]["namespace"]
-    fd_cfg    = config.get("fraud_detection", {})
-    isvc_name = fd_cfg.get("inference_service_name", "qwen")
+    namespace     = config["cluster"]["namespace"]
+    fd_cfg        = config.get("fraud_detection", {})
+    isvc_name     = fd_cfg.get("inference_service_name", "fraud-detection")
+    trustyai_name = fd_cfg.get("trustyai_service_name", "trustyai-service")
 
     log.info("Checking InferenceService '%s'", isvc_name)
     inference.verify(namespace, name=isvc_name)
 
-    log.info("Checking GuardrailsOrchestrator")
-    trustyai.verify(namespace)
+    log.info("Checking TrustyAIService '%s'", trustyai_name)
+    trustyai.verify(trustyai_name, namespace)
 
     log.info("=== Fraud Detection verification passed ===")

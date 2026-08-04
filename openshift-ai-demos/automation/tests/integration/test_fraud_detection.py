@@ -30,46 +30,42 @@ class TestConfigDefaults:
     def test_fraud_detection_defaults_present(self) -> None:
         config = load_config()
         fd = config.get("fraud_detection", {})
-        assert fd.get("model_name") == "qwen2.5-1.5b-instruct"
-        assert fd.get("inference_service_name") == "qwen"
-        assert fd.get("serving_runtime_name") == "vllm-cpu-runtime"
+        assert fd.get("inference_service_name") == "fraud-detection"
+        assert fd.get("serving_runtime_name")   == "triton-ppc64le-runtime"
+        assert fd.get("trustyai_service_name")  == "trustyai-service"
 
     def test_timeouts_present(self) -> None:
         config = load_config()
-        assert "operator_ready" in config["timeouts"]
+        assert "operator_ready"  in config["timeouts"]
         assert "dsc_ready"       in config["timeouts"]
         assert "inference_ready" in config["timeouts"]
+        assert "trustyai_ready"  in config["timeouts"]
 
 
 class TestAssetPaths:
-    def test_model_manifest_path(self, tmp_path: Path) -> None:
-        p = assets.get_model_manifest(tmp_path, "qwen2.5-1.5b-instruct")
-        expected = (
-            tmp_path / "model-serving" / "generative-models" / "vllm" / "qwen2.5-1.5b-instruct.yaml"
+    def test_serving_runtime_template_path(self, tmp_path: Path) -> None:
+        p = assets.get_serving_runtime_template(tmp_path)
+        assert p == (
+            tmp_path
+            / "model-serving"
+            / "predictive-models"
+            / "triton"
+            / "triton-ppc64le-runtime-template.yaml"
         )
-        assert p == expected
 
-    def test_serving_runtime_path(self, tmp_path: Path) -> None:
-        p = assets.get_serving_runtime_manifest(tmp_path)
-        assert p == tmp_path / "model-serving" / "shared" / "vllm-serving-runtime.yaml"
+    def test_model_manifest_path(self, tmp_path: Path) -> None:
+        p = assets.get_model_manifest(tmp_path)
+        assert p == (
+            tmp_path / "model-serving" / "predictive-models" / "triton" / "fraud-detection.yaml"
+        )
 
-    def test_guardrails_manifest_paths(self, tmp_path: Path) -> None:
-        paths = assets.get_trustyai_guardrails_manifests(tmp_path)
-        assert len(paths) == 3
-        names = [p.name for p in paths]
-        assert "configmap_orchestrator.yaml" in names
-        assert "configmap_vllm_gateway.yaml" in names
-        assert "orchestrator_cr.yaml"        in names
+    def test_trustyai_monitoring_path(self, tmp_path: Path) -> None:
+        p = assets.get_trustyai_monitoring_manifest(tmp_path)
+        assert p == tmp_path / "trustyai" / "service" / "monitoring-config.yaml"
 
-    def test_guardrails_apply_order(self, tmp_path: Path) -> None:
-        """ConfigMaps must come before the Orchestrator CR."""
-        paths = assets.get_trustyai_guardrails_manifests(tmp_path)
-        names = [p.name for p in paths]
-        assert names.index("orchestrator_cr.yaml") > names.index("configmap_orchestrator.yaml")
-
-    def test_prometheus_rules_path(self, tmp_path: Path) -> None:
-        p = assets.get_prometheus_rules_manifest(tmp_path)
-        assert p == tmp_path / "trustyai" / "monitoring" / "prometheus-rules.yaml"
+    def test_trustyai_service_path(self, tmp_path: Path) -> None:
+        p = assets.get_trustyai_service_manifest(tmp_path)
+        assert p == tmp_path / "trustyai" / "service" / "trustyai-service.yaml"
 
 
 class TestDeploySmoke:
@@ -114,10 +110,19 @@ class TestDeploySmoke:
         dsc_mock.apply_dsc.assert_called_once()
         dsc_mock.wait_until_ready.assert_called_once()
         storage_mock.apply_s3_secret.assert_called_once()
-        inference_mock.apply_serving_runtime.assert_called_once()
+
+        # Step 5: Triton Template → ServingRuntime, then InferenceService
+        inference_mock.apply_serving_runtime_from_template.assert_called_once()
         inference_mock.apply_inference_service.assert_called_once()
         inference_mock.wait_until_ready.assert_called_once_with(
-            "qwen", "test-ns", config["timeouts"]["inference_ready"]
+            "fraud-detection", "test-ns", config["timeouts"]["inference_ready"]
         )
-        trustyai_mock.apply_guardrails.assert_called_once()
-        trustyai_mock.apply_prometheus_rules.assert_called_once()
+
+        # Step 6: TrustyAI monitoring config + service — no inferenceservice-config patch
+        trustyai_mock.apply_monitoring_config.assert_called_once()
+        trustyai_mock.apply_trustyai_service.assert_called_once()
+        trustyai_mock.wait_until_ready.assert_called_once_with(
+            "trustyai-service", "test-ns", config["timeouts"]["trustyai_ready"]
+        )
+        # patch_inferenceservice_config is required: RawDeployment mode applies to all ISVCs
+        trustyai_mock.patch_inferenceservice_config.assert_called_once_with("test-ns")

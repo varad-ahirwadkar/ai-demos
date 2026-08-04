@@ -4,6 +4,7 @@ The only module that talks to the Kubernetes API.
 All platform modules call this — never the SDK directly.
 """
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -41,12 +42,14 @@ _API_HINTS: dict[str, str] = {
     "OperatorGroup":           "operators.coreos.com/v1",
     "ClusterServiceVersion":   "operators.coreos.com/v1alpha1",
     "SelfSubjectAccessReview": "authorization.k8s.io/v1",
+    "Template":                "template.openshift.io/v1",
     # RHOAI CRDs
     "DataScienceCluster":      "datasciencecluster.opendatahub.io/v1",
     "DSCInitialization":       "dscinitialization.opendatahub.io/v1",
     "InferenceService":        "serving.kserve.io/v1beta1",
     "ServingRuntime":          "serving.kserve.io/v1alpha1",
     "GuardrailsOrchestrator":  "trustyai.opendatahub.io/v1alpha1",
+    "TrustyAIService":         "trustyai.opendatahub.io/v1alpha1",
 }
 
 
@@ -64,6 +67,40 @@ def _resource(client: dynamic.DynamicClient, kind: str, api_version: str | None 
     if kind in _API_HINTS:
         return client.resources.get(api_version=_API_HINTS[kind], kind=kind)
     return client.resources.get(kind=kind)
+
+
+def process_template(path: Path, namespace: str) -> None:
+    """Process an OpenShift Template and apply all rendered objects.
+
+    Equivalent to:
+        oc process -n <namespace> -f <path> | oc apply -f -
+
+    The template is rendered cluster-side (so parameter defaults are applied)
+    and each rendered object is immediately applied server-side.  Idempotent.
+
+    Raises RuntimeError if oc is not on PATH or the process call fails.
+    """
+    log.info("Processing Template %s in '%s'", path.name, namespace)
+    result = subprocess.run(
+        ["oc", "process", "-n", namespace, "-f", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"oc process failed for {path.name}: {result.stderr.strip()}"
+        )
+    apply_result = subprocess.run(
+        ["oc", "apply", "-n", namespace, "-f", "-"],
+        input=result.stdout,
+        capture_output=True,
+        text=True,
+    )
+    if apply_result.returncode != 0:
+        raise RuntimeError(
+            f"oc apply failed after processing {path.name}: {apply_result.stderr.strip()}"
+        )
+    log.debug("Template %s applied successfully", path.name)
 
 
 def apply_manifest(path: Path, namespace: str | None = None) -> dict[str, Any]:

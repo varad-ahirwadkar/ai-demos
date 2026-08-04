@@ -18,15 +18,16 @@ def cleanup(config: dict[str, Any], delete_platform: bool = False) -> None:
 
     Pass delete_platform=True to also remove DSC and DSCI.
     """
-    namespace = config["cluster"]["namespace"]
-    fd_cfg    = config.get("fraud_detection", {})
-    isvc_name = fd_cfg.get("inference_service_name", "qwen")
-    rt_name   = fd_cfg.get("serving_runtime_name", "vllm-cpu-runtime")
+    namespace     = config["cluster"]["namespace"]
+    fd_cfg        = config.get("fraud_detection", {})
+    isvc_name     = fd_cfg.get("inference_service_name", "fraud-detection")
+    rt_name       = fd_cfg.get("serving_runtime_name", "triton-ppc64le-runtime")
+    trustyai_name = fd_cfg.get("trustyai_service_name", "trustyai-service")
 
     log.info("=== Cleaning up Fraud Detection ===")
 
-    # 1 — TrustAI guardrails (includes Prometheus rules and ConfigMaps)
-    trustyai.delete_guardrails("guardrails-orchestrator", namespace)
+    # 1 — TrustyAI Service
+    trustyai.delete_trustyai_service(trustyai_name, namespace)
 
     # 2 — model serving
     inference.delete_inference_service(isvc_name, namespace)

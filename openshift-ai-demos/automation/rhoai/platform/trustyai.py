@@ -1,6 +1,11 @@
-"""TrustAI guardrails lifecycle — GuardrailsOrchestrator and supporting ConfigMaps.
+"""TrustyAI Service lifecycle — TrustyAIService CR and its prerequisites.
 
-Manages the FMS guardrails stack deployed alongside inference models.
+Manages:
+  - OpenShift user-workload monitoring ConfigMaps (cluster-wide prerequisite)
+  - The inferenceservice-config ConfigMap patch required in RawDeployment mode
+    so TrustyAI can inject its sidecar without RHOAI reverting the change
+  - The TrustyAIService CR itself
+
 Does not own model serving — that lives in platform/inference.py.
 """
 
@@ -11,45 +16,65 @@ from rhoai.utils.logger import get_logger
 
 log = get_logger(__name__)
 
-# Resource names created by the guardrails manifests.
-_ORCHESTRATOR_NAME = "guardrails-orchestrator"
-_ORCHESTRATOR_KIND = "GuardrailsOrchestrator"
-_ORCHESTRATOR_CM   = "fms-orchestr8-config-nlp"
-_GATEWAY_CM        = "fms-orchestr8-config-gateway"
+_SERVICE_KIND = "TrustyAIService"
+_ISVC_CONFIG_CM = "inferenceservice-config"
 
 
-def apply_guardrails(manifest_paths: list[Path], namespace: str) -> None:
-    """Apply all guardrails manifests in order. Idempotent."""
-    for path in manifest_paths:
-        log.info("Applying TrustAI manifest: %s", path.name)
-        resources.apply_manifest(path, namespace)
+def apply_monitoring_config(manifest_path: Path) -> None:
+    """Apply the cluster-monitoring and user-workload-monitoring ConfigMaps.
+
+    These are cluster-scoped (namespace is baked into each document), so no
+    namespace argument is needed.  Idempotent.
+    """
+    from rhoai.utils.yaml_io import load_all
+
+    log.info("Applying monitoring config from %s", manifest_path.name)
+    for doc in load_all(manifest_path):
+        ns = doc.get("metadata", {}).get("namespace")
+        resources.apply_dict(doc, ns)
 
 
-def apply_prometheus_rules(manifest_path: Path, namespace: str) -> None:
-    """Apply a PrometheusRule manifest. Idempotent."""
-    log.info("Applying PrometheusRule from %s", manifest_path.name)
+def patch_inferenceservice_config(namespace: str) -> None:
+    """Remove opendatahub.io/managed from inferenceservice-config.
+
+    Required for any InferenceService using RawDeployment mode so that
+    TrustyAI can inject its payload-logging sidecar without RHOAI reverting
+    the ConfigMap change.  Idempotent — annotation is absent after the call
+    whether or not it existed before.
+    """
+    log.info("Patching inferenceservice-config in '%s'", namespace)
+    resources.patch(
+        "ConfigMap",
+        _ISVC_CONFIG_CM,
+        {"metadata": {"annotations": {"opendatahub.io/managed": "false"}}},
+        namespace=namespace,
+    )
+
+
+def apply_trustyai_service(manifest_path: Path, namespace: str) -> None:
+    """Apply the TrustyAIService CR manifest.  Idempotent."""
+    log.info("Applying TrustyAIService from %s", manifest_path.name)
     resources.apply_manifest(manifest_path, namespace)
 
 
-def wait_until_ready(namespace: str, timeout: int = 300) -> None:
-    """Block until the GuardrailsOrchestrator is Ready. Raises TimeoutError."""
-    log.info("Waiting for GuardrailsOrchestrator (timeout: %ss)", timeout)
-    wait.wait_until_ready(_ORCHESTRATOR_KIND, _ORCHESTRATOR_NAME, namespace, timeout=timeout)
+def wait_until_ready(name: str, namespace: str, timeout: int = 300) -> None:
+    """Block until the TrustyAIService is Ready.  Raises TimeoutError."""
+    log.info("Waiting for TrustyAIService '%s' (timeout: %ss)", name, timeout)
+    wait.wait_until_ready(_SERVICE_KIND, name, namespace, timeout=timeout)
 
 
-def verify(namespace: str) -> None:
-    """Assert the GuardrailsOrchestrator is Ready. Raises RuntimeError if not."""
-    log.info("Verifying GuardrailsOrchestrator in '%s'", namespace)
-    if not resources.is_ready(_ORCHESTRATOR_KIND, _ORCHESTRATOR_NAME, namespace):
+def verify(name: str, namespace: str) -> None:
+    """Assert the TrustyAIService is Ready.  Raises RuntimeError if not."""
+    log.info("Verifying TrustyAIService '%s' in '%s'", name, namespace)
+    if not resources.is_ready(_SERVICE_KIND, name, namespace):
         raise RuntimeError(
-            f"GuardrailsOrchestrator '{_ORCHESTRATOR_NAME}' is not ready in '{namespace}'."
+            f"TrustyAIService '{name}' is not ready in '{namespace}'."
         )
-    log.info("GuardrailsOrchestrator is Ready")
+    log.info("TrustyAIService '%s' is Ready", name)
 
 
-def delete_guardrails(name: str, namespace: str) -> None:
-    """Delete the GuardrailsOrchestrator and its ConfigMaps."""
-    log.info("Deleting GuardrailsOrchestrator '%s'", name)
-    resources.delete_manifest(_ORCHESTRATOR_KIND, name, namespace)
-    resources.delete_manifest("ConfigMap", _ORCHESTRATOR_CM, namespace)
-    resources.delete_manifest("ConfigMap", _GATEWAY_CM, namespace)
+def delete_trustyai_service(name: str, namespace: str) -> None:
+    """Delete the TrustyAIService CR and wait for it to disappear."""
+    log.info("Deleting TrustyAIService '%s'", name)
+    resources.delete_manifest(_SERVICE_KIND, name, namespace)
+    wait.wait_until_deleted(_SERVICE_KIND, name, namespace)

@@ -30,3 +30,13 @@ def get_subscription(repo_root: str | Path) -> Path:
 
 def get_vllm_serving_runtime(repo_root: str | Path) -> Path:
     return Path(repo_root) / "model-serving" / "shared" / "vllm-serving-runtime.yaml"
+
+
+def get_triton_serving_runtime_template(repo_root: str | Path) -> Path:
+    return (
+        Path(repo_root)
+        / "model-serving"
+        / "predictive-models"
+        / "triton"
+        / "triton-ppc64le-runtime-template.yaml"
+    )

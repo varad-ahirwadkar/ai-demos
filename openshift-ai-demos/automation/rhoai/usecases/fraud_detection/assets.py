@@ -10,66 +10,48 @@ from pathlib import Path
 from rhoai.platform import manifests
 
 
-def get_model_manifest(repo_root: str | Path, model_name: str) -> Path:
-    """Return the path to a generative model InferenceService manifest.
+def get_serving_runtime_template(repo_root: str | Path) -> Path:
+    """Return the path to the Triton ServingRuntime OpenShift Template.
 
-    Args:
-        repo_root:  Root of the openshift-ai-demos repository.
-        model_name: Manifest filename without extension,
-                    e.g. "qwen2.5-1.5b-instruct".
+    The Template is processed via ``oc process`` before the ServingRuntime
+    CR is created — see platform.inference.apply_serving_runtime_from_template().
 
     Returns:
-        Path to model-serving/generative-models/vllm/<model_name>.yaml
+        Path to model-serving/predictive-models/triton/triton-ppc64le-runtime-template.yaml
+    """
+    return manifests.get_triton_serving_runtime_template(repo_root)
+
+
+def get_model_manifest(repo_root: str | Path) -> Path:
+    """Return the path to the Fraud Detection InferenceService manifest.
+
+    Returns:
+        Path to model-serving/predictive-models/triton/fraud-detection.yaml
     """
     return (
         Path(repo_root)
         / "model-serving"
-        / "generative-models"
-        / "vllm"
-        / f"{model_name}.yaml"
+        / "predictive-models"
+        / "triton"
+        / "fraud-detection.yaml"
     )
 
 
-def get_serving_runtime_manifest(repo_root: str | Path) -> Path:
-    """Return the path to the vLLM ServingRuntime manifest.
+def get_trustyai_monitoring_manifest(repo_root: str | Path) -> Path:
+    """Return the path to the monitoring ConfigMaps manifest.
 
-    Delegates to platform.manifests — the single source of truth for
-    shared platform manifest paths.
-    """
-    return manifests.get_vllm_serving_runtime(repo_root)
-
-
-def get_trustyai_guardrails_manifests(repo_root: str | Path) -> list[Path]:
-    """Return manifest paths for TrustAI guardrails, in apply order.
-
-    Args:
-        repo_root: Root of the openshift-ai-demos repository.
+    Contains both cluster-monitoring-config and user-workload-monitoring-config.
 
     Returns:
-        Ordered list of paths to the guardrails YAML files.
+        Path to trustyai/service/monitoring-config.yaml
     """
-    base = (
-        Path(repo_root)
-        / "trustyai"
-        / "guardrails"
-        / "fms-guardrails"
-        / "lemonade-stand"
-        / "guardrails"
-    )
-    return [
-        base / "configmap_orchestrator.yaml",
-        base / "configmap_vllm_gateway.yaml",
-        base / "orchestrator_cr.yaml",
-    ]
+    return Path(repo_root) / "trustyai" / "service" / "monitoring-config.yaml"
 
 
-def get_prometheus_rules_manifest(repo_root: str | Path) -> Path:
-    """Return the path to the Prometheus alerting rules manifest.
-
-    Args:
-        repo_root: Root of the openshift-ai-demos repository.
+def get_trustyai_service_manifest(repo_root: str | Path) -> Path:
+    """Return the path to the TrustyAIService CR manifest.
 
     Returns:
-        Path to trustyai/monitoring/prometheus-rules.yaml
+        Path to trustyai/service/trustyai-service.yaml
     """
-    return Path(repo_root) / "trustyai" / "monitoring" / "prometheus-rules.yaml"
+    return Path(repo_root) / "trustyai" / "service" / "trustyai-service.yaml"

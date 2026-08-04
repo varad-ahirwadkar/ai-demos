@@ -28,12 +28,13 @@ storage:
   s3_secret_name: s3-credentials
 
 fraud_detection:
-  model_name: qwen2.5-1.5b-instruct   # YAML filename under model-serving/generative-models/vllm/
-  inference_service_name: qwen         # metadata.name inside that YAML
-  serving_runtime_name: vllm-cpu-runtime
+  inference_service_name: fraud-detection    # metadata.name in model-serving/predictive-models/triton/fraud-detection.yaml
+  serving_runtime_name: triton-ppc64le-runtime   # created from the Triton Template
+  trustyai_service_name: trustyai-service    # metadata.name in trustyai/service/trustyai-service.yaml
 
 timeouts:
   operator_ready: 300   # seconds
   dsc_ready: 600
   inference_ready: 600
+  trustyai_ready: 300
   download_complete: 1800
