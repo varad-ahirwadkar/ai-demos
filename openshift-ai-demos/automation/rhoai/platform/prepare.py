@@ -1,4 +1,4 @@
-"""Platform preparation — cluster validation and namespace setup."""
+"""Platform preparation — cluster validation, namespace setup, and bootstrap."""
 
 from typing import Any
 
@@ -18,12 +18,46 @@ def prepare_platform(config: dict[str, Any]) -> None:
     log.info("Platform preparation complete")
 
 
+def deploy_platform(config: dict[str, Any]) -> None:
+    """Validate prerequisites, install the RHOAI operator, and configure DSC/DSCI.
+
+    Consolidates the bootstrap sequence shared by the platform CLI command and
+    every use-case deploy function:
+        1. prepare_platform  — login, RBAC, storage, namespace
+        2. operator          — install or wait for the existing CSV
+        3. DSC/DSCI          — apply manifests and wait for Ready
+
+    Callers that need to run further steps (e.g. storage secrets, model serving)
+    simply continue after this function returns.
+    """
+    # Import here to avoid a circular import: prepare → manifests/operators/dsc
+    # is fine at runtime because these are sibling platform modules, but keeping
+    # the imports local makes the dependency explicit and easy to see.
+    from rhoai.platform import dsc, manifests, operators
+
+    repo_root  = config["repo_root"]
+    op_name    = config["operator"]["name"]
+    op_ns      = config["operator"]["namespace"]
+    op_timeout = config["timeouts"]["operator_ready"]
+
+    prepare_platform(config)
+
+    if not operators.is_installed(op_name, op_ns):
+        operators.install(op_name, op_ns, config["operator"]["channel"], repo_root, op_timeout)
+    else:
+        operators.wait_until_ready(op_name, op_ns, op_timeout)
+
+    dsc.apply_dsci(manifests.get_dsci(repo_root))
+    dsc.apply_dsc(manifests.get_dsc(repo_root))
+    dsc.wait_until_ready(config["dsc"]["name"], config["timeouts"]["dsc_ready"])
+
+
 def validate_login() -> None:
     """Confirm the CLI is authenticated. Raises RuntimeError if unreachable."""
     log.info("Validating cluster login")
     try:
         resources.get("ClusterVersion", "version")
-    except Exception as exc:
+    except (ConnectionError, TimeoutError, OSError) as exc:
         raise RuntimeError(f"Cannot reach cluster — run 'oc login' first. Detail: {exc}") from exc
     log.info("Cluster login confirmed")
 
@@ -50,7 +84,7 @@ def validate_permissions(operator_namespace: str) -> None:
     try:
         result = resources.apply_dict(review)
         allowed = result.get("status", {}).get("allowed", False)
-    except Exception as exc:
+    except RuntimeError as exc:
         raise RuntimeError(f"Permission check failed: {exc}") from exc
 
     if not allowed:
@@ -105,61 +139,64 @@ def get_cluster_info() -> dict[str, Any]:
     classes = resources.list_resources("StorageClass")
     pvs     = resources.list_resources("PersistentVolume")
 
-    is_sno = len(nodes) == 1
-
-    # On SNO the single node carries both master and worker labels — treat it as worker.
     worker_nodes = [n for n in nodes if _has_role(n, "worker")] or nodes
 
-    # Per-node breakdown for workers
-    worker_details = []
+    return {
+        "openshift_version": _openshift_version(cv),
+        "topology":          "SNO" if len(nodes) == 1 else "Multi-node",
+        "node_count":        len(nodes),
+        "worker_count":      len(worker_nodes),
+        "worker_nodes":      _worker_details(worker_nodes),
+        "storage_summary":   _storage_summary(classes, pvs),
+    }
+
+
+def _openshift_version(cluster_version: dict[str, Any]) -> str:
+    return cluster_version.get("status", {}).get("desired", {}).get("version", "unknown")
+
+
+def _worker_details(worker_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return per-node CPU/memory/GPU breakdown for each worker node."""
+    result = []
     for n in worker_nodes:
         name = n.get("metadata", {}).get("name", "?")
         cap  = n.get("status", {}).get("capacity", {})
-        cpu_cores = _parse_cpu(cap.get("cpu", "0")) // 1000
-        mem_gib   = _parse_memory_ki(cap.get("memory", "0Ki")) // (1024 * 1024)
-        gpu       = int(cap.get("nvidia.com/gpu", 0))
-        worker_details.append({
+        result.append({
             "name":   name,
-            "cpu":    f"{cpu_cores} cores",
-            "memory": f"{mem_gib} GiB",
-            "gpu":    gpu,
+            "cpu":    f"{_parse_cpu(cap.get('cpu', '0')) // 1000} cores",
+            "memory": f"{_parse_memory_ki(cap.get('memory', '0Ki')) // (1024 * 1024)} GiB",
+            "gpu":    int(cap.get("nvidia.com/gpu", 0)),
         })
+    return result
 
-    # Aggregate PV capacity per StorageClass split by phase
-    # Phase "Bound"     = in use by a PVC
-    # Phase "Available" = pre-provisioned, not yet claimed
-    # Phase "Released"  = was bound, PVC deleted, not yet recycled
+
+def _storage_summary(
+    classes: list[dict[str, Any]],
+    pvs: list[dict[str, Any]],
+) -> dict[str, dict[str, str]]:
+    """Return per-StorageClass used/available GiB aggregated from PV phases."""
+    # Phase "Bound"               = in use by a PVC
+    # Phase "Available"/"Released"= pre-provisioned or pending recycle
     pv_bound_ki:     dict[str, int] = {}
     pv_available_ki: dict[str, int] = {}
 
     for pv in pvs:
-        sc_name  = pv.get("spec", {}).get("storageClassName", "unknown")
-        capacity = pv.get("spec", {}).get("capacity", {}).get("storage", "0")
-        phase    = pv.get("status", {}).get("phase", "Unknown")
-        ki       = _parse_memory_ki(capacity)
+        sc    = pv.get("spec", {}).get("storageClassName", "unknown")
+        ki    = _parse_memory_ki(pv.get("spec", {}).get("capacity", {}).get("storage", "0"))
+        phase = pv.get("status", {}).get("phase", "Unknown")
         if phase == "Bound":
-            pv_bound_ki[sc_name]     = pv_bound_ki.get(sc_name, 0) + ki
+            pv_bound_ki[sc]     = pv_bound_ki.get(sc, 0) + ki
         elif phase in ("Available", "Released"):
-            pv_available_ki[sc_name] = pv_available_ki.get(sc_name, 0) + ki
+            pv_available_ki[sc] = pv_available_ki.get(sc, 0) + ki
 
-    sc_names = [sc.get("metadata", {}).get("name", "?") for sc in classes]
-    storage_summary: dict[str, dict[str, str]] = {}
-    for sc in sc_names:
-        bound_gib = pv_bound_ki.get(sc, 0) // (1024 * 1024)
-        avail_gib = pv_available_ki.get(sc, 0) // (1024 * 1024)
-        storage_summary[sc] = {
-            "used":      f"{bound_gib} GiB",
-            "available": f"{avail_gib} GiB",
+    summary: dict[str, dict[str, str]] = {}
+    for sc_obj in classes:
+        sc = sc_obj.get("metadata", {}).get("name", "?")
+        summary[sc] = {
+            "used":      f"{pv_bound_ki.get(sc, 0) // (1024 * 1024)} GiB",
+            "available": f"{pv_available_ki.get(sc, 0) // (1024 * 1024)} GiB",
         }
-
-    return {
-        "openshift_version": cv.get("status", {}).get("desired", {}).get("version", "unknown"),
-        "topology":          "SNO" if is_sno else "Multi-node",
-        "node_count":        len(nodes),
-        "worker_count":      len(worker_nodes),
-        "worker_nodes":      worker_details,
-        "storage_summary":   storage_summary,
-    }
+    return summary
 
 
 def _has_role(node: dict[str, Any], role: str) -> bool:

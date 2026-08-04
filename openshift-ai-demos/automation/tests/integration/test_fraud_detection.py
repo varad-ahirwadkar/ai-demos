@@ -88,16 +88,11 @@ class TestDeploySmoke:
         deploy_mod = importlib.import_module("rhoai.usecases.fraud_detection.deploy")
 
         prepare_mock   = MagicMock()
-        operators_mock = MagicMock()
-        operators_mock.is_installed.return_value = True
-        dsc_mock       = MagicMock()
         storage_mock   = MagicMock()
         inference_mock = MagicMock()
         trustyai_mock  = MagicMock()
 
         monkeypatch.setattr(deploy_mod, "prepare",   prepare_mock)
-        monkeypatch.setattr(deploy_mod, "operators", operators_mock)
-        monkeypatch.setattr(deploy_mod, "dsc",       dsc_mock)
         monkeypatch.setattr(deploy_mod, "storage",   storage_mock)
         monkeypatch.setattr(deploy_mod, "inference", inference_mock)
         monkeypatch.setattr(deploy_mod, "trustyai",  trustyai_mock)
@@ -105,10 +100,10 @@ class TestDeploySmoke:
         config = self._make_config(tmp_path)
         deploy_mod.deploy(config)
 
-        prepare_mock.prepare_platform.assert_called_once()
-        dsc_mock.apply_dsci.assert_called_once()
-        dsc_mock.apply_dsc.assert_called_once()
-        dsc_mock.wait_until_ready.assert_called_once()
+        # Steps 1–3 collapsed into deploy_platform
+        prepare_mock.deploy_platform.assert_called_once_with(config)
+
+        # Step 4: S3 secret
         storage_mock.apply_s3_secret.assert_called_once()
 
         # Step 5: Triton Template → ServingRuntime, then InferenceService
@@ -118,11 +113,10 @@ class TestDeploySmoke:
             "fraud-detection", "test-ns", config["timeouts"]["inference_ready"]
         )
 
-        # Step 6: TrustyAI monitoring config + service — no inferenceservice-config patch
+        # Step 6: TrustyAI monitoring config + service
         trustyai_mock.apply_monitoring_config.assert_called_once()
+        trustyai_mock.patch_inferenceservice_config.assert_called_once_with("test-ns")
         trustyai_mock.apply_trustyai_service.assert_called_once()
         trustyai_mock.wait_until_ready.assert_called_once_with(
             "trustyai-service", "test-ns", config["timeouts"]["trustyai_ready"]
         )
-        # patch_inferenceservice_config is required: RawDeployment mode applies to all ISVCs
-        trustyai_mock.patch_inferenceservice_config.assert_called_once_with("test-ns")

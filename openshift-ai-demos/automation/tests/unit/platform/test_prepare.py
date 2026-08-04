@@ -24,7 +24,7 @@ class TestValidateLogin:
         prepare.validate_login()  # should not raise
 
     def test_raises_when_cluster_unreachable(self, patch_resources: MagicMock) -> None:
-        patch_resources.get.side_effect = ConnectionError("no route to host")
+        patch_resources.get.side_effect = OSError("no route to host")
         with pytest.raises(RuntimeError, match="oc login"):
             prepare.validate_login()
 
@@ -204,6 +204,75 @@ class TestGetClusterInfo:
         self._setup(patch_resources, nodes, [], [])
         info = prepare.get_cluster_info()
         assert info["worker_nodes"][0]["cpu"] == "4 cores"
+
+
+# ---------------------------------------------------------------------------
+# deploy_platform
+# ---------------------------------------------------------------------------
+class TestDeployPlatform:
+    def test_calls_prepare_then_operator_then_dsc(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """deploy_platform must call prepare_platform, then operator, then DSC — in order."""
+        import importlib
+        import sys
+
+        sys.modules.pop("rhoai.platform.prepare", None)
+        prep_mod = importlib.import_module("rhoai.platform.prepare")
+
+        prepare_mock   = MagicMock()
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = True
+        dsc_mock       = MagicMock()
+        manifests_mock = MagicMock()
+
+        monkeypatch.setattr(prep_mod, "prepare_platform", prepare_mock)
+        # deploy_platform imports these lazily inside the function
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
+        monkeypatch.setattr("rhoai.platform.manifests", manifests_mock)
+
+        config: dict[str, Any] = {
+            "repo_root": "/repo",
+            "operator":  {"name": "rhods-operator", "namespace": "redhat-ods-operator", "channel": "stable"},
+            "dsc":       {"name": "default-dsc"},
+            "timeouts":  {"operator_ready": 300, "dsc_ready": 600},
+        }
+        prep_mod.deploy_platform(config)
+
+        prepare_mock.assert_called_once_with(config)
+        operators_mock.is_installed.assert_called_once()
+        dsc_mock.apply_dsci.assert_called_once()
+        dsc_mock.apply_dsc.assert_called_once()
+        dsc_mock.wait_until_ready.assert_called_once()
+
+    def test_installs_operator_when_not_present(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib
+        import sys
+
+        sys.modules.pop("rhoai.platform.prepare", None)
+        prep_mod = importlib.import_module("rhoai.platform.prepare")
+
+        monkeypatch.setattr(prep_mod, "prepare_platform", MagicMock())
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = False
+        dsc_mock = MagicMock()
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+
+        config: dict[str, Any] = {
+            "repo_root": "/repo",
+            "operator":  {"name": "rhods-operator", "namespace": "redhat-ods-operator", "channel": "stable"},
+            "dsc":       {"name": "default-dsc"},
+            "timeouts":  {"operator_ready": 300, "dsc_ready": 600},
+        }
+        prep_mod.deploy_platform(config)
+
+        operators_mock.install.assert_called_once()
+        operators_mock.wait_until_ready.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -47,12 +47,19 @@ def cleanup(
     delete_platform: bool = typer.Option(
         False,
         "--delete-platform",
-        help="Also remove DSC and DSCI. Use with caution.",
+        help="Also remove DSC and DSCI after use-case cleanup. Use with caution.",
     ),
 ) -> None:
     """Remove the named use case resources."""
+    from rhoai.platform import dsc
+
     config = load_config(config_file)
-    registry.get(name).cleanup(config, delete_platform=delete_platform)
+    registry.get(name).cleanup(config)
+
+    if delete_platform:
+        log.warning("Deleting platform resources (DSC, DSCI)")
+        dsc.delete_dsc(config["dsc"]["name"])
+        dsc.delete_dsci(config["dsc"]["dsci_name"])
 
 
 @app.command(name="list")

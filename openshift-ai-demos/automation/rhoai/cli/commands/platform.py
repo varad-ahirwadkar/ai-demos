@@ -10,7 +10,7 @@ from pathlib import Path
 import typer
 
 from rhoai.config.loader import load_config
-from rhoai.platform import dsc, manifests, operators, prepare
+from rhoai.platform import dsc, operators, prepare
 from rhoai.platform import verify as platform_verify
 from rhoai.utils.logger import get_logger
 
@@ -28,18 +28,7 @@ def prepare_cmd(
 ) -> None:
     """Validate prerequisites, install the operator, and configure DSC."""
     config = load_config(config_file)
-    repo_root = config["repo_root"]
-    op_name    = config["operator"]["name"]
-    op_ns      = config["operator"]["namespace"]
-    op_timeout = config["timeouts"]["operator_ready"]
-    prepare.prepare_platform(config)
-    if not operators.is_installed(op_name, op_ns):
-        operators.install(op_name, op_ns, config["operator"]["channel"], repo_root, op_timeout)
-    else:
-        operators.wait_until_ready(op_name, op_ns, op_timeout)
-    dsc.apply_dsci(manifests.get_dsci(repo_root))
-    dsc.apply_dsc(manifests.get_dsc(repo_root))
-    dsc.wait_until_ready(config["dsc"]["name"], config["timeouts"]["dsc_ready"])
+    prepare.deploy_platform(config)
     typer.echo("Platform is ready.")
 
 

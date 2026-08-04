@@ -11,14 +11,16 @@ To add a new use case:
 No lazy loading, no plugin discovery, no base classes.
 """
 
+from types import ModuleType
+
 from rhoai.usecases import fraud_detection
 
-REGISTRY: dict[str, object] = {
+REGISTRY: dict[str, ModuleType] = {
     "fraud-detection": fraud_detection,
 }
 
 
-def get(name: str) -> object:
+def get(name: str) -> ModuleType:
     """Return the module for the named use case.
 
     Args:
@@ -28,7 +30,7 @@ def get(name: str) -> object:
         Module exposing deploy(config), verify(config), cleanup(config).
 
     Raises:
-        KeyError: If the name is not registered.
+        RuntimeError: If the name is not registered.
     """
     if name not in REGISTRY:
         available = ", ".join(sorted(REGISTRY))
