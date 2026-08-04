@@ -71,31 +71,31 @@ and waits for each step to be healthy before continuing.
 ### Layering
 
 ```
+ CLI  (rhoai/cli)
 ┌─────────────────────────────────────────────┐
-│  CLI  (rhoai/cli)                           │  User interface only.
-│  rhoai platform prepare / verify / analyze  │  No business logic.
-│  rhoai usecase  deploy  / verify / cleanup  │
+│  rhoai platform prepare / verify / analyze  │  User interface only. 
+│  rhoai usecase  deploy  / verify / cleanup  │  No business logic.
 └────────────────┬──────────────┬─────────────┘
                  │              │
+     platform/   │              │ usecases/
     ┌────────────▼──┐    ┌──────▼──────────────┐
-    │  platform/    │    │  usecases/          │
     │  prepare.py   │    │  fraud_detection/   │
     │  operators.py │    │  deploy.py          │
-    │  dsc.py       │<---│  verify.py          │
+    │  dsc.py       │◄───│  verify.py          │
     │  inference.py │    │  cleanup.py         │
-    │  trustyai.py  │    │  assets.py          │ (calls platform/,
-    │  storage.py   │    └─────────────────────┘ never ocp/ directly)
-    │  verify.py    │             
-    └────────────┬──┘              
-                 │               
+    │  trustyai.py  │    │  assets.py          │
+    │  storage.py   │    └─────────────────────┘
+    │  verify.py    │    (use cases call platform/,
+    └────────────┬──┘     never ocp/ directly)
+                 │
+     ocp/        │
     ┌────────────▼────────────────────────────┐
-    │  ocp/                                   │  Only layer that
-    │  resources.py   — Kubernetes API        │  talks to the
-    │  wait.py        — polling helpers       │  cluster.
+    │  resources.py   — Kubernetes API        │  Only layer that 
+    │  wait.py        — polling helpers       │  talks to the cluster.
     └────────────┬────────────────────────────┘
                  │
+     utils/      │
     ┌────────────▼────────────────────────────┐
-    │  utils/                                 │
     │  logger.py   yaml_io.py                 │
     └─────────────────────────────────────────┘
 ```
@@ -239,10 +239,10 @@ storage:
   class_name: gp3-csi
 ```
 
-Pass it with `--config`:
+Pass it with `--config` on the subcommand:
 
 ```bash
-rhoai --config my-cluster.yaml usecase deploy fraud-detection
+rhoai usecase deploy fraud-detection --config my-cluster.yaml
 ```
 
 ### Default values
@@ -283,8 +283,8 @@ timeouts:
 
 ## 6. CLI Usage
 
-All commands accept `--config/-c` to specify a config file and `--log-level/-l`
-to control verbosity.
+All commands accept `--config/-c` at the subcommand level to specify a config
+file. Log verbosity is set with `--log-level/-l` on the root command.
 
 ```
 rhoai --help
@@ -339,8 +339,8 @@ rhoai usecase cleanup fraud-detection --delete-platform
 ## 7. Platform Capabilities
 
 Platform modules live in `rhoai/platform/` and provide reusable building blocks.
-Any use case can call them. They never call `ocp/` directly in isolation;
-instead, each module imports from `rhoai.ocp.resources` and `rhoai.ocp.wait`.
+Use cases and the CLI call these modules. Each platform module imports from
+`rhoai.ocp.resources` and `rhoai.ocp.wait` to reach the cluster.
 
 ### `prepare.py`
 
@@ -406,8 +406,8 @@ data drift).
 
 | Function | Description |
 |---|---|
-| `apply_monitoring_config(path)` | Apply the cluster-monitoring and user-workload-monitoring `ConfigMap`s. Reads namespace from each document. |
-| `patch_inferenceservice_config(namespace)` | Remove `opendatahub.io/managed: "true"` from `inferenceservice-config`. Required in `RawDeployment` mode so TrustyAI can inject its payload-logging sidecar. |
+| `apply_monitoring_config(path)` | Apply the cluster-monitoring and user-workload-monitoring `ConfigMap`s. Reads the namespace from each document in the multi-doc YAML. |
+| `patch_inferenceservice_config(namespace)` | Set `opendatahub.io/managed: "false"` on `inferenceservice-config`. Required in `RawDeployment` mode so TrustyAI can inject its payload-logging sidecar without RHOAI reverting the ConfigMap. |
 | `apply_trustyai_service(path, namespace)` | Apply the `TrustyAIService` CR manifest. |
 | `wait_until_ready(name, namespace, timeout)` | Block until the `TrustyAIService` is `Ready`. |
 | `verify(name, namespace)` | Assert the `TrustyAIService` is `Ready`; raise `RuntimeError` otherwise. |
@@ -450,7 +450,7 @@ pinned in `_API_HINTS` to avoid ambiguity with OpenShift's CRD overlaps.
 |---|---|
 | `apply_manifest(path, namespace)` | Load a YAML file and apply it via server-side apply. Idempotent. |
 | `apply_dict(manifest, namespace)` | Apply a manifest dict via server-side apply. |
-| `process_template(path, namespace)` | Run `oc process -f <path>` then pipe the output to `oc apply`. |
+| `process_template(path, namespace)` | Run `oc process -n <namespace> -f <path>` then pipe the output to `oc apply`. |
 | `delete_manifest(kind, name, namespace)` | Delete a resource by kind and name. Silent if already absent. |
 | `exists(kind, name, namespace)` | Return `True` if the resource exists. |
 | `get(kind, name, namespace)` | Return the full resource object dict. Raises `NotFoundError` if absent. |
@@ -481,32 +481,33 @@ public functions: `deploy(config)`, `verify(config)`, and `cleanup(config)`.
 The only file in a use case that knows where that use case's manifests live on
 disk. All paths are resolved relative to `config["repo_root"]`.
 
-Shared platform manifests (DSC, DSCI, S3 secret, vLLM runtime) are delegated
+Shared platform manifests (DSC, DSCI, S3 secret, Triton template) are delegated
 to `platform/manifests.py` — `assets.py` only resolves use-case-specific paths.
 
 ### `deploy.py`
 
 Orchestrates the full deployment in a documented, numbered sequence:
 
-1. Call `prepare.deploy_platform(config)` — validates the cluster, installs the
-   operator, and applies DSC/DSCI.
-2. Apply S3 credentials.
-3. Process the Triton `ServingRuntime` Template and apply the `InferenceService`.
-4. Wait for the `InferenceService` to be `Ready`.
-5. Apply TrustyAI monitoring config, patch `inferenceservice-config`, apply the
-   `TrustyAIService`, and wait for it to be `Ready`.
+1–3. Call `prepare.deploy_platform(config)` — validates the cluster, installs
+     the operator, and applies DSC/DSCI.
+4.   Apply S3 credentials.
+5.   Process the Triton `ServingRuntime` Template and apply the `InferenceService`.
+     Wait for the `InferenceService` to be `Ready`.
+6.   Apply TrustyAI monitoring config, patch `inferenceservice-config`, apply
+     the `TrustyAIService`, and wait for it to be `Ready`.
 
 `deploy.py` calls `platform/` modules only — never `ocp/` directly.
 
 ### `verify.py`
 
-Runs platform checks (`verify.verify_platform`) then use-case-specific checks
-(e.g., assert the `InferenceService` and `TrustyAIService` are `Ready`).
+Runs platform checks (`verify_platform`) then use-case-specific checks:
+asserts the `InferenceService` and `TrustyAIService` are both `Ready`.
 
 ### `cleanup.py`
 
-Deletes use-case resources in reverse deploy order. Does not touch platform
-resources (DSC, DSCI) — that is the CLI's responsibility via `--delete-platform`.
+Deletes use-case resources in reverse deploy order: TrustyAI Service, then
+InferenceService, then ServingRuntime. Does not touch platform resources
+(DSC, DSCI) — that is the CLI's responsibility via `--delete-platform`.
 
 ---
 
@@ -559,7 +560,8 @@ def deploy(config):
 **Step 4 — Implement `verify.py`.**
 
 ```python
-from rhoai.platform import inference, verify as platform_verify
+from rhoai.platform import inference
+from rhoai.platform import verify as platform_verify
 
 def verify(config):
     platform_verify.verify_platform(config)
@@ -582,6 +584,7 @@ def cleanup(config):
 Add one entry to `rhoai/usecases/registry.py`:
 
 ```python
+from types import ModuleType
 from rhoai.usecases import fraud_detection, my_use_case   # add import
 
 REGISTRY: dict[str, ModuleType] = {
@@ -618,9 +621,10 @@ rhoai --log-level ERROR platform verify
 Log format:
 
 ```
-HH:MM:SS  LEVEL     module.name  message
-09:14:32  INFO      rhoai.platform.prepare  Validating cluster login
-09:14:33  INFO      rhoai.platform.prepare  Cluster login confirmed
+HH:MM:SS  LEVEL     module.name                    message
+09:14:32  INFO      rhoai.platform.prepare         Validating cluster login
+09:14:33  INFO      rhoai.platform.prepare         Cluster login confirmed
+09:14:35  INFO      rhoai.platform.operators       Waiting for operator 'rhods-operator.3.5.0'
 ```
 
 ---

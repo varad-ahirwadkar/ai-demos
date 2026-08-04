@@ -32,6 +32,15 @@ fraud_detection:
   serving_runtime_name: triton-ppc64le-runtime   # created from the Triton Template
   trustyai_service_name: trustyai-service    # metadata.name in trustyai/service/trustyai-service.yaml
 
+# vLLM generative use case.
+# model: which InferenceService manifest to deploy (filename without .yaml under
+#         model-serving/generative-models/vllm/).
+# Available models: qwen2.5-1.5b-instruct, phi-3-mini-4k-instruct, qwen3-4b-instruct-2507
+vllm:
+  model: qwen2.5-1.5b-instruct
+  serving_runtime_name: vllm-cpu-runtime   # metadata.name in model-serving/shared/vllm-serving-runtime.yaml
+  inference_service_name: qwen             # metadata.name inside the chosen model manifest
+
 timeouts:
   operator_ready: 300   # seconds
   dsc_ready: 600
