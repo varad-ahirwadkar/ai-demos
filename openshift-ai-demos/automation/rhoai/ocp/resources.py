@@ -53,12 +53,19 @@ _API_HINTS: dict[str, str] = {
 }
 
 
+_dynamic_client: dynamic.DynamicClient | None = None
+
+
 def _client() -> dynamic.DynamicClient:
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        k8s_config.load_kube_config()
-    return dynamic.DynamicClient(ApiClient())
+    """Return a process-scoped DynamicClient, creating it on first call."""
+    global _dynamic_client
+    if _dynamic_client is None:
+        try:
+            k8s_config.load_incluster_config()
+        except k8s_config.ConfigException:
+            k8s_config.load_kube_config()
+        _dynamic_client = dynamic.DynamicClient(ApiClient())
+    return _dynamic_client
 
 
 def _resource(client: dynamic.DynamicClient, kind: str, api_version: str | None = None) -> Any:

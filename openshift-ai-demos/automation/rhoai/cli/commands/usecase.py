@@ -12,6 +12,7 @@ import typer
 
 from rhoai.config.loader import load_config
 from rhoai.usecases import registry
+from rhoai.utils.errors import friendly_error
 from rhoai.utils.logger import get_logger
 
 app = typer.Typer(help="Deploy and manage AI use cases.")
@@ -27,7 +28,10 @@ def deploy(
 ) -> None:
     """Deploy the named use case."""
     config = load_config(config_file)
-    registry.get(name).deploy(config)
+    try:
+        registry.get(name).deploy(config)
+    except Exception as exc:  # noqa: BLE001
+        _exit_with_error(exc)
 
 
 @app.command()
@@ -37,7 +41,10 @@ def verify(
 ) -> None:
     """Verify the named use case deployment."""
     config = load_config(config_file)
-    registry.get(name).verify(config)
+    try:
+        registry.get(name).verify(config)
+    except Exception as exc:  # noqa: BLE001
+        _exit_with_error(exc)
 
 
 @app.command()
@@ -54,12 +61,14 @@ def cleanup(
     from rhoai.platform import dsc
 
     config = load_config(config_file)
-    registry.get(name).cleanup(config)
-
-    if delete_platform:
-        log.warning("Deleting platform resources (DSC, DSCI)")
-        dsc.delete_dsc(config["dsc"]["name"])
-        dsc.delete_dsci(config["dsc"]["dsci_name"])
+    try:
+        registry.get(name).cleanup(config)
+        if delete_platform:
+            log.warning("Deleting platform resources (DSC, DSCI)")
+            dsc.delete_dsc(config["dsc"]["name"])
+            dsc.delete_dsci(config["dsc"]["dsci_name"])
+    except Exception as exc:  # noqa: BLE001
+        _exit_with_error(exc)
 
 
 @app.command(name="list")
@@ -67,3 +76,9 @@ def list_cmd() -> None:
     """List all registered use case names."""
     for name in registry.list_available():
         typer.echo(f"  {name}")
+
+
+def _exit_with_error(exc: Exception) -> None:
+    """Print a clean one-line error and exit 1. Never shows a traceback."""
+    typer.echo(f"\nError: {friendly_error(exc)}", err=True)
+    raise typer.Exit(code=1)
