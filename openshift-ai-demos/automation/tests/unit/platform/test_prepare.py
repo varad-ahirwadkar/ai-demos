@@ -210,38 +210,58 @@ class TestGetClusterInfo:
 # deploy_platform
 # ---------------------------------------------------------------------------
 class TestDeployPlatform:
-    def test_calls_prepare_then_operator_then_dsc(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """deploy_platform must call prepare_platform, then operator, then DSC — in order."""
+    # Shared minimal config used by all deploy_platform tests.
+    _config: dict[str, Any] = {
+        "repo_root": "/repo",
+        "operator":  {"name": "rhods-operator", "namespace": "redhat-ods-operator", "channel": "stable"},
+        "dsc":       {"name": "default-dsc", "dsci_name": "default-dsci"},
+        "timeouts":  {"operator_ready": 300, "dsc_ready": 600},
+    }
+
+    def _setup(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        dsci_ready: bool = False,
+        dsc_ready: bool = False,
+        operator_installed: bool = True,
+    ):
         import importlib
         import sys
 
         sys.modules.pop("rhoai.platform.prepare", None)
         prep_mod = importlib.import_module("rhoai.platform.prepare")
 
-        prepare_mock   = MagicMock()
         operators_mock = MagicMock()
-        operators_mock.is_installed.return_value = True
-        dsc_mock       = MagicMock()
-        manifests_mock = MagicMock()
+        operators_mock.is_installed.return_value = operator_installed
+        dsc_mock = MagicMock()
+        dsc_mock.is_dsci_ready.return_value = dsci_ready
+        dsc_mock.is_dsc_ready.return_value  = dsc_ready
 
-        monkeypatch.setattr(prep_mod, "prepare_platform", prepare_mock)
-        # deploy_platform imports these lazily inside the function
+        monkeypatch.setattr(prep_mod, "prepare_platform", MagicMock())
         monkeypatch.setattr("rhoai.platform.operators", operators_mock)
         monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
-        monkeypatch.setattr("rhoai.platform.manifests", manifests_mock)
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
 
-        config: dict[str, Any] = {
-            "repo_root": "/repo",
-            "operator":  {"name": "rhods-operator", "namespace": "redhat-ods-operator", "channel": "stable"},
-            "dsc":       {"name": "default-dsc"},
-            "timeouts":  {"operator_ready": 300, "dsc_ready": 600},
-        }
-        prep_mod.deploy_platform(config)
+        return prep_mod, operators_mock, dsc_mock
 
-        prepare_mock.assert_called_once_with(config)
+    def test_calls_prepare_then_operator_then_dsc(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """deploy_platform calls prepare_platform, then operator, then DSC — in order."""
+        prep_mod, operators_mock, dsc_mock = self._setup(monkeypatch)
+        prep_mod.deploy_platform(self._config)
+
         operators_mock.is_installed.assert_called_once()
+        dsc_mock.wait_until_ready.assert_called_once()
+
+    def test_always_applies_dsci_and_dsc(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """DSC/DSCI manifests are always applied — ensures new components are reconciled."""
+        prep_mod, _, dsc_mock = self._setup(monkeypatch)
+        prep_mod.deploy_platform(self._config)
+
         dsc_mock.apply_dsci.assert_called_once()
         dsc_mock.apply_dsc.assert_called_once()
         dsc_mock.wait_until_ready.assert_called_once()
@@ -249,27 +269,8 @@ class TestDeployPlatform:
     def test_installs_operator_when_not_present(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import importlib
-        import sys
-
-        sys.modules.pop("rhoai.platform.prepare", None)
-        prep_mod = importlib.import_module("rhoai.platform.prepare")
-
-        monkeypatch.setattr(prep_mod, "prepare_platform", MagicMock())
-        operators_mock = MagicMock()
-        operators_mock.is_installed.return_value = False
-        dsc_mock = MagicMock()
-        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
-        monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
-        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
-
-        config: dict[str, Any] = {
-            "repo_root": "/repo",
-            "operator":  {"name": "rhods-operator", "namespace": "redhat-ods-operator", "channel": "stable"},
-            "dsc":       {"name": "default-dsc"},
-            "timeouts":  {"operator_ready": 300, "dsc_ready": 600},
-        }
-        prep_mod.deploy_platform(config)
+        prep_mod, operators_mock, _ = self._setup(monkeypatch, operator_installed=False)
+        prep_mod.deploy_platform(self._config)
 
         operators_mock.install.assert_called_once()
         operators_mock.wait_until_ready.assert_not_called()

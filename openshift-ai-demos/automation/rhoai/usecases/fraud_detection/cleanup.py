@@ -8,6 +8,7 @@ Pass --delete-platform to 'rhoai usecase cleanup' to also remove them.
 from typing import Any
 
 from rhoai.platform import inference, trustyai
+from rhoai.usecases.fraud_detection import assets
 from rhoai.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -18,7 +19,6 @@ def cleanup(config: dict[str, Any]) -> None:
     namespace     = config["cluster"]["namespace"]
     fd_cfg        = config.get("fraud_detection", {})
     isvc_name     = fd_cfg.get("inference_service_name", "fraud-detection")
-    rt_name       = fd_cfg.get("serving_runtime_name", "triton-ppc64le-runtime")
     trustyai_name = fd_cfg.get("trustyai_service_name", "trustyai-service")
 
     log.info("=== Cleaning up Fraud Detection ===")
@@ -26,6 +26,7 @@ def cleanup(config: dict[str, Any]) -> None:
     # Reverse deploy order: TrustyAI first, then model serving
     trustyai.delete_trustyai_service(trustyai_name, namespace)
     inference.delete_inference_service(isvc_name, namespace)
-    inference.delete_serving_runtime(rt_name, namespace)
+    # Runtime name comes from the assets constant — not user-facing config
+    inference.delete_serving_runtime(assets.SERVING_RUNTIME_NAME, namespace)
 
     log.info("=== Fraud Detection cleanup complete ===")

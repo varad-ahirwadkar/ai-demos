@@ -8,6 +8,7 @@ from typing import Any
 
 from rhoai.platform import inference, trustyai
 from rhoai.platform import verify as platform_verify
+from rhoai.usecases.fraud_detection import assets
 from rhoai.utils.logger import get_logger
 
 log = get_logger(__name__)
@@ -26,6 +27,11 @@ def verify(config: dict[str, Any]) -> None:
 
     log.info("Checking InferenceService '%s'", isvc_name)
     inference.verify(namespace, name=isvc_name)
+
+    log.info("Smoke-testing Triton inference for '%s'", isvc_name)
+    inference.verify_triton_inference(
+        isvc_name, namespace, "fraud-detection", assets.get_sample_inference_request()
+    )
 
     log.info("Checking TrustyAIService '%s'", trustyai_name)
     trustyai.verify(trustyai_name, namespace)

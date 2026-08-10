@@ -44,7 +44,7 @@ _API_HINTS: dict[str, str] = {
     "SelfSubjectAccessReview": "authorization.k8s.io/v1",
     "Template":                "template.openshift.io/v1",
     # RHOAI CRDs
-    "DataScienceCluster":      "datasciencecluster.opendatahub.io/v1",
+    "DataScienceCluster":      "datasciencecluster.opendatahub.io/v2",
     "DSCInitialization":       "dscinitialization.opendatahub.io/v1",
     "InferenceService":        "serving.kserve.io/v1beta1",
     "ServingRuntime":          "serving.kserve.io/v1alpha1",
@@ -79,20 +79,42 @@ def _resource(client: dynamic.DynamicClient, kind: str, api_version: str | None 
 def process_template(path: Path, namespace: str) -> None:
     """Process an OpenShift Template and apply all rendered objects.
 
+    Strips metadata.namespace from the Template before processing so that
+    oc process accepts the target namespace regardless of what namespace is
+    baked into the Template file itself.
+
     Equivalent to:
-        oc process -n <namespace> -f <path> | oc apply -f -
+        oc process --namespace=<namespace> -f <stripped-template> | oc apply -n <namespace> -f -
 
-    The template is rendered cluster-side (so parameter defaults are applied)
-    and each rendered object is immediately applied server-side.  Idempotent.
-
-    Raises RuntimeError if oc is not on PATH or the process call fails.
+    Idempotent. Raises RuntimeError if oc is not on PATH or any step fails.
     """
-    log.info("Processing Template %s in '%s'", path.name, namespace)
-    result = subprocess.run(
-        ["oc", "process", "-n", namespace, "-f", str(path)],
-        capture_output=True,
-        text=True,
-    )
+    import json
+    import tempfile
+
+    log.debug("Processing Template %s in '%s'", path.name, namespace)
+
+    # Load the template and remove metadata.namespace so oc process does not
+    # reject it when the baked-in namespace differs from the target namespace.
+    template = load(path)
+    template.get("metadata", {}).pop("namespace", None)
+    template_json = json.dumps(template)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False
+    ) as tmp:
+        tmp.write(template_json)
+        tmp_path = tmp.name
+
+    try:
+        result = subprocess.run(
+            ["oc", "process", f"--namespace={namespace}", "-f", tmp_path],
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        import os
+        os.unlink(tmp_path)
+
     if result.returncode != 0:
         raise RuntimeError(
             f"oc process failed for {path.name}: {result.stderr.strip()}"

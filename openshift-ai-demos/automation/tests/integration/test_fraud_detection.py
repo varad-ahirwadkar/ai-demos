@@ -5,13 +5,48 @@ cleanly and that config defaults wire up correctly.
 """
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from rhoai.config.loader import load_config
 from rhoai.usecases import registry
 from rhoai.usecases.fraud_detection import assets
+
+# Minimal InferenceService manifest that matches the structure deploy.py mutates.
+_ISVC_MANIFEST: dict[str, Any] = {
+    "apiVersion": "serving.kserve.io/v1beta1",
+    "kind": "InferenceService",
+    "metadata": {
+        "name": "fraud-detection",
+        "annotations": {
+            "opendatahub.io/connection-type-ref": "s3",
+        },
+    },
+    "spec": {
+        "predictor": {
+            "model": {
+                "runtime": "triton-ppc64le-runtime",
+                "storage": {"key": "s3-credentials", "path": "models/fraud"},
+            }
+        }
+    },
+}
+
+
+def _write_manifest(tmp_path: Path) -> None:
+    """Write the stub InferenceService manifest into the expected asset path."""
+    dest = (
+        tmp_path
+        / "model-serving"
+        / "predictive-models"
+        / "triton"
+        / "fraud-detection.yaml"
+    )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(yaml.dump(_ISVC_MANIFEST))
 
 
 class TestModuleGraph:
@@ -31,8 +66,9 @@ class TestConfigDefaults:
         config = load_config()
         fd = config.get("fraud_detection", {})
         assert fd.get("inference_service_name") == "fraud-detection"
-        assert fd.get("serving_runtime_name")   == "triton-ppc64le-runtime"
-        assert fd.get("trustyai_service_name")  == "trustyai-service"
+        # serving_runtime_name is an internal constant, not user-facing config.
+        assert assets.SERVING_RUNTIME_NAME == "triton-ppc64le-runtime"
+        assert fd.get("trustyai_service_name") == "trustyai-service"
 
     def test_timeouts_present(self) -> None:
         config = load_config()
@@ -67,56 +103,131 @@ class TestAssetPaths:
         p = assets.get_trustyai_service_manifest(tmp_path)
         assert p == tmp_path / "trustyai" / "service" / "trustyai-service.yaml"
 
+    def test_sample_inference_request_path(self) -> None:
+        p = assets.get_sample_inference_request()
+        assert p.name == "sample-fraud.json"
+        assert p.parent.name == "data"
+        assert p.exists(), "sample-fraud.json must exist alongside the package"
+
 
 class TestDeploySmoke:
-    """Smoke-test deploy() wiring with all I/O mocked."""
+    """Smoke-test deploy() wiring with all cluster I/O mocked.
 
-    def _make_config(self, tmp_path: Path) -> dict:
+    deploy() now reads the InferenceService manifest from disk via yaml_io.load()
+    and applies it via ocp_resources.apply_dict().  Both are patched here so the
+    test never touches the real filesystem beyond the stub file we create in
+    tmp_path.
+    """
+
+    def _make_config(self, tmp_path: Path, model_uri: str = "") -> dict:
         config = load_config()
         config["repo_root"] = str(tmp_path)
         config["cluster"]["namespace"] = "test-ns"
+        if model_uri:
+            config.setdefault("fraud_detection", {})["model_uri"] = model_uri
         return config
+
+    def _patch_all(
+        self, monkeypatch: pytest.MonkeyPatch, deploy_mod: Any, tmp_path: Path
+    ) -> dict[str, MagicMock]:
+        """Patch every external dependency of deploy_mod and return the mocks."""
+        storage_mock       = MagicMock()
+        inference_mock     = MagicMock()
+        ocp_resources_mock = MagicMock()
+
+        monkeypatch.setattr(deploy_mod, "storage",       storage_mock)
+        monkeypatch.setattr(deploy_mod, "inference",     inference_mock)
+        monkeypatch.setattr(deploy_mod, "ocp_resources", ocp_resources_mock)
+
+        return {
+            "storage":       storage_mock,
+            "inference":     inference_mock,
+            "ocp_resources": ocp_resources_mock,
+        }
+
+    def _fresh_deploy_mod(self) -> Any:
+        import importlib
+        import sys
+
+        sys.modules.pop("rhoai.usecases.fraud_detection.deploy", None)
+        return importlib.import_module("rhoai.usecases.fraud_detection.deploy")
+
+    # ------------------------------------------------------------------
+    # Core wiring test (default config — pvc:// model_uri, S3 skipped)
+    # ------------------------------------------------------------------
 
     def test_deploy_calls_platform_modules(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        import importlib
-        import sys
-
-        # Force a clean import of the deploy *module* (not the function)
-        sys.modules.pop("rhoai.usecases.fraud_detection.deploy", None)
-        deploy_mod = importlib.import_module("rhoai.usecases.fraud_detection.deploy")
-
-        prepare_mock   = MagicMock()
-        storage_mock   = MagicMock()
-        inference_mock = MagicMock()
-        trustyai_mock  = MagicMock()
-
-        monkeypatch.setattr(deploy_mod, "prepare",   prepare_mock)
-        monkeypatch.setattr(deploy_mod, "storage",   storage_mock)
-        monkeypatch.setattr(deploy_mod, "inference", inference_mock)
-        monkeypatch.setattr(deploy_mod, "trustyai",  trustyai_mock)
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
 
         config = self._make_config(tmp_path)
         deploy_mod.deploy(config)
 
-        # Steps 1–3 collapsed into deploy_platform
-        prepare_mock.deploy_platform.assert_called_once_with(config)
+        # Step 4: default model_uri is pvc:// → S3 secret is skipped
+        mocks["storage"].apply_s3_secret.assert_not_called()
 
-        # Step 4: S3 secret
-        storage_mock.apply_s3_secret.assert_called_once()
-
-        # Step 5: Triton Template → ServingRuntime, then InferenceService
-        inference_mock.apply_serving_runtime_from_template.assert_called_once()
-        inference_mock.apply_inference_service.assert_called_once()
-        inference_mock.wait_until_ready.assert_called_once_with(
+        # Step 5: Triton Template → ServingRuntime; InferenceService via apply_dict
+        mocks["inference"].apply_serving_runtime_from_template.assert_called_once()
+        mocks["ocp_resources"].apply_dict.assert_called_once()
+        mocks["inference"].wait_until_ready.assert_called_once_with(
             "fraud-detection", "test-ns", config["timeouts"]["inference_ready"]
         )
 
-        # Step 6: TrustyAI monitoring config + service
-        trustyai_mock.apply_monitoring_config.assert_called_once()
-        trustyai_mock.patch_inferenceservice_config.assert_called_once_with("test-ns")
-        trustyai_mock.apply_trustyai_service.assert_called_once()
-        trustyai_mock.wait_until_ready.assert_called_once_with(
-            "trustyai-service", "test-ns", config["timeouts"]["trustyai_ready"]
-        )
+        # Step 5b: smoke test — verify_triton_inference called after ready
+        mocks["inference"].verify_triton_inference.assert_called_once()
+        call_args = mocks["inference"].verify_triton_inference.call_args[0]
+        assert call_args[0] == "fraud-detection"   # isvc_name
+        assert call_args[1] == "test-ns"           # namespace
+        assert call_args[2] == "fraud-detection"   # model_name
+
+    # ------------------------------------------------------------------
+    # model_uri variant: PVC — S3 secret skipped, storageUri injected
+    # ------------------------------------------------------------------
+
+    def test_deploy_pvc_uri_skips_s3_and_sets_storage_uri(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+
+        config = self._make_config(tmp_path, model_uri="pvc://fraud-model-pvc/models")
+        deploy_mod.deploy(config)
+
+        # S3 secret must NOT be applied for self-contained URIs
+        mocks["storage"].apply_s3_secret.assert_not_called()
+
+        # apply_dict must still be called with the mutated manifest
+        mocks["ocp_resources"].apply_dict.assert_called_once()
+        applied_dict = mocks["ocp_resources"].apply_dict.call_args[0][0]
+        model_spec = applied_dict["spec"]["predictor"]["model"]
+        assert model_spec["storageUri"] == "pvc://fraud-model-pvc/models"
+        assert "storage" not in model_spec
+        assert "opendatahub.io/connection-type-ref" not in applied_dict["metadata"]["annotations"]
+
+    # ------------------------------------------------------------------
+    # model_uri variant: plain S3 path — path updated, S3 secret applied
+    # ------------------------------------------------------------------
+
+    def test_deploy_s3_path_updates_storage_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+
+        config = self._make_config(tmp_path, model_uri="models/my-fraud-model")
+        deploy_mod.deploy(config)
+
+        # S3 secret must be applied for plain S3 paths
+        mocks["storage"].apply_s3_secret.assert_called_once()
+
+        # apply_dict called with updated storage.path
+        mocks["ocp_resources"].apply_dict.assert_called_once()
+        applied_dict = mocks["ocp_resources"].apply_dict.call_args[0][0]
+        model_spec = applied_dict["spec"]["predictor"]["model"]
+        assert model_spec["storage"]["path"] == "models/my-fraud-model"
+        assert "storageUri" not in model_spec

@@ -78,5 +78,15 @@ def get_component_states(name: str) -> dict[str, str]:
     }
 
 
-def _is_ready(name: str) -> bool:
+def is_dsc_ready(name: str) -> bool:
+    """Return True if the DataScienceCluster is in Ready phase."""
     return resources.status("DataScienceCluster", name).get("phase") == "Ready"
+
+
+def is_dsci_ready(name: str) -> bool:
+    """Return True if the DSCInitialization is in Ready phase."""
+    return resources.status("DSCInitialization", name).get("phase") == "Ready"
+
+
+def _is_ready(name: str) -> bool:
+    return is_dsc_ready(name)

@@ -91,13 +91,9 @@ def status(
     if reasons:
         for reason in reasons:
             if "401" in reason or "Unauthorized" in reason:
-                typer.echo(
-                    f"Run 'oc login <cluster-url>' to authenticate.", err=True
-                )
+                typer.echo("Run 'oc login <cluster-url>' to authenticate.", err=True)
             else:
-                typer.echo(
-                    f"Run 'rhoai platform prepare' to install RHOAI.", err=True
-                )
+                typer.echo("Run 'rhoai platform prepare' to install RHOAI.", err=True)
             break  # one actionable hint is enough
 
     raise typer.Exit(code=1)
@@ -156,7 +152,9 @@ def inspect(
 # Formatting helpers
 # ---------------------------------------------------------------------------
 
-def _status_row(label: str, name: str, result: platform_verify.CheckResult, skip: bool = False) -> str:
+def _status_row(
+    label: str, name: str, result: platform_verify.CheckResult, skip: bool = False
+) -> str:
     """Format a single platform status table row.
 
     Args:

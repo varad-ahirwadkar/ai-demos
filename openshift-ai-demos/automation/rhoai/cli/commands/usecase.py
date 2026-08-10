@@ -11,6 +11,7 @@ from pathlib import Path
 import typer
 
 from rhoai.config.loader import load_config
+from rhoai.platform import inference
 from rhoai.usecases import registry
 from rhoai.utils.errors import friendly_error
 from rhoai.utils.logger import get_logger
@@ -32,6 +33,7 @@ def deploy(
         registry.get(name).deploy(config)
     except Exception as exc:  # noqa: BLE001
         _exit_with_error(exc)
+    _print_deploy_summary(name, config)
 
 
 @app.command()
@@ -45,6 +47,7 @@ def verify(
         registry.get(name).verify(config)
     except Exception as exc:  # noqa: BLE001
         _exit_with_error(exc)
+    typer.echo(f"\n  ✔  {name}  verification passed.")
 
 
 @app.command()
@@ -76,6 +79,31 @@ def list_cmd() -> None:
     """List all registered use case names."""
     for name in registry.list_available():
         typer.echo(f"  {name}")
+
+
+def _print_deploy_summary(name: str, config: dict) -> None:
+    """Print a concise post-deployment summary to stdout.
+
+    Resolves the InferenceService endpoint from the cluster. If the URL
+    lookup fails for any reason the summary is still printed without it —
+    the deployment itself succeeded.
+    """
+    namespace = config["cluster"]["namespace"]
+    # Use-case config key is derived from the CLI name: "fraud-detection" → "fraud_detection".
+    uc_key    = name.replace("-", "_")
+    isvc_name = config.get(uc_key, {}).get("inference_service_name", name)
+
+    url = ""
+    try:
+        url = inference.get_inference_url(isvc_name, namespace)
+    except Exception:  # noqa: BLE001
+        pass  # URL unavailable — don't fail the summary
+
+    typer.echo(f"\n  Use case:   {name}")
+    typer.echo(f"  Namespace:  {namespace}")
+    if url:
+        typer.echo(f"  Endpoint:   {url}")
+    typer.echo(f"  Next:       rhoai usecase verify {name}")
 
 
 def _exit_with_error(exc: Exception) -> None:

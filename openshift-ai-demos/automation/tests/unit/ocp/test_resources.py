@@ -42,7 +42,7 @@ class TestApiHints:
         assert resources._API_HINTS["InferenceService"] == "serving.kserve.io/v1beta1"
 
     def test_dsc_present(self) -> None:
-        assert resources._API_HINTS["DataScienceCluster"] == "datasciencecluster.opendatahub.io/v1"
+        assert resources._API_HINTS["DataScienceCluster"] == "datasciencecluster.opendatahub.io/v2"
 
 
 class TestExists:

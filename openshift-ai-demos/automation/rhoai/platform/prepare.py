@@ -9,10 +9,9 @@ log = get_logger(__name__)
 
 
 def prepare_platform(config: dict[str, Any]) -> None:
-    """Validate login, permissions, storage, and namespace — in that order."""
+    """Validate login, storage, and namespace — in that order."""
     log.info("Starting platform preparation")
     validate_login()
-    validate_permissions(config["operator"]["namespace"])
     validate_storage(config.get("storage", {}).get("class_name", ""))
     validate_namespace(config["cluster"]["namespace"])
     log.info("Platform preparation complete")
@@ -23,22 +22,23 @@ def deploy_platform(config: dict[str, Any]) -> None:
 
     Consolidates the bootstrap sequence shared by the platform CLI command and
     every use-case deploy function:
-        1. prepare_platform  — login, RBAC, storage, namespace
+        1. prepare_platform  — login, storage, namespace
         2. operator          — install or wait for the existing CSV
-        3. DSC/DSCI          — apply manifests and wait for Ready
+        3. DSC/DSCI          — apply manifests only when not already Ready,
+                               then wait for Ready
 
     Callers that need to run further steps (e.g. storage secrets, model serving)
     simply continue after this function returns.
     """
-    # Import here to avoid a circular import: prepare → manifests/operators/dsc
-    # is fine at runtime because these are sibling platform modules, but keeping
-    # the imports local makes the dependency explicit and easy to see.
     from rhoai.platform import dsc, manifests, operators
 
     repo_root  = config["repo_root"]
     op_name    = config["operator"]["name"]
     op_ns      = config["operator"]["namespace"]
     op_timeout = config["timeouts"]["operator_ready"]
+    dsc_name   = config["dsc"]["name"]
+    dsci_name  = config["dsc"]["dsci_name"]
+    dsc_timeout = config["timeouts"]["dsc_ready"]
 
     prepare_platform(config)
 
@@ -47,9 +47,14 @@ def deploy_platform(config: dict[str, Any]) -> None:
     else:
         operators.wait_until_ready(op_name, op_ns, op_timeout)
 
+    # Always apply DSCI: idempotent, only initialisation settings.
     dsc.apply_dsci(manifests.get_dsci(repo_root))
+
+    # Always apply DSC: ensures any newly-enabled components in the manifest
+    # are reconciled even when the cluster already has a DSC.
     dsc.apply_dsc(manifests.get_dsc(repo_root))
-    dsc.wait_until_ready(config["dsc"]["name"], config["timeouts"]["dsc_ready"])
+
+    dsc.wait_until_ready(dsc_name, dsc_timeout)
 
 
 def validate_login() -> None:

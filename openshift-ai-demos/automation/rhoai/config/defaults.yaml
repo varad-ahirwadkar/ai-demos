@@ -28,9 +28,14 @@ storage:
   s3_secret_name: s3-credentials
 
 fraud_detection:
-  inference_service_name: fraud-detection    # metadata.name in model-serving/predictive-models/triton/fraud-detection.yaml
-  serving_runtime_name: triton-ppc64le-runtime   # created from the Triton Template
-  trustyai_service_name: trustyai-service    # metadata.name in trustyai/service/trustyai-service.yaml
+  inference_service_name: fraud-detection   # metadata.name in the InferenceService manifest
+  trustyai_service_name: trustyai-service   # metadata.name in trustyai/service/trustyai-service.yaml
+  model_uri: pvc://fraud-model-pvc/models   # default: model pre-loaded on a PVC
+  # Override model_uri to change where the model is loaded from:
+  #   pvc://<claim-name>/<path>   — model pre-loaded on a PersistentVolumeClaim (default)
+  #   hf://<org>/<repo>           — model downloaded directly from Hugging Face
+  #   oci://<registry>/<image>    — model stored as an OCI artifact
+  #   <s3-path>                   — plain S3 path; also fills shared/s3-secret.yaml values
 
 # vLLM generative use case.
 # model: which InferenceService manifest to deploy (filename without .yaml under
@@ -44,6 +49,6 @@ vllm:
 timeouts:
   operator_ready: 300   # seconds
   dsc_ready: 600
-  inference_ready: 600
+  inference_ready: 120
   trustyai_ready: 300
   download_complete: 1800
