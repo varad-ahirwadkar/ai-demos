@@ -4,9 +4,12 @@ Manages Subscription, OperatorGroup, and CSV only.
 Does not touch DSC, DSCI, or operand resources.
 """
 
+from kubernetes.dynamic.exceptions import NotFoundError
+
 from rhoai.ocp import resources, wait
 from rhoai.platform import manifests
 from rhoai.utils.logger import get_logger
+from rhoai.utils.yaml_io import load
 
 log = get_logger(__name__)
 
@@ -22,11 +25,53 @@ def install(
     channel: str,
     repo_root: str,
     timeout: int,
+    version: str = "",
+    source: str = "redhat-operators",
+    source_namespace: str = "openshift-marketplace",
 ) -> None:
-    """Apply OperatorGroup + Subscription and wait for CSV to succeed."""
-    log.info("Installing RHOAI operator (channel: %s)", channel)
+    """Apply OperatorGroup + Subscription and wait for CSV to succeed.
+
+    The Subscription manifest is loaded from disk and every caller-supplied
+    field is overwritten in-memory before applying — the file on disk is never
+    modified.
+
+    Args:
+        channel:          OLM channel, e.g. ``"stable"`` or ``"stable-3.5"``.
+        version:          Full versioned CSV name to pin via startingCSV, e.g.
+                          ``"rhods-operator.v3.5.0"``.  When non-empty the
+                          Subscription is created with
+                          ``installPlanApproval: Manual`` so OLM stops at
+                          exactly this CSV and does not auto-upgrade.  When
+                          empty, ``installPlanApproval`` stays ``Automatic``.
+        source:           CatalogSource name, e.g. ``"redhat-operators"`` or
+                          ``"cs-rhoai-fbc-fragment"`` for beta/EA builds.
+        source_namespace: Namespace that hosts the CatalogSource, usually
+                          ``"openshift-marketplace"``.
+    """
+    log.info(
+        "Installing RHOAI operator (channel: %s, source: %s%s)",
+        channel, source,
+        f", version: {version}" if version else "",
+    )
+
+    # Load the Subscription from disk and overwrite every runtime-variable
+    # field in-memory so the mutated dict (not the file) reaches the cluster.
+    sub = load(manifests.get_subscription(repo_root))
+    spec = sub.setdefault("spec", {})
+    spec["channel"]             = channel
+    spec["source"]              = source
+    spec["sourceNamespace"]     = source_namespace
+    spec["installPlanApproval"] = "Automatic"
+    if version:
+        spec["startingCSV"]         = version
+        spec["installPlanApproval"] = "Manual"
+
     resources.apply_manifest(manifests.get_operator_group(repo_root), namespace)
-    resources.apply_manifest(manifests.get_subscription(repo_root), namespace)
+    resources.apply_dict(sub, namespace)
+
+    if version:
+        _approve_install_plan(name, namespace, version)
+
     wait_until_ready(name, namespace, timeout)
 
 
@@ -39,13 +84,15 @@ def upgrade(name: str, namespace: str, target_channel: str, timeout: int) -> Non
 
 def wait_until_ready(name: str, namespace: str, timeout: int) -> None:
     """Block until the CSV for 'name' reaches Succeeded. Raises TimeoutError."""
-    resolved = resolve_csv_name(name, namespace)
-    log.info("Waiting for operator '%s' (timeout: %ss)", resolved, timeout)
-    wait.wait_until(
-        lambda: _csv_phase(resolved, namespace) == "Succeeded",
-        f"CSV {resolved} Succeeded",
-        timeout,
-    )
+    log.info("Waiting for operator '%s' (timeout: %ss)", name, timeout)
+    # Resolve lazily inside the loop: OLM creates the versioned CSV name only
+    # after the Subscription is processed, so resolving once up-front would
+    # always fall back to the bare package name and never match.
+    def _is_ready() -> bool:
+        resolved = resolve_csv_name(name, namespace)
+        return _csv_phase(resolved, namespace) == "Succeeded"
+
+    wait.wait_until(_is_ready, f"CSV {name} Succeeded", timeout)
 
 
 def resolve_csv_name(package_name: str, namespace: str) -> str:
@@ -88,5 +135,46 @@ def get_csv_info(name: str, namespace: str) -> dict[str, str]:
     }
 
 
+def _approve_install_plan(sub_name: str, namespace: str, csv_name: str) -> None:
+    """Approve the pending InstallPlan that references csv_name.
+
+    When a Subscription uses ``installPlanApproval: Manual``, OLM creates an
+    InstallPlan but leaves it in ``RequiresApproval`` phase.  This function
+    finds that plan and patches ``spec.approved: true`` so OLM proceeds.
+
+    It polls until the InstallPlan appears (OLM may take a few seconds to
+    create it after the Subscription is applied) and raises RuntimeError if
+    none is found within the timeout.
+    """
+    import time
+
+    log.info("Approving InstallPlan for CSV '%s' in '%s'", csv_name, namespace)
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        plans = resources.list_resources("InstallPlan", namespace)
+        for plan in plans:
+            clustersvs = plan.get("spec", {}).get("clusterServiceVersionNames", [])
+            phase      = plan.get("status", {}).get("phase", "")
+            approved   = plan.get("spec", {}).get("approved", False)
+            if csv_name in clustersvs and phase == "RequiresApproval" and not approved:
+                plan_name = plan["metadata"]["name"]
+                log.info("Approving InstallPlan '%s'", plan_name)
+                resources.patch(
+                    "InstallPlan", plan_name,
+                    {"spec": {"approved": True}},
+                    namespace,
+                )
+                return
+        log.debug("InstallPlan for '%s' not yet available — retrying", csv_name)
+        time.sleep(5)
+    raise RuntimeError(
+        f"Timed out waiting for InstallPlan referencing '{csv_name}' "
+        f"in namespace '{namespace}'."
+    )
+
+
 def _csv_phase(name: str, namespace: str) -> str:
-    return resources.status("ClusterServiceVersion", name, namespace).get("phase", "Unknown")
+    try:
+        return resources.status("ClusterServiceVersion", name, namespace).get("phase", "Unknown")
+    except NotFoundError:
+        return "Unknown"

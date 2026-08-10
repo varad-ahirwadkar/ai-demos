@@ -48,6 +48,53 @@ class TestVerify:
             dsc.verify("default-dsc")
 
 
+class TestSetComponentStates:
+    def test_sends_merge_patch_for_named_components_only(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_resources = MagicMock()
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+
+        dsc.set_component_states("default-dsc", {"kserve": "Managed", "trustyai": "Removed"})
+
+        mock_resources.patch.assert_called_once_with(
+            "DataScienceCluster",
+            "default-dsc",
+            {
+                "spec": {
+                    "components": {
+                        "kserve":   {"managementState": "Managed"},
+                        "trustyai": {"managementState": "Removed"},
+                    }
+                }
+            },
+            strategy="merge",
+        )
+
+    def test_single_component(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+
+        dsc.set_component_states("default-dsc", {"dashboard": "Managed"})
+
+        patch_body = mock_resources.patch.call_args[0][2]
+        assert patch_body["spec"]["components"] == {"dashboard": {"managementState": "Managed"}}
+
+
+class TestWaitDsciReady:
+    def test_delegates_to_generic_wait_with_dsci_kind(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.dsc.wait", mock_wait)
+
+        dsc.wait_dsci_ready("default-dsci", 120)
+
+        mock_wait.wait_until_ready.assert_called_once_with(
+            "DSCInitialization", "default-dsci", timeout=120
+        )
+
+
 class TestIsReady:
     def test_true_when_phase_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_resources = MagicMock()

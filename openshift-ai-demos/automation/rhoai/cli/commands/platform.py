@@ -1,6 +1,9 @@
 """Platform commands — rhoai platform <subcommand>.
 
-    rhoai platform prepare   validate cluster, install operator, configure DSC
+    rhoai platform init      validate cluster, install operator, initialize DSCI
+    rhoai platform enable    enable one or more DSC components
+    rhoai platform setup     full one-shot bootstrap (calls init then enable)
+    rhoai platform uninstall remove all RHOAI platform resources
     rhoai platform status    report RHOAI platform health
     rhoai platform inspect   display factual cluster information (read-only)
 """
@@ -10,6 +13,7 @@ from pathlib import Path
 import typer
 
 from rhoai.config.loader import load_config
+from rhoai.ocp import resources
 from rhoai.platform import dsc, operators, prepare
 from rhoai.platform import verify as platform_verify
 from rhoai.utils.logger import get_logger
@@ -18,15 +22,145 @@ app = typer.Typer(help="Manage the RHOAI platform.")
 log = get_logger(__name__)
 
 _config_option = typer.Option(None, "--config", "-c", help="Path to config YAML.")
+_components_arg = typer.Argument(..., help="Component names, e.g. kserve trustyai.")
 
 
-@app.command(name="prepare")
-def prepare_cmd(
+@app.command(name="init")
+def init_cmd(
+    config_file: Path | None = _config_option,
+    channel: str | None = typer.Option(
+        None, "--channel",
+        help=(
+            "OLM channel, e.g. 'stable-3.x', 'stable-3.4', 'fast-3.x', 'beta'. "
+            "Run: oc get packagemanifest rhods-operator -o jsonpath='{.status.channels[*].name}' "
+            "to see all available channels. Overrides config file."
+        ),
+    ),
+    version: str | None = typer.Option(
+        None, "--version",
+        help=(
+            "Pin to a specific CSV, e.g. '3.4.2' or 'rhods-operator.3.4.2'. "
+            "Check available CSVs with: oc get packagemanifest rhods-operator "
+            "-o jsonpath='{range .status.channels[?(@.name==\"<channel>\")]}{.currentCSV}{\"\\n\"}{end}'. "
+            "Applied as startingCSV on the Subscription after install."
+        ),
+    ),
+    source: str | None = typer.Option(
+        None, "--source",
+        help=(
+            "CatalogSource name. Defaults to 'redhat-operators'. "
+            "Use a custom CatalogSource for pre-GA builds, e.g. 'cs-rhoai-fbc-fragment'."
+        ),
+    ),
+) -> None:
+    """Validate prerequisites, install the operator, and initialize DSCI.
+
+    Does not enable any DSC components. Run 'enable' afterwards,
+    or use 'setup' to do everything in one call.
+
+    Flag values override the config file. Priority: flags > config file > defaults.
+
+    Examples:
+        rhoai platform init --channel stable-3.x
+        rhoai platform init --channel stable-3.4 --version 3.4.2
+        rhoai platform init --channel beta --source cs-rhoai-fbc-fragment
+    """
+    config = load_config(config_file)
+
+    # CLI flags take highest priority — overwrite in-memory config only.
+    # These are never written back to defaults.yaml.
+    if channel:
+        config["operator"]["channel"] = channel
+    if version:
+        # Accept bare semver (3.4.2) and normalise to the full CSV name.
+        # Real CSV names use no 'v' prefix: rhods-operator.3.4.2 (not .v3.4.2).
+        if version[0].isdigit():
+            version = f"rhods-operator.{version}"
+        config["operator"]["version"] = version
+    if source:
+        config["operator"]["source"] = source
+
+    prepare.init_platform(config)
+
+    # --- Post-init status summary ---
+    op_name   = config["operator"]["name"]
+    op_ns     = config["operator"]["namespace"]
+    dsci_name = config["dsc"]["dsci_name"]
+
+    op_display = op_name
+    try:
+        csv = operators.get_csv_info(op_name, op_ns)
+        op_display = f"{csv['name']}  {csv['version']}"
+    except Exception:  # noqa: BLE001
+        pass
+
+    dsci_phase = resources.status("DSCInitialization", dsci_name).get("phase", "Unknown")
+
+    typer.echo("\nPlatform initialized")
+    typer.echo(f"  Operator    {op_display}")
+    typer.echo(f"  DSCI        {dsci_name}  {dsci_phase}")
+
+
+@app.command(name="enable")
+def enable_cmd(
+    components: list[str] = _components_arg,
     config_file: Path | None = _config_option,
 ) -> None:
-    """Validate prerequisites, install the operator, and configure DSC."""
+    """Enable one or more DSC components. Requires 'init' to have run first.
+
+    Additive and idempotent — only the named components are changed;
+    existing Managed components stay Managed.
+
+    Example:
+        rhoai platform enable kserve trustyai
+    """
     config = load_config(config_file)
-    prepare.deploy_platform(config)
+    prepare.install_component(config, components)
+    typer.echo(f"Enabled: {', '.join(components)}")
+
+
+@app.command(name="uninstall")
+def uninstall_cmd(
+    config_file: Path | None = _config_option,
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
+    delete_workload_ns: bool = typer.Option(
+        False, "--delete-workload-ns",
+        help=(
+            "Also delete the workload namespace (redhat-ods-applications). "
+            "Off by default — the namespace may contain user notebooks and pipelines."
+        ),
+    ),
+) -> None:
+    """Remove all RHOAI platform resources (DSC, DSCI, operator, namespaces).
+
+    Deletes in reverse-install order: DSC → DSCI → CSV → Subscription →
+    OperatorGroup → operator namespace.
+
+    The workload namespace (redhat-ods-applications) is left intact unless
+    --delete-workload-ns is passed.
+    """
+    if not yes:
+        typer.confirm(
+            "This will remove all RHOAI platform resources. Continue?",
+            abort=True,
+        )
+    config = load_config(config_file)
+    prepare.uninstall_platform(config, delete_workload_ns=delete_workload_ns)
+    typer.echo("Platform uninstalled.")
+
+
+@app.command(name="setup")
+def setup_cmd(
+    config_file: Path | None = _config_option,
+) -> None:
+    """Full one-shot bootstrap: calls 'init' then enables all base components.
+
+    Equivalent to running 'init' followed by 'enable' for every component
+    defined in the base DSC manifest. For fine-grained control use
+    'init' + 'enable' separately.
+    """
+    config = load_config(config_file)
+    prepare.bootstrap_platform(config)
     typer.echo("Platform is ready.")
 
 
@@ -93,7 +227,7 @@ def status(
             if "401" in reason or "Unauthorized" in reason:
                 typer.echo("Run 'oc login <cluster-url>' to authenticate.", err=True)
             else:
-                typer.echo("Run 'rhoai platform prepare' to install RHOAI.", err=True)
+                typer.echo("Run 'rhoai platform setup' to install RHOAI.", err=True)
             break  # one actionable hint is enough
 
     raise typer.Exit(code=1)

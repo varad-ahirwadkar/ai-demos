@@ -23,6 +23,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from rhoai.utils.logger import get_logger
 from rhoai.utils.yaml_io import deep_merge, load
 
@@ -77,3 +79,21 @@ def _set_nested(d: dict[str, Any], keys: list[str], value: str) -> None:
     for key in keys[:-1]:
         d = d.setdefault(key, {})
     d[keys[-1]] = value
+
+
+def save_defaults(updates: dict[str, Any]) -> None:
+    """Persist key-value updates into defaults.yaml so future bare runs use them.
+
+    Only the keys present in *updates* are changed — every other value in
+    defaults.yaml is left exactly as-is.  The file is written atomically.
+
+    Args:
+        updates: Flat or nested dict matching the structure of defaults.yaml.
+                 Example: ``{"operator": {"channel": "stable-3.5",
+                                          "version": "rhods-operator.v3.5.0"}}``
+    """
+    current = load(_DEFAULTS)
+    merged  = deep_merge(current, updates)
+    with open(_DEFAULTS, "w") as fh:
+        yaml.dump(merged, fh, default_flow_style=False, sort_keys=False)
+    log.debug("defaults.yaml updated: %s", updates)

@@ -1,6 +1,6 @@
 """CLI entry point — rhoai-automation.
 
-Registers two command groups:
+Registers command groups:
     rhoai platform ...
     rhoai usecase  ...
 

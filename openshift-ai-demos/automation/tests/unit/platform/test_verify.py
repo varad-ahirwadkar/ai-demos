@@ -4,9 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rhoai.platform.verify import CheckResult, _run, verify_platform
+from rhoai.platform.verify import _run, verify_platform
 from rhoai.utils.errors import friendly_error
-
 
 # ---------------------------------------------------------------------------
 # friendly_error

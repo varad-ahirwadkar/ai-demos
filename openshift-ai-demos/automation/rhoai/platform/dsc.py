@@ -26,6 +26,37 @@ def wait_until_ready(name: str, timeout: int) -> None:
     wait.wait_until(lambda: _is_ready(name), f"DataScienceCluster/{name} Ready", timeout)
 
 
+def wait_dsci_ready(name: str, timeout: int) -> None:
+    """Block until the DSCInitialization reaches Ready phase. Raises TimeoutError."""
+    log.info("Waiting for DSCI '%s' (timeout: %ss)", name, timeout)
+    wait.wait_until_ready("DSCInitialization", name, timeout=timeout)
+
+
+def set_component_states(name: str, states: dict[str, str]) -> None:
+    """Merge-patch managementState for the given components only.
+
+    Only the components present in *states* are touched — every other
+    component already configured on the DSC (via a prior full manifest
+    apply or a previous call to this function) keeps its current state.
+    This is what makes 'enable one more component later' safe: it never
+    resets components a customer or a prior use-case deploy already turned on.
+
+    Args:
+        name:   DataScienceCluster name.
+        states: e.g. {"kserve": "Managed", "trustyai": "Managed"}.
+    """
+    log.info("Setting component state(s) on DSC '%s': %s", name, states)
+    patch_body = {
+        "spec": {
+            "components": {
+                component: {"managementState": state}
+                for component, state in states.items()
+            }
+        }
+    }
+    resources.patch("DataScienceCluster", name, patch_body, strategy="merge")
+
+
 def verify_dsci(name: str) -> None:
     """Assert the DSCInitialization is in Ready phase. Raises RuntimeError if not."""
     log.info("Verifying DSCInitialization '%s'", name)
@@ -33,7 +64,7 @@ def verify_dsci(name: str) -> None:
     if phase != "Ready":
         raise RuntimeError(
             f"DSCInitialization '{name}' is not ready (phase={phase!r}). "
-            "Run 'rhoai platform deploy' to configure it."
+            "Run 'rhoai platform setup' to configure it."
         )
     log.info("DSCInitialization '%s' is Ready", name)
 
@@ -45,7 +76,7 @@ def verify(name: str) -> None:
         phase = resources.status("DataScienceCluster", name).get("phase", "Unknown")
         raise RuntimeError(
             f"DataScienceCluster '{name}' is not ready (phase={phase!r}). "
-            "Run 'rhoai platform deploy' to configure it."
+            "Run 'rhoai platform setup' to configure it."
         )
     log.info("DataScienceCluster '%s' is Ready", name)
 

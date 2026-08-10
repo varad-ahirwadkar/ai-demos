@@ -4,7 +4,7 @@ Orchestrates platform capabilities in the correct order.
 Does not call ocp/ directly — all cluster operations go through platform modules.
 
 Deployment sequence:
-    1-3. deploy_platform  — validate cluster, operator, DSC/DSCI
+    1-3. bootstrap_platform — validate cluster, operator, DSC/DSCI
     4.   configure storage — S3 secret
     5.   deploy model      — vLLM CPU ServingRuntime + InferenceService
 """
@@ -30,7 +30,7 @@ def deploy(config: dict[str, Any]) -> None:
     log.info("=== Deploying vLLM (%s) ===", model)
 
     # 1–3 — platform bootstrap (cluster validation, operator, DSC/DSCI)
-    prepare.deploy_platform(config)
+    prepare.bootstrap_platform(config)
 
     # 4 — S3 credentials
     storage.apply_s3_secret(manifests.get_s3_secret(repo_root), namespace)

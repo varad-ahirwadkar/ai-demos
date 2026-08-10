@@ -2,10 +2,32 @@
 
 from typing import Any
 
+import typer
+
 from rhoai.ocp import resources
 from rhoai.utils.logger import get_logger
 
 log = get_logger(__name__)
+
+# Exhaustive list of components the DataScienceCluster CR accepts.
+# Used to give an immediate, actionable error for typos.
+VALID_COMPONENTS = frozenset({
+    "aipipelines",
+    "dashboard",
+    "feastoperator",
+    "kserve",
+    "kueue",
+    "llamastackoperator",
+    "mlflowoperator",
+    "modelregistry",
+    "ogx",
+    "ray",
+    "sparkoperator",
+    "trainer",
+    "trainingoperator",
+    "trustyai",
+    "workbenches",
+})
 
 
 def prepare_platform(config: dict[str, Any]) -> None:
@@ -13,22 +35,22 @@ def prepare_platform(config: dict[str, Any]) -> None:
     log.info("Starting platform preparation")
     validate_login()
     validate_storage(config.get("storage", {}).get("class_name", ""))
+    validate_namespace(config["operator"]["namespace"])
     validate_namespace(config["cluster"]["namespace"])
     log.info("Platform preparation complete")
 
 
-def deploy_platform(config: dict[str, Any]) -> None:
-    """Validate prerequisites, install the RHOAI operator, and configure DSC/DSCI.
+def init_platform(config: dict[str, Any]) -> None:
+    """Validate prerequisites, install the RHOAI operator, and initialize DSCI.
 
-    Consolidates the bootstrap sequence shared by the platform CLI command and
-    every use-case deploy function:
-        1. prepare_platform  — login, storage, namespace
+    This is the one-time, cluster-wide bootstrap step — it does not touch the
+    DataScienceCluster or any component state:
+        1. prepare_platform  — login, RBAC, storage, namespace
         2. operator          — install or wait for the existing CSV
-        3. DSC/DSCI          — apply manifests only when not already Ready,
-                               then wait for Ready
+        3. DSCI              — apply the manifest and wait for Ready
 
-    Callers that need to run further steps (e.g. storage secrets, model serving)
-    simply continue after this function returns.
+    Backs 'rhoai platform init'. Use install_component() afterwards to turn on
+    specific components, or bootstrap_platform() to do both in one call.
     """
     from rhoai.platform import dsc, manifests, operators
 
@@ -36,25 +58,173 @@ def deploy_platform(config: dict[str, Any]) -> None:
     op_name    = config["operator"]["name"]
     op_ns      = config["operator"]["namespace"]
     op_timeout = config["timeouts"]["operator_ready"]
-    dsc_name   = config["dsc"]["name"]
-    dsci_name  = config["dsc"]["dsci_name"]
-    dsc_timeout = config["timeouts"]["dsc_ready"]
 
     prepare_platform(config)
 
+    channel          = config["operator"]["channel"]
+    csv_version      = config["operator"].get("version", "")
+    source           = config["operator"].get("source", "redhat-operators")
+    source_namespace = config["operator"].get("source_namespace", "openshift-marketplace")
+
     if not operators.is_installed(op_name, op_ns):
-        operators.install(op_name, op_ns, config["operator"]["channel"], repo_root, op_timeout)
+        # Pass all Subscription fields atomically so whatever is in config
+        # (channel, source, version) all land in the same server-side apply.
+        operators.install(
+            op_name, op_ns, channel, repo_root, op_timeout,
+            version=csv_version,
+            source=source,
+            source_namespace=source_namespace,
+        )
     else:
         operators.wait_until_ready(op_name, op_ns, op_timeout)
 
     # Always apply DSCI: idempotent, only initialisation settings.
     dsc.apply_dsci(manifests.get_dsci(repo_root))
+    dsc.wait_dsci_ready(config["dsc"]["dsci_name"], config["timeouts"]["dsc_ready"])
 
-    # Always apply DSC: ensures any newly-enabled components in the manifest
-    # are reconciled even when the cluster already has a DSC.
-    dsc.apply_dsc(manifests.get_dsc(repo_root))
 
-    dsc.wait_until_ready(dsc_name, dsc_timeout)
+def install_component(config: dict[str, Any], components: list[str]) -> None:
+    """Turn on one or more DSC components. Requires init_platform to have run first.
+
+    Idempotent and additive — only the named components are patched to Managed;
+    every other component's current state is left untouched.
+    """
+    from rhoai.platform import dsc, manifests, operators
+
+    op_name  = config["operator"]["name"]
+    op_ns    = config["operator"]["namespace"]
+    dsc_name = config["dsc"]["name"]
+
+    invalid = sorted(c for c in components if c not in VALID_COMPONENTS)
+    if invalid:
+        valid_list = ", ".join(sorted(VALID_COMPONENTS))
+        raise typer.BadParameter(
+            f"unknown component(s): {', '.join(invalid)}.\n"
+            f"Valid components:\n  {valid_list}"
+        )
+
+    if not operators.is_installed(op_name, op_ns):
+        raise RuntimeError(
+            "Operator not found. Run 'rhoai platform init' first."
+        )
+    try:
+        dsc.verify_dsci(config["dsc"]["dsci_name"])
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"{exc} Run 'rhoai platform init' first."
+        ) from exc
+
+    if not resources.exists("DataScienceCluster", dsc_name):
+        log.info("No existing DSC '%s' — creating from base manifest", dsc_name)
+        dsc.apply_dsc(manifests.get_dsc(config["repo_root"]))
+
+    dsc.set_component_states(dsc_name, {c: "Managed" for c in components})
+    dsc.wait_until_ready(dsc_name, config["timeouts"]["dsc_ready"])
+
+
+def bootstrap_platform(config: dict[str, Any]) -> None:
+    """Full platform bootstrap: init_platform, then enable DSC components.
+
+    Backs 'rhoai platform setup'. Two modes controlled by config["components"]:
+    - Non-empty list → patch only those components to Managed.
+    - Empty (default) → apply the full base DSC manifest as-is.
+    """
+    from rhoai.platform import dsc, manifests
+
+    init_platform(config)
+
+    components = config.get("components") or []
+    if components:
+        install_component(config, components)
+    else:
+        dsc.apply_dsc(manifests.get_dsc(config["repo_root"]))
+        dsc.wait_until_ready(config["dsc"]["name"], config["timeouts"]["dsc_ready"])
+
+
+# Backward-compatible alias — prefer bootstrap_platform() in new code.
+deploy_platform = bootstrap_platform
+
+
+def uninstall_platform(config: dict[str, Any], delete_workload_ns: bool = False) -> None:
+    """Remove all RHOAI platform resources installed by init/setup.
+
+    Deletion order (reverse of install):
+        1. DataScienceCluster
+        2. DSCInitialization
+        3. CSV
+        4. Subscription
+        5. OperatorGroup
+        6. Operator namespace (redhat-ods-operator)
+        7. Workload namespace (redhat-ods-applications) — opt-in only
+    """
+    from rhoai.ocp import wait
+    from rhoai.platform import dsc, operators
+
+    op_name    = config["operator"]["name"]
+    op_ns      = config["operator"]["namespace"]
+    cluster_ns = config["cluster"]["namespace"]
+    dsc_name   = config["dsc"]["name"]
+    dsci_name  = config["dsc"]["dsci_name"]
+
+    # 1. DataScienceCluster
+    if resources.exists("DataScienceCluster", dsc_name):
+        dsc.delete_dsc(dsc_name)
+    else:
+        log.info("DataScienceCluster '%s' not found — skipping", dsc_name)
+
+    # 2. DSCInitialization
+    if resources.exists("DSCInitialization", dsci_name):
+        dsc.delete_dsci(dsci_name)
+    else:
+        log.info("DSCInitialization '%s' not found — skipping", dsci_name)
+
+    # 3. CSV
+    csv_name = operators.resolve_csv_name(op_name, op_ns)
+    if resources.exists("ClusterServiceVersion", csv_name, op_ns):
+        log.info("Deleting CSV '%s'", csv_name)
+        resources.delete_manifest("ClusterServiceVersion", csv_name, op_ns)
+    else:
+        log.info("CSV '%s' not found — skipping", csv_name)
+
+    # 4. Subscription
+    if resources.exists("Subscription", op_name, op_ns):
+        log.info("Deleting Subscription '%s'", op_name)
+        resources.delete_manifest("Subscription", op_name, op_ns)
+    else:
+        log.info("Subscription '%s' not found — skipping", op_name)
+
+    # 5. OperatorGroup
+    og_name = config.get("operator", {}).get("group_name", op_name)
+    if resources.exists("OperatorGroup", og_name, op_ns):
+        log.info("Deleting OperatorGroup '%s'", og_name)
+        resources.delete_manifest("OperatorGroup", og_name, op_ns)
+    else:
+        log.info("OperatorGroup '%s' not found — skipping", og_name)
+
+    # 6. Operator namespace
+    if resources.exists("Namespace", op_ns):
+        log.info("Deleting namespace '%s'", op_ns)
+        resources.delete_manifest("Namespace", op_ns)
+        wait.wait_until_deleted("Namespace", op_ns, timeout=120)
+    else:
+        log.info("Namespace '%s' not found — skipping", op_ns)
+
+    # 7. Workload namespace — opt-in only
+    if delete_workload_ns:
+        if resources.exists("Namespace", cluster_ns):
+            log.info("Deleting workload namespace '%s'", cluster_ns)
+            resources.delete_manifest("Namespace", cluster_ns)
+            wait.wait_until_deleted("Namespace", cluster_ns, timeout=120)
+        else:
+            log.info("Workload namespace '%s' not found — skipping", cluster_ns)
+    else:
+        log.info(
+            "Workload namespace '%s' left intact (pass --delete-workload-ns to remove)",
+            cluster_ns,
+        )
+
+    log.info("Platform uninstall complete")
+
 
 
 def validate_login() -> None:
@@ -87,7 +257,7 @@ def validate_permissions(operator_namespace: str) -> None:
         },
     }
     try:
-        result = resources.apply_dict(review)
+        result = resources.create_dict(review)
         allowed = result.get("status", {}).get("allowed", False)
     except RuntimeError as exc:
         raise RuntimeError(f"Permission check failed: {exc}") from exc

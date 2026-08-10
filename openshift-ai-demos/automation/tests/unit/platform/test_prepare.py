@@ -34,16 +34,16 @@ class TestValidateLogin:
 # ---------------------------------------------------------------------------
 class TestValidatePermissions:
     def test_passes_when_allowed(self, patch_resources: MagicMock) -> None:
-        patch_resources.apply_dict.return_value = {"status": {"allowed": True}}
+        patch_resources.create_dict.return_value = {"status": {"allowed": True}}
         prepare.validate_permissions("redhat-ods-operator")  # should not raise
 
     def test_raises_when_denied(self, patch_resources: MagicMock) -> None:
-        patch_resources.apply_dict.return_value = {"status": {"allowed": False}}
+        patch_resources.create_dict.return_value = {"status": {"allowed": False}}
         with pytest.raises(RuntimeError, match="Insufficient permissions"):
             prepare.validate_permissions("redhat-ods-operator")
 
     def test_raises_when_apply_fails(self, patch_resources: MagicMock) -> None:
-        patch_resources.apply_dict.side_effect = RuntimeError("API error")
+        patch_resources.create_dict.side_effect = RuntimeError("API error")
         with pytest.raises(RuntimeError, match="Permission check failed"):
             prepare.validate_permissions("redhat-ods-operator")
 
@@ -207,73 +207,334 @@ class TestGetClusterInfo:
 
 
 # ---------------------------------------------------------------------------
-# deploy_platform
+# init_platform / install_component / bootstrap_platform
 # ---------------------------------------------------------------------------
-class TestDeployPlatform:
-    # Shared minimal config used by all deploy_platform tests.
-    _config: dict[str, Any] = {
+def _fresh_prepare_module():
+    """Reimport rhoai.platform.prepare so monkeypatched lazy imports take hold.
+
+    Also ensures sibling platform modules (dsc, operators, manifests) are
+    pre-loaded in sys.modules so monkeypatch.setattr("rhoai.platform.dsc", ...)
+    works even for functions that import them lazily.
+    """
+    import importlib
+    import sys
+
+    import rhoai.platform.dsc       # noqa: F401 — side-effect: loads into sys.modules
+    import rhoai.platform.operators  # noqa: F401
+    import rhoai.platform.manifests  # noqa: F401
+    sys.modules.pop("rhoai.platform.prepare", None)
+    return importlib.import_module("rhoai.platform.prepare")
+
+
+def _base_config() -> dict[str, Any]:
+    return {
         "repo_root": "/repo",
-        "operator":  {"name": "rhods-operator", "namespace": "redhat-ods-operator", "channel": "stable"},
-        "dsc":       {"name": "default-dsc", "dsci_name": "default-dsci"},
-        "timeouts":  {"operator_ready": 300, "dsc_ready": 600},
+        "operator": {
+            "name": "rhods-operator",
+            "namespace": "redhat-ods-operator",
+            "channel": "stable",
+        },
+        "dsc":      {"name": "default-dsc", "dsci_name": "default-dsci"},
+        "timeouts": {"operator_ready": 300, "dsc_ready": 600},
     }
 
-    def _setup(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        *,
-        dsci_ready: bool = False,
-        dsc_ready: bool = False,
-        operator_installed: bool = True,
-    ):
-        import importlib
-        import sys
 
-        sys.modules.pop("rhoai.platform.prepare", None)
-        prep_mod = importlib.import_module("rhoai.platform.prepare")
+class TestInitPlatform:
+    def test_calls_prepare_then_operator_then_dsci(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """init_platform must call prepare_platform, then operator, then DSCI — in order.
 
+        Must NOT touch the DataScienceCluster — that's install_component's job.
+        """
+        prep_mod = _fresh_prepare_module()
+
+        prepare_mock   = MagicMock()
         operators_mock = MagicMock()
-        operators_mock.is_installed.return_value = operator_installed
-        dsc_mock = MagicMock()
-        dsc_mock.is_dsci_ready.return_value = dsci_ready
-        dsc_mock.is_dsc_ready.return_value  = dsc_ready
+        operators_mock.is_installed.return_value = True
+        dsc_mock       = MagicMock()
+        manifests_mock = MagicMock()
 
-        monkeypatch.setattr(prep_mod, "prepare_platform", MagicMock())
+        monkeypatch.setattr(prep_mod, "prepare_platform", prepare_mock)
         monkeypatch.setattr("rhoai.platform.operators", operators_mock)
         monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
-        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+        monkeypatch.setattr("rhoai.platform.manifests", manifests_mock)
 
-        return prep_mod, operators_mock, dsc_mock
+        prep_mod.init_platform(_base_config())
 
-    def test_calls_prepare_then_operator_then_dsc(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """deploy_platform calls prepare_platform, then operator, then DSC — in order."""
-        prep_mod, operators_mock, dsc_mock = self._setup(monkeypatch)
-        prep_mod.deploy_platform(self._config)
-
+        prepare_mock.assert_called_once()
         operators_mock.is_installed.assert_called_once()
-        dsc_mock.wait_until_ready.assert_called_once()
-
-    def test_always_applies_dsci_and_dsc(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """DSC/DSCI manifests are always applied — ensures new components are reconciled."""
-        prep_mod, _, dsc_mock = self._setup(monkeypatch)
-        prep_mod.deploy_platform(self._config)
-
         dsc_mock.apply_dsci.assert_called_once()
-        dsc_mock.apply_dsc.assert_called_once()
-        dsc_mock.wait_until_ready.assert_called_once()
+        dsc_mock.wait_dsci_ready.assert_called_once()
+        dsc_mock.apply_dsc.assert_not_called()
 
     def test_installs_operator_when_not_present(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        prep_mod, operators_mock, _ = self._setup(monkeypatch, operator_installed=False)
-        prep_mod.deploy_platform(self._config)
+        prep_mod = _fresh_prepare_module()
+
+        monkeypatch.setattr(prep_mod, "prepare_platform", MagicMock())
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = False
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       MagicMock())
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+
+        prep_mod.init_platform(_base_config())
 
         operators_mock.install.assert_called_once()
         operators_mock.wait_until_ready.assert_not_called()
+
+    def test_waits_for_existing_operator_when_already_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        prep_mod = _fresh_prepare_module()
+
+        monkeypatch.setattr(prep_mod, "prepare_platform", MagicMock())
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = True
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       MagicMock())
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+
+        prep_mod.init_platform(_base_config())
+
+        operators_mock.install.assert_not_called()
+        operators_mock.wait_until_ready.assert_called_once()
+
+    def test_passes_version_to_install_when_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When config['operator']['version'] is set, install() must receive it."""
+        prep_mod = _fresh_prepare_module()
+
+        monkeypatch.setattr(prep_mod, "prepare_platform", MagicMock())
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = False
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       MagicMock())
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+
+        config = _base_config()
+        config["operator"]["version"] = "rhods-operator.v3.5.0"
+        prep_mod.init_platform(config)
+
+        operators_mock.install.assert_called_once()
+        _, kwargs = operators_mock.install.call_args
+        assert kwargs.get("version") == "rhods-operator.v3.5.0"
+
+    def test_passes_empty_version_when_not_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When version is absent from config, install() receives version=''."""
+        prep_mod = _fresh_prepare_module()
+
+        monkeypatch.setattr(prep_mod, "prepare_platform", MagicMock())
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = False
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       MagicMock())
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+
+        prep_mod.init_platform(_base_config())
+
+        operators_mock.install.assert_called_once()
+        _, kwargs = operators_mock.install.call_args
+        assert kwargs.get("version", "") == ""
+
+
+class TestInstallComponent:
+    def test_raises_when_operator_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        prep_mod = _fresh_prepare_module()
+
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = False
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       MagicMock())
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+        monkeypatch.setattr("rhoai.ocp.resources",      MagicMock())
+
+        with pytest.raises(RuntimeError, match="platform init"):
+            prep_mod.install_component(_base_config(), ["kserve"])
+
+    def test_raises_when_dsci_not_ready(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        prep_mod = _fresh_prepare_module()
+
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = True
+        dsc_mock = MagicMock()
+        err_msg = "DSCInitialization 'default-dsci' is not ready"
+        dsc_mock.verify_dsci.side_effect = RuntimeError(err_msg)
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+        monkeypatch.setattr("rhoai.ocp.resources",      MagicMock())
+
+        with pytest.raises(RuntimeError, match="platform init"):
+            prep_mod.install_component(_base_config(), ["kserve"])
+
+    def test_creates_dsc_from_base_manifest_when_absent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When no DSC exists yet, install_component bootstraps it from the base
+        manifest before patching — so component fields are always schema-valid.
+        """
+        import rhoai.platform.dsc  # ensure module is loaded before monkeypatching
+        prep_mod = _fresh_prepare_module()
+
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = True
+        dsc_mock = MagicMock()
+        manifests_mock = MagicMock()
+        resources_mock = MagicMock()
+        resources_mock.exists.return_value = False
+
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
+        monkeypatch.setattr("rhoai.platform.manifests", manifests_mock)
+        monkeypatch.setattr("rhoai.ocp.resources",      resources_mock)
+        monkeypatch.setattr(prep_mod, "resources",      resources_mock)
+
+        prep_mod.install_component(_base_config(), ["kserve", "trustyai"])
+
+        dsc_mock.apply_dsc.assert_called_once()
+        dsc_mock.set_component_states.assert_called_once_with(
+            "default-dsc", {"kserve": "Managed", "trustyai": "Managed"}
+        )
+        dsc_mock.wait_until_ready.assert_called_once()
+
+    def test_does_not_recreate_dsc_when_already_present(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When a DSC already exists, install_component must only patch — it must
+        never re-apply the full manifest, which would reset unrelated components.
+        """
+        import rhoai.platform.dsc  # ensure module is loaded before monkeypatching
+        prep_mod = _fresh_prepare_module()
+
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = True
+        dsc_mock = MagicMock()
+        resources_mock = MagicMock()
+        resources_mock.exists.return_value = True
+
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+        monkeypatch.setattr("rhoai.ocp.resources",      resources_mock)
+        monkeypatch.setattr(prep_mod, "resources",      resources_mock)
+
+        prep_mod.install_component(_base_config(), ["trustyai"])
+
+        dsc_mock.apply_dsc.assert_not_called()
+        dsc_mock.set_component_states.assert_called_once_with(
+            "default-dsc", {"trustyai": "Managed"}
+        )
+
+
+    def test_raises_for_unknown_component(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """install_component must reject unknown component names immediately,
+        before any cluster calls, with a clear error listing valid names.
+        """
+        import typer as _typer
+
+        prep_mod = _fresh_prepare_module()
+
+        with pytest.raises(_typer.BadParameter, match="unknown component"):
+            prep_mod.install_component(_base_config(), ["kserv"])
+
+    def test_raises_for_multiple_unknown_components(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import typer as _typer
+
+        prep_mod = _fresh_prepare_module()
+
+        with pytest.raises(_typer.BadParameter, match="unknown component"):
+            prep_mod.install_component(_base_config(), ["kserv", "notacomponent"])
+
+    def test_valid_component_names_pass_validation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """All names in VALID_COMPONENTS must be accepted without error."""
+        import rhoai.platform.dsc  # ensure module is loaded before monkeypatching
+        from rhoai.platform.prepare import VALID_COMPONENTS
+
+        prep_mod = _fresh_prepare_module()
+
+        operators_mock = MagicMock()
+        operators_mock.is_installed.return_value = True
+        dsc_mock = MagicMock()
+        resources_mock = MagicMock()
+        resources_mock.exists.return_value = True
+
+        monkeypatch.setattr("rhoai.platform.operators", operators_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
+        monkeypatch.setattr("rhoai.platform.manifests", MagicMock())
+        monkeypatch.setattr("rhoai.ocp.resources",      resources_mock)
+        monkeypatch.setattr(prep_mod, "resources",      resources_mock)
+
+        # Every valid name must not raise BadParameter
+        for name in VALID_COMPONENTS:
+            prep_mod.install_component(_base_config(), [name])
+
+
+class TestBootstrapPlatform:
+    def test_applies_full_dsc_manifest_when_components_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When config has no components list, apply the full base DSC manifest."""
+        prep_mod = _fresh_prepare_module()
+
+        init_mock      = MagicMock()
+        dsc_mock       = MagicMock()
+        manifests_mock = MagicMock()
+
+        monkeypatch.setattr(prep_mod, "init_platform", init_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",       dsc_mock)
+        monkeypatch.setattr("rhoai.platform.manifests", manifests_mock)
+
+        config = _base_config()  # no "components" key → defaults to empty
+        prep_mod.bootstrap_platform(config)
+
+        init_mock.assert_called_once_with(config)
+        dsc_mock.apply_dsc.assert_called_once()
+        dsc_mock.wait_until_ready.assert_called_once()
+
+    def test_uses_install_component_when_components_set_in_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When config['components'] is a non-empty list, delegate to install_component
+        instead of applying the full manifest — enabling only the listed components."""
+        prep_mod = _fresh_prepare_module()
+
+        init_mock            = MagicMock()
+        install_mock         = MagicMock()
+        dsc_mock             = MagicMock()
+
+        monkeypatch.setattr(prep_mod, "init_platform",      init_mock)
+        monkeypatch.setattr(prep_mod, "install_component",  install_mock)
+        monkeypatch.setattr("rhoai.platform.dsc",           dsc_mock)
+        monkeypatch.setattr("rhoai.platform.manifests",     MagicMock())
+
+        config = _base_config()
+        config["components"] = ["kserve", "trustyai"]
+        prep_mod.bootstrap_platform(config)
+
+        init_mock.assert_called_once_with(config)
+        install_mock.assert_called_once_with(config, ["kserve", "trustyai"])
+        # Full manifest must NOT be applied when components are explicit
+        dsc_mock.apply_dsc.assert_not_called()
+
+    def test_deploy_platform_alias_still_works(self) -> None:
+        """Backward-compatible alias for any external callers."""
+        assert prepare.deploy_platform is prepare.bootstrap_platform
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ import urllib3
 from kubernetes import config as k8s_config
 from kubernetes import dynamic
 from kubernetes.client import ApiClient
-from kubernetes.dynamic.exceptions import NotFoundError
+from kubernetes.dynamic.exceptions import NotFoundError, ResourceNotFoundError
 
 from rhoai.utils.logger import get_logger
 from rhoai.utils.yaml_io import load
@@ -40,6 +40,7 @@ _API_HINTS: dict[str, str] = {
     "ClusterVersion":          "config.openshift.io/v1",
     "Subscription":            "operators.coreos.com/v1alpha1",
     "OperatorGroup":           "operators.coreos.com/v1",
+    "InstallPlan":             "operators.coreos.com/v1alpha1",
     "ClusterServiceVersion":   "operators.coreos.com/v1alpha1",
     "SelfSubjectAccessReview": "authorization.k8s.io/v1",
     "Template":                "template.openshift.io/v1",
@@ -153,6 +154,16 @@ def apply_dict(manifest: dict[str, Any], namespace: str | None = None) -> dict[s
     ).to_dict()
 
 
+def create_dict(manifest: dict[str, Any], namespace: str | None = None) -> dict[str, Any]:
+    """POST a manifest dict via create (for singleton/review resources with no name)."""
+    client = _client()
+    kind = manifest["kind"]
+    res = _resource(client, kind, manifest.get("apiVersion"))
+    effective_ns = namespace or manifest.get("metadata", {}).get("namespace")
+    log.debug("Creating %s (ns=%s)", kind, effective_ns)
+    return res.create(body=manifest, namespace=effective_ns).to_dict()
+
+
 def delete_manifest(kind: str, name: str, namespace: str | None = None) -> None:
     """Delete a resource by kind and name. Idempotent — silent if already absent."""
     client = _client()
@@ -165,11 +176,16 @@ def delete_manifest(kind: str, name: str, namespace: str | None = None) -> None:
 
 
 def exists(kind: str, name: str, namespace: str | None = None) -> bool:
-    """Return True if the named resource exists on the cluster."""
+    """Return True if the named resource exists on the cluster.
+
+    Returns False for both missing objects (NotFoundError) and missing CRD/API
+    (ResourceNotFoundError) — the latter happens when the operator that owns
+    the CRD has not been installed yet.
+    """
     try:
         get(kind, name, namespace)
         return True
-    except NotFoundError:
+    except (NotFoundError, ResourceNotFoundError):
         return False
 
 

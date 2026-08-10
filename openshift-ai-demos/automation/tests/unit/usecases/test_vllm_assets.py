@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from rhoai.usecases import registry
 from rhoai.usecases.vllm import assets
 
