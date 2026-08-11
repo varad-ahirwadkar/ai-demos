@@ -99,7 +99,8 @@ class TestVerifyTritonInference:
 
     _BASE_URL  = "https://fraud-detection.apps.example.com"
     _MODEL     = "fraud-detection"
-    _GOOD_RESP = {"model_name": "fraud-detection", "outputs": [{"name": "output", "data": [0.1]}]}
+    _GOOD_BODY = {"model_name": "fraud-detection", "outputs": [{"name": "output", "data": [0.1]}]}
+    _GOOD_RESP = (_GOOD_BODY, 0.05, 200)   # (response_dict, elapsed, status)
 
     def _patch(self, monkeypatch: pytest.MonkeyPatch, post_return=None, post_side_effect=None):
         monkeypatch.setattr(
@@ -141,7 +142,7 @@ class TestVerifyTritonInference:
     def test_raises_on_wrong_model_name_in_response(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        bad_resp = {"model_name": "wrong-model", "outputs": [{}]}
+        bad_resp = ({"model_name": "wrong-model", "outputs": [{}]}, 0.05, 200)
         self._patch(monkeypatch, post_return=bad_resp)
         with pytest.raises(RuntimeError, match="Unexpected model_name"):
             inference.verify_triton_inference(
@@ -151,7 +152,7 @@ class TestVerifyTritonInference:
     def test_raises_when_outputs_missing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        bad_resp = {"model_name": "fraud-detection", "outputs": []}
+        bad_resp = ({"model_name": "fraud-detection", "outputs": []}, 0.05, 200)
         self._patch(monkeypatch, post_return=bad_resp)
         with pytest.raises(RuntimeError, match="no outputs"):
             inference.verify_triton_inference(
@@ -161,7 +162,7 @@ class TestVerifyTritonInference:
     def test_raises_when_outputs_key_absent(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        bad_resp = {"model_name": "fraud-detection"}
+        bad_resp = ({"model_name": "fraud-detection"}, 0.05, 200)
         self._patch(monkeypatch, post_return=bad_resp)
         with pytest.raises(RuntimeError, match="no outputs"):
             inference.verify_triton_inference(
@@ -178,7 +179,7 @@ class TestVerifyTritonInference:
             "rhoai.platform.inference.get_inference_url",
             lambda *_: self._BASE_URL,
         )
-        # First call raises _ConnectionError; second call succeeds.
+        # First call raises _ConnectionError; second call succeeds (returns a 3-tuple).
         post_mock = MagicMock(
             side_effect=[inference._ConnectionError("timeout"), self._GOOD_RESP]
         )
@@ -226,8 +227,10 @@ class TestHttpPost:
         import json as _json
         body = _json.dumps({"model_name": "x", "outputs": []}).encode()
         self._patch_pool(monkeypatch, 200, body)
-        result = inference._http_post("https://host/infer", {"inputs": []})
+        result, elapsed, status = inference._http_post("https://host/infer", {"inputs": []})
         assert result["model_name"] == "x"
+        assert status == 200
+        assert elapsed >= 0.0
 
     def test_raises_runtime_error_on_non_200(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._patch_pool(monkeypatch, 503, b"Service Unavailable")

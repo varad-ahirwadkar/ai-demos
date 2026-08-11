@@ -146,14 +146,27 @@ def verify_triton_inference(
     payload   = json.loads(sample_request.read_text())
 
     log.info("Running model smoke test")
-    log.debug("POST %s", infer_url)
+    log.debug("Model:    %s", model_name)
+    log.debug("Endpoint: %s", infer_url)
+    log.debug("Request payload:\n%s", json.dumps(payload, indent=2))
+    log.debug(
+        "Reproduce manually:\n  curl -sk -X POST %s"
+        " -H 'Content-Type: application/json'"
+        " -d '%s'",
+        infer_url,
+        json.dumps(payload),
+    )
 
     try:
-        response = _http_post(infer_url, payload)
-    except _ConnectionError:
+        response, elapsed, status = _http_post(infer_url, payload)
+    except _ConnectionError as exc:
         log.warning("Connection error — retrying in %ss", _RETRY_DELAY)
+        log.debug("Connection failure detail: %s", exc)
         time.sleep(_RETRY_DELAY)
-        response = _http_post(infer_url, payload)
+        response, elapsed, status = _http_post(infer_url, payload)
+
+    log.debug("Response status: %s  elapsed: %.2fs", status, elapsed)
+    log.debug("Response body:\n%s", json.dumps(response, indent=2))
 
     _assert_triton_response(response, model_name)
     log.info("Model is serving inference requests")
@@ -167,15 +180,16 @@ class _ConnectionError(RuntimeError):
     """Raised when the HTTP call cannot reach the server (not an HTTP error)."""
 
 
-def _http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
-    """POST a JSON body to *url* and return the decoded JSON response.
+def _http_post(url: str, body: dict[str, Any]) -> tuple[dict[str, Any], float, int]:
+    """POST a JSON body to *url* and return (decoded response, elapsed seconds, status code).
 
     Raises:
         _ConnectionError: On connection/timeout failure.
         RuntimeError:     On a non-200 HTTP response.
     """
-    http = urllib3.PoolManager(num_pools=_POOL_CONNECTIONS, cert_reqs="CERT_NONE")
-    encoded = json.dumps(body).encode()
+    http     = urllib3.PoolManager(num_pools=_POOL_CONNECTIONS, cert_reqs="CERT_NONE")
+    encoded  = json.dumps(body).encode()
+    t_start  = time.monotonic()
     try:
         resp = http.request(
             "POST",
@@ -186,15 +200,19 @@ def _http_post(url: str, body: dict[str, Any]) -> dict[str, Any]:
         )
     except urllib3.exceptions.HTTPError as exc:
         raise _ConnectionError(f"Cannot reach {url}: {exc}") from exc
+    elapsed = time.monotonic() - t_start
 
     if resp.status != 200:
-        preview = resp.data[:200].decode(errors="replace")
+        raw     = resp.data.decode(errors="replace")
+        preview = raw[:200]
+        log.debug("Error response body:\n%s", raw)
         raise RuntimeError(
             f"Triton inference request failed: HTTP {resp.status} — {preview}"
         )
     try:
-        return json.loads(resp.data)
+        return json.loads(resp.data), elapsed, resp.status
     except json.JSONDecodeError as exc:
+        log.debug("Raw response (non-JSON): %s", resp.data[:500].decode(errors="replace"))
         raise RuntimeError(f"Triton response is not valid JSON: {exc}") from exc
 
 
