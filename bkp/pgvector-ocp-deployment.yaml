@@ -1,0 +1,179 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgvector-postgresql-credentials-secret
+type: Opaque
+stringData:
+  POSTGRES_DB: "llamastack"
+  POSTGRES_USER: "llamastack"
+  POSTGRES_PASSWORD: "llamastack"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgvector-postgresql-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: "nfs-storage-provisioner"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgvector-postgresql-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pgvector-postgresql-app
+  template:
+    metadata:
+      labels:
+        app: pgvector-postgresql-app
+    spec:
+      securityContext:
+        fsGroupChangePolicy: "OnRootMismatch"
+      
+      initContainers:
+      - name: init-pgdata
+        image: quay.io/vahirwad/pgvector:pg16-ocp
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "Preparing PGDATA directory..."
+          mkdir -p /var/lib/postgresql/data/pgdata
+          # Create socket directory in writable location
+          mkdir -p /var/lib/postgresql/data/run
+          echo "Directories ready"
+          echo "Running as UID: $(id -u), GID: $(id -g)"
+        volumeMounts:
+        - name: pgdata
+          mountPath: /var/lib/postgresql/data
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+      
+      containers:
+      - name: postgres
+        image: quay.io/vahirwad/pgvector:pg16-ocp
+        
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        
+        ports:
+        - name: postgres
+          containerPort: 5432
+        
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: pgvector-postgresql-credentials-secret
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: pgvector-postgresql-credentials-secret
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: pgvector-postgresql-credentials-secret
+              key: POSTGRES_PASSWORD
+        # Use subdirectory to avoid mount point permission issues
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        # Override socket directory to writable location
+        - name: POSTGRES_HOST_AUTH_METHOD
+          value: "scram-sha-256"
+        
+        # Add command to override socket directory
+        command:
+        - postgres
+        - -c
+        - unix_socket_directories=/var/lib/postgresql/data/run
+        
+        volumeMounts:
+        - name: pgdata
+          mountPath: /var/lib/postgresql/data
+        
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+        
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 45
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 6
+        
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                set -e
+                echo "Waiting for PostgreSQL to accept connections..."
+                for i in {1..30}; do
+                  if PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT 1" >/dev/null 2>&1; then
+                    echo "PostgreSQL is ready, creating pgvector extension..."
+                    PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+                    echo "pgvector extension created successfully"
+                    exit 0
+                  fi
+                  sleep 2
+                done
+                echo "Warning: Could not create pgvector extension (PostgreSQL may not be ready yet)"
+      
+      volumes:
+      - name: pgdata
+        persistentVolumeClaim:
+          claimName: pgvector-postgresql-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgvector-postgresql-service
+spec:
+  selector:
+    app: pgvector-postgresql-app
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+  type: ClusterIP
+
+# Made with Bob

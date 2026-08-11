@@ -1,0 +1,15 @@
+# Core dependencies
+flask==3.0.0
+flask-cors==4.0.0
+llama-stack-client==0.0.53
+requests==2.31.0
+
+# Document processing
+PyPDF2==3.0.1
+
+# Utilities
+python-dotenv==1.0.0
+werkzeug==3.0.1
+
+# Optional: for production deployment
+gunicorn==21.2.0

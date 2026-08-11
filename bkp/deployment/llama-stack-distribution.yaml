@@ -1,0 +1,91 @@
+---
+apiVersion: llamastack.io/v1alpha1
+kind: LlamaStackDistribution
+metadata:
+  name: techmart-llama-stack
+  namespace: llama-demo
+spec:
+  replicas: 1
+  server:
+    podDisruptionBudget:
+      minAvailable: 1
+    autoscaling:
+      minReplicas: 1
+      maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    containerSpec:
+      env:
+        # PostgreSQL metadata store
+        - name: POSTGRES_HOST
+          value: postgres.llama-demo.svc.cluster.local
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_DB
+          value: llamastack
+        - name: POSTGRES_USER
+          value: llamastack
+        - name: POSTGRES_PASSWORD
+          value: llamastack
+        
+        # Llama Stack configuration
+        - name: LLAMA_STACK_PORT
+          value: "8321"
+        - name: VLLM_MAX_TOKENS
+          value: "2048"
+
+        # Inline embeddings (sentence-transformers)
+        - name: ENABLE_SENTENCE_TRANSFORMERS
+          value: "true"
+        - name: EMBEDDING_PROVIDER
+          value: "sentence-transformers"
+        - name: TRUSTYAI_EMBEDDING_MODEL
+          value: sentence-transformers/ibm-granite/granite-embedding-125m-english
+
+        # Remote LLM configuration (VLLM)
+        - name: INFERENCE_MODEL
+          value: "llama-32-3b-instruct"
+        - name: VLLM_URL
+          value: http://llama-32-3b-instruct-predictor.llama-demo.svc.cluster.local:8080/v1
+        - name: VLLM_TLS_VERIFY
+          value: "false"
+        - name: VLLM_API_TOKEN
+          value: "fake"
+
+        # Enable inline FAISS vector store
+        - name: ENABLE_FAISS
+          value: "faiss"
+
+        # Optional: FMS Guardrails (uncomment if using)
+        # - name: FMS_ORCHESTRATOR_URL
+        #   value: "https://guardrails-orchestrator-llama-demo.apps.your-cluster.com"
+        # - name: FMS_SSL_CERT_PATH
+        #   value: "/etc/pki/tls/certs/ca-bundle.crt"
+
+      name: llama-stack
+      port: 8321
+      resources:
+        requests:
+          memory: "4Gi"
+          cpu: "2"
+        limits:
+          memory: "8Gi"
+          cpu: "4"
+    distribution:
+      name: rh-dev
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: techmart-llama-stack-service
+  namespace: llama-demo
+spec:
+  selector:
+    app: llama-stack
+  ports:
+    - protocol: TCP
+      port: 8321
+      targetPort: 8321
+  type: ClusterIP
+
+# Made with Bob

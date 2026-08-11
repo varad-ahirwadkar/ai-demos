@@ -1,0 +1,56 @@
+# ============================================================================
+# TechMart Customer Service Demo - Environment Variables
+# ============================================================================
+# Copy this file to .env and fill in your actual values
+# NEVER commit .env file with real credentials to version control
+
+# ----------------------------------------------------------------------------
+# Flask Configuration
+# ----------------------------------------------------------------------------
+SECRET_KEY=change-this-to-a-random-secret-key-in-production
+PORT=8080
+
+# ----------------------------------------------------------------------------
+# Llama Stack Configuration
+# ----------------------------------------------------------------------------
+LLAMA_STACK_URL=http://localhost:8321
+
+# ----------------------------------------------------------------------------
+# MCP Server Configuration
+# ----------------------------------------------------------------------------
+# Primary URL used by Llama Stack to call MCP tools
+MCP_SERVER_URL=http://localhost:9001/sse
+
+# Local URL for health checks (when UI runs outside container)
+# If not set, defaults to MCP_SERVER_URL
+MCP_SERVER_URL_LOCAL=http://localhost:9001/sse
+
+# ----------------------------------------------------------------------------
+# Database Configuration (IBM i DB2)
+# ----------------------------------------------------------------------------
+# REQUIRED: These must be set for database operations to work
+DB_SYSTEM=9.114.98.63
+DB_USER=AARUNI
+DB_PASSWORD=IBMIFORMCPODH33*()
+DB_SCHEMA=TECHMART
+
+# ----------------------------------------------------------------------------
+# OpenSearch Configuration (for RAG cleanup)
+# ----------------------------------------------------------------------------
+OPENSEARCH_URL=http://localhost:9200
+OPENSEARCH_USER=admin
+OPENSEARCH_PASSWORD=admin
+
+# ----------------------------------------------------------------------------
+# Deployment Notes
+# ----------------------------------------------------------------------------
+# For Kubernetes/OpenShift deployments:
+# - Use Secrets for sensitive values (DB_PASSWORD, SECRET_KEY, etc.)
+# - Use ConfigMaps for non-sensitive configuration
+# - Never hardcode credentials in deployment YAML files
+#
+# Example Kubernetes Secret:
+#   kubectl create secret generic techmart-db-secret \
+#     --from-literal=database-user=myuser \
+#     --from-literal=database-password=mypassword \
+#     --from-literal=database-name=techmart

@@ -13,11 +13,10 @@ No lazy loading, no plugin discovery, no base classes.
 
 from types import ModuleType
 
-from rhoai.usecases import fraud_detection, vllm
+from rhoai.usecases import fraud_detection
 
 REGISTRY: dict[str, ModuleType] = {
     "fraud-detection": fraud_detection,
-    "vllm":            vllm,
 }
 
 

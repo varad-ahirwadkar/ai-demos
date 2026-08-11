@@ -1,0 +1,123 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: document-qa-config
+  namespace: llama-demo
+data:
+  LLAMA_STACK_URL: "http://techmart-llama-stack-service.llama-demo.svc.cluster.local:8321"
+  CHUNK_SIZE: "1000"
+  CHUNK_OVERLAP: "200"
+  MAX_CHUNKS: "5"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: document-qa-app
+  namespace: llama-demo
+  labels:
+    app: document-qa-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: document-qa-app
+  template:
+    metadata:
+      labels:
+        app: document-qa-app
+    spec:
+      containers:
+        - name: document-qa-app
+          image: quay.io/your-org/document-qa-app:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "5000"
+            - name: LLAMA_STACK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: document-qa-config
+                  key: LLAMA_STACK_URL
+            - name: CHUNK_SIZE
+              valueFrom:
+                configMapKeyRef:
+                  name: document-qa-config
+                  key: CHUNK_SIZE
+            - name: CHUNK_OVERLAP
+              valueFrom:
+                configMapKeyRef:
+                  name: document-qa-config
+                  key: CHUNK_OVERLAP
+            - name: MAX_CHUNKS
+              valueFrom:
+                configMapKeyRef:
+                  name: document-qa-config
+                  key: MAX_CHUNKS
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: upload-storage
+              mountPath: /tmp/uploads
+      volumes:
+        - name: upload-storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: document-qa-app
+  namespace: llama-demo
+  labels:
+    app: document-qa-app
+spec:
+  selector:
+    app: document-qa-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5000
+  type: ClusterIP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: document-qa-app
+  namespace: llama-demo
+  labels:
+    app: document-qa-app
+spec:
+  to:
+    kind: Service
+    name: document-qa-app
+  port:
+    targetPort: 5000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+# Made with Bob
