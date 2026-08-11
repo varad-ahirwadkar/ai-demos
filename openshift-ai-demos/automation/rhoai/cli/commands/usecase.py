@@ -88,10 +88,9 @@ def _print_deploy_summary(name: str, config: dict) -> None:
     lookup fails for any reason the summary is still printed without it —
     the deployment itself succeeded.
     """
-    namespace = config["cluster"]["namespace"]
-    # Use-case config key is derived from the CLI name: "fraud-detection" → "fraud_detection".
-    uc_key    = name.replace("-", "_")
-    isvc_name = config.get(uc_key, {}).get("inference_service_name", name)
+    dep_cfg   = config.get("deployment", {})
+    namespace = dep_cfg.get("namespace") or config["platform"]["namespace"]
+    isvc_name = dep_cfg.get("inference_service_name", name)
 
     url = ""
     try:

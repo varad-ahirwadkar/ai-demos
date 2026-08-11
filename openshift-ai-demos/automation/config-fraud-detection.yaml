@@ -1,0 +1,28 @@
+# Fraud Detection — deployment configuration
+# Override only what differs from config/defaults.yaml.
+
+# Absolute path to the root of the openshift-ai-demos repository.
+repo_root: /path/to/openshift-ai-demos
+
+platform:
+  namespace: redhat-ods-applications
+
+operator:
+  channel: stable
+
+# DSC components to enable during platform setup.
+components:
+  - dashboard
+  - workbenches
+  - kserve
+  - trustyai
+
+storage:
+  class_name: ""   # empty = accept any available ReadWriteOnce class
+
+deployment:
+  namespace: fraud-detection
+  inference_service_name: fraud-detection
+  model_uri: pvc://fraud-model-pvc/models
+  trustyai_service_name: trustyai-service
+  trustyai_service_account: trustyai-user

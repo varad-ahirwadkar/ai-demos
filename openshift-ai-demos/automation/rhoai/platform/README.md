@@ -47,7 +47,7 @@ operator:
   source: redhat-operators
   source_namespace: openshift-marketplace
 
-cluster:
+platform:
   namespace: redhat-ods-applications
 
 dsc:

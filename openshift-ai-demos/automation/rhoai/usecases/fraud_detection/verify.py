@@ -20,10 +20,10 @@ def verify(config: dict[str, Any]) -> None:
 
     platform_verify.verify_platform(config)
 
-    namespace     = config["cluster"]["namespace"]
-    fd_cfg        = config.get("fraud_detection", {})
-    isvc_name     = fd_cfg.get("inference_service_name", "fraud-detection")
-    trustyai_name = fd_cfg.get("trustyai_service_name", "trustyai-service")
+    dep_cfg       = config.get("deployment", {})
+    namespace     = dep_cfg.get("namespace") or config["platform"]["namespace"]
+    isvc_name     = dep_cfg.get("inference_service_name", "fraud-detection")
+    trustyai_name = dep_cfg.get("trustyai_service_name", "trustyai-service")
 
     log.info("Checking InferenceService '%s'", isvc_name)
     inference.verify(namespace, name=isvc_name)

@@ -62,13 +62,13 @@ class TestModuleGraph:
 
 
 class TestConfigDefaults:
-    def test_fraud_detection_defaults_present(self) -> None:
+    def test_deployment_defaults_present(self) -> None:
         config = load_config()
-        fd = config.get("fraud_detection", {})
-        assert fd.get("inference_service_name") == "fraud-detection"
+        dep = config.get("deployment", {})
+        assert dep.get("inference_service_name") == "fraud-detection"
+        assert dep.get("trustyai_service_name") == "trustyai-service"
         # serving_runtime_name is an internal constant, not user-facing config.
         assert assets.SERVING_RUNTIME_NAME == "triton-ppc64le-runtime"
-        assert fd.get("trustyai_service_name") == "trustyai-service"
 
     def test_timeouts_present(self) -> None:
         config = load_config()
@@ -95,10 +95,6 @@ class TestAssetPaths:
             tmp_path / "model-serving" / "predictive-models" / "triton" / "fraud-detection.yaml"
         )
 
-    def test_trustyai_monitoring_path(self, tmp_path: Path) -> None:
-        p = assets.get_trustyai_monitoring_manifest(tmp_path)
-        assert p == tmp_path / "trustyai" / "service" / "monitoring-config.yaml"
-
     def test_trustyai_service_path(self, tmp_path: Path) -> None:
         p = assets.get_trustyai_service_manifest(tmp_path)
         assert p == tmp_path / "trustyai" / "service" / "trustyai-service.yaml"
@@ -113,18 +109,17 @@ class TestAssetPaths:
 class TestDeploySmoke:
     """Smoke-test deploy() wiring with all cluster I/O mocked.
 
-    deploy() now reads the InferenceService manifest from disk via yaml_io.load()
-    and applies it via ocp_resources.apply_dict().  Both are patched here so the
-    test never touches the real filesystem beyond the stub file we create in
-    tmp_path.
+    deploy() reads the InferenceService manifest from disk via yaml_io.load()
+    and applies it via ocp_resources.apply_dict(). Both are patched here so the
+    test never touches the real filesystem beyond the stub file we create in tmp_path.
     """
 
     def _make_config(self, tmp_path: Path, model_uri: str = "") -> dict:
         config = load_config()
         config["repo_root"] = str(tmp_path)
-        config["cluster"]["namespace"] = "test-ns"
+        config["platform"]["namespace"] = "test-ns"
         if model_uri:
-            config.setdefault("fraud_detection", {})["model_uri"] = model_uri
+            config.setdefault("deployment", {})["model_uri"] = model_uri
         return config
 
     def _patch_all(
@@ -134,15 +129,18 @@ class TestDeploySmoke:
         storage_mock       = MagicMock()
         inference_mock     = MagicMock()
         ocp_resources_mock = MagicMock()
+        trustyai_mock      = MagicMock()
 
         monkeypatch.setattr(deploy_mod, "storage",       storage_mock)
         monkeypatch.setattr(deploy_mod, "inference",     inference_mock)
         monkeypatch.setattr(deploy_mod, "ocp_resources", ocp_resources_mock)
+        monkeypatch.setattr(deploy_mod, "trustyai",      trustyai_mock)
 
         return {
             "storage":       storage_mock,
             "inference":     inference_mock,
             "ocp_resources": ocp_resources_mock,
+            "trustyai":      trustyai_mock,
         }
 
     def _fresh_deploy_mod(self) -> Any:
@@ -197,10 +195,8 @@ class TestDeploySmoke:
         config = self._make_config(tmp_path, model_uri="pvc://fraud-model-pvc/models")
         deploy_mod.deploy(config)
 
-        # S3 secret must NOT be applied for self-contained URIs
         mocks["storage"].apply_s3_secret.assert_not_called()
 
-        # apply_dict must still be called with the mutated manifest
         mocks["ocp_resources"].apply_dict.assert_called_once()
         applied_dict = mocks["ocp_resources"].apply_dict.call_args[0][0]
         model_spec = applied_dict["spec"]["predictor"]["model"]
@@ -222,10 +218,8 @@ class TestDeploySmoke:
         config = self._make_config(tmp_path, model_uri="models/my-fraud-model")
         deploy_mod.deploy(config)
 
-        # S3 secret must be applied for plain S3 paths
         mocks["storage"].apply_s3_secret.assert_called_once()
 
-        # apply_dict called with updated storage.path
         mocks["ocp_resources"].apply_dict.assert_called_once()
         applied_dict = mocks["ocp_resources"].apply_dict.call_args[0][0]
         model_spec = applied_dict["spec"]["predictor"]["model"]

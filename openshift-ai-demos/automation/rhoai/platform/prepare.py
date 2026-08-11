@@ -36,7 +36,7 @@ def prepare_platform(config: dict[str, Any]) -> None:
     validate_login()
     validate_storage(config.get("storage", {}).get("class_name", ""))
     validate_namespace(config["operator"]["namespace"])
-    validate_namespace(config["cluster"]["namespace"])
+    validate_namespace(config["platform"]["namespace"])
     log.info("Platform preparation complete")
 
 
@@ -162,7 +162,7 @@ def uninstall_platform(config: dict[str, Any], delete_workload_ns: bool = False)
 
     op_name    = config["operator"]["name"]
     op_ns      = config["operator"]["namespace"]
-    cluster_ns = config["cluster"]["namespace"]
+    cluster_ns = config["platform"]["namespace"]
     dsc_name   = config["dsc"]["name"]
     dsci_name  = config["dsc"]["dsci_name"]
 

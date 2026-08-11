@@ -10,7 +10,7 @@ from rhoai.config.loader import load_config
 @pytest.fixture
 def minimal_config(tmp_path: Path) -> Path:
     p = tmp_path / "config.yaml"
-    p.write_text("cluster:\n  namespace: my-namespace\n")
+    p.write_text("platform:\n  namespace: my-namespace\n")
     return p
 
 
@@ -35,7 +35,7 @@ class TestLoadConfig:
 
     def test_user_file_overrides_defaults(self, minimal_config: Path) -> None:
         config = load_config(minimal_config)
-        assert config["cluster"]["namespace"] == "my-namespace"
+        assert config["platform"]["namespace"] == "my-namespace"
 
     def test_user_file_preserves_unset_defaults(self, minimal_config: Path) -> None:
         config = load_config(minimal_config)
@@ -44,7 +44,7 @@ class TestLoadConfig:
     def test_env_override_namespace(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("RHOAI_NAMESPACE", "env-namespace")
         config = load_config()
-        assert config["cluster"]["namespace"] == "env-namespace"
+        assert config["platform"]["namespace"] == "env-namespace"
 
     def test_env_override_log_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("RHOAI_LOG_LEVEL", "DEBUG")
@@ -61,13 +61,13 @@ class TestLoadConfig:
     ) -> None:
         monkeypatch.setenv("RHOAI_CONFIG", str(minimal_config))
         config = load_config()
-        assert config["cluster"]["namespace"] == "my-namespace"
+        assert config["platform"]["namespace"] == "my-namespace"
 
     def test_explicit_path_takes_priority_over_env(
         self, monkeypatch: pytest.MonkeyPatch, minimal_config: Path, tmp_path: Path
     ) -> None:
         other = tmp_path / "other.yaml"
-        other.write_text("cluster:\n  namespace: from-env-config\n")
+        other.write_text("platform:\n  namespace: from-env-config\n")
         monkeypatch.setenv("RHOAI_CONFIG", str(other))
         config = load_config(minimal_config)
-        assert config["cluster"]["namespace"] == "my-namespace"
+        assert config["platform"]["namespace"] == "my-namespace"

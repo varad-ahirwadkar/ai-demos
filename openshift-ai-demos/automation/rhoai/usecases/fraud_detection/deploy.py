@@ -32,10 +32,10 @@ _NON_S3_SCHEMES = ("pvc://", "hf://", "oci://")
 
 def deploy(config: dict[str, Any]) -> None:
     """Deploy the complete Fraud Detection solution."""
-    repo_root = config["repo_root"]
-    namespace = config["cluster"]["namespace"]
-    fd_cfg    = config.get("fraud_detection", {})
-    model_uri = fd_cfg.get("model_uri", "")
+    repo_root  = config["repo_root"]
+    dep_cfg    = config.get("deployment", {})
+    namespace  = dep_cfg.get("namespace") or config["platform"]["namespace"]
+    model_uri  = dep_cfg.get("model_uri", "")
 
     log.info("Deploying Fraud Detection")
 
@@ -65,7 +65,7 @@ def deploy(config: dict[str, Any]) -> None:
             # Plain S3 path — update path only, keep existing key
             model_spec.setdefault("storage", {})["path"] = model_uri
 
-    isvc_name = fd_cfg.get("inference_service_name", "fraud-detection")
+    isvc_name = dep_cfg.get("inference_service_name", "fraud-detection")
     log.info("Deploying InferenceService '%s'", isvc_name)
     ocp_resources.apply_dict(model_dict, namespace)
 
@@ -77,7 +77,7 @@ def deploy(config: dict[str, Any]) -> None:
     )
 
     # 6 — TrustyAI prerequisites + service (bias + data-drift monitoring)
-    trustyai_name    = fd_cfg.get("trustyai_service_name", "trustyai-service")
+    trustyai_name    = dep_cfg.get("trustyai_service_name", "trustyai-service")
     trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
     rbac_path        = manifests.get_trustyai_rbac(repo_root)
     trustyai.enable_user_workload_monitoring(manifests.get_trustyai_monitoring_config(repo_root))

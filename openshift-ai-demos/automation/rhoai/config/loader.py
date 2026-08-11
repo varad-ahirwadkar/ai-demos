@@ -10,9 +10,9 @@ Priority (highest → lowest):
     3. Bundled defaults         (config/defaults.yaml)
 
 Environment variable mapping:
-    RHOAI_CLUSTER_URL   → config["cluster"]["url"]
-    RHOAI_NAMESPACE     → config["cluster"]["namespace"]
-    RHOAI_KUBECONFIG    → config["cluster"]["kubeconfig"]
+    RHOAI_PLATFORM_URL  → config["platform"]["url"]
+    RHOAI_NAMESPACE     → config["platform"]["namespace"]
+    RHOAI_KUBECONFIG    → config["platform"]["kubeconfig"]
     RHOAI_REPO_ROOT     → config["repo_root"]
     RHOAI_LOG_LEVEL     → config["log_level"]
 
@@ -61,9 +61,9 @@ def _config_path_from_env() -> Path | None:
 def _apply_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
     """Overwrite config keys from RHOAI_ environment variables."""
     mapping = {
-        "RHOAI_CLUSTER_URL":  ["cluster", "url"],
-        "RHOAI_NAMESPACE":    ["cluster", "namespace"],
-        "RHOAI_KUBECONFIG":   ["cluster", "kubeconfig"],
+        "RHOAI_PLATFORM_URL": ["platform", "url"],
+        "RHOAI_NAMESPACE":    ["platform", "namespace"],
+        "RHOAI_KUBECONFIG":   ["platform", "kubeconfig"],
         "RHOAI_REPO_ROOT":    ["repo_root"],
         "RHOAI_LOG_LEVEL":    ["log_level"],
     }

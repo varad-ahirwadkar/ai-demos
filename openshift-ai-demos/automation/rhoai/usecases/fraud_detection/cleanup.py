@@ -16,11 +16,11 @@ log = get_logger(__name__)
 
 def cleanup(config: dict[str, Any]) -> None:
     """Remove Fraud Detection use-case resources from the cluster."""
-    namespace     = config["cluster"]["namespace"]
-    fd_cfg        = config.get("fraud_detection", {})
-    isvc_name     = fd_cfg.get("inference_service_name", "fraud-detection")
-    trustyai_name = fd_cfg.get("trustyai_service_name", "trustyai-service")
-    sa_name       = fd_cfg.get("trustyai_service_account", "trustyai-user")
+    dep_cfg       = config.get("deployment", {})
+    namespace     = dep_cfg.get("namespace") or config["platform"]["namespace"]
+    isvc_name     = dep_cfg.get("inference_service_name", "fraud-detection")
+    trustyai_name = dep_cfg.get("trustyai_service_name", "trustyai-service")
+    sa_name       = dep_cfg.get("trustyai_service_account", "trustyai-user")
 
     log.info("=== Cleaning up Fraud Detection ===")
 

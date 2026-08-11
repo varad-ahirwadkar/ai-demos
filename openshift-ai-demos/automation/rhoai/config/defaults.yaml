@@ -4,9 +4,9 @@
 
 log_level: INFO
 
-cluster:
-  url: ""             # set via oc login before running, or RHOAI_CLUSTER_URL
-  namespace: redhat-ods-applications
+platform:
+  url: ""             # set via oc login before running, or RHOAI_PLATFORM_URL
+  namespace: redhat-ods-applications   # namespace where RHOAI operands run
   kubeconfig: ""      # defaults to ~/.kube/config when empty
 
 # Absolute path to the root of the openshift-ai-demos repository.
@@ -33,7 +33,8 @@ storage:
   class_name: ""        # empty = accept any available RWO class
   s3_secret_name: s3-credentials
 
-fraud_detection:
+deployment:
+  namespace: ""                             # workload namespace; falls back to platform.namespace when empty
   inference_service_name: fraud-detection   # metadata.name in the InferenceService manifest
   trustyai_service_name: trustyai-service   # metadata.name in trustyai/service/trustyai-service.yaml
   trustyai_service_account: trustyai-user   # ServiceAccount used to call the TrustyAI REST API
