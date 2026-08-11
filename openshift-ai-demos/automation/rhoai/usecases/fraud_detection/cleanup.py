@@ -20,11 +20,14 @@ def cleanup(config: dict[str, Any]) -> None:
     fd_cfg        = config.get("fraud_detection", {})
     isvc_name     = fd_cfg.get("inference_service_name", "fraud-detection")
     trustyai_name = fd_cfg.get("trustyai_service_name", "trustyai-service")
+    sa_name       = fd_cfg.get("trustyai_service_account", "trustyai-user")
 
     log.info("=== Cleaning up Fraud Detection ===")
 
     # Reverse deploy order: TrustyAI first, then model serving
     trustyai.delete_trustyai_service(trustyai_name, namespace)
+    trustyai.delete_role_binding(f"{sa_name}-view", namespace)
+    trustyai.delete_service_account(sa_name, namespace)
     inference.delete_inference_service(isvc_name, namespace)
     # Runtime name comes from the assets constant — not user-facing config
     inference.delete_serving_runtime(assets.SERVING_RUNTIME_NAME, namespace)

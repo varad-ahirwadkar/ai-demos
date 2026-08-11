@@ -53,3 +53,36 @@ def get_vllm_model_manifest(repo_root: str | Path, model: str) -> Path:
         Path to model-serving/generative-models/vllm/<model>.yaml
     """
     return Path(repo_root) / "model-serving" / "generative-models" / "vllm" / f"{model}.yaml"
+
+
+# ---------------------------------------------------------------------------
+# TrustyAI service manifests
+# ---------------------------------------------------------------------------
+
+def get_trustyai_monitoring_config(repo_root: str | Path) -> Path:
+    """Return the path to the monitoring ConfigMaps manifest.
+
+    Contains cluster-monitoring-config and user-workload-monitoring-config.
+
+    Returns:
+        Path to trustyai/service/monitoring-config.yaml
+    """
+    return Path(repo_root) / "trustyai" / "service" / "monitoring-config.yaml"
+
+
+def get_trustyai_rbac(repo_root: str | Path) -> Path:
+    """Return the path to the TrustyAI ServiceAccount + RoleBinding manifest.
+
+    Returns:
+        Path to trustyai/service/rbac.yaml
+    """
+    return Path(repo_root) / "trustyai" / "service" / "rbac.yaml"
+
+
+def get_trustyai_service(repo_root: str | Path) -> Path:
+    """Return the path to the TrustyAIService CR manifest.
+
+    Returns:
+        Path to trustyai/service/trustyai-service.yaml
+    """
+    return Path(repo_root) / "trustyai" / "service" / "trustyai-service.yaml"

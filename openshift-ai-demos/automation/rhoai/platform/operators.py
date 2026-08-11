@@ -4,6 +4,8 @@ Manages Subscription, OperatorGroup, and CSV only.
 Does not touch DSC, DSCI, or operand resources.
 """
 
+import time
+
 from kubernetes.dynamic.exceptions import NotFoundError
 
 from rhoai.ocp import resources, wait
@@ -146,8 +148,6 @@ def _approve_install_plan(sub_name: str, namespace: str, csv_name: str) -> None:
     create it after the Subscription is applied) and raises RuntimeError if
     none is found within the timeout.
     """
-    import time
-
     log.info("Approving InstallPlan for CSV '%s' in '%s'", csv_name, namespace)
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:

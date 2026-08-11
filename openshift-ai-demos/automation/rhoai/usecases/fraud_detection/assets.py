@@ -46,16 +46,6 @@ def get_model_manifest(repo_root: str | Path) -> Path:
     )
 
 
-def get_trustyai_monitoring_manifest(repo_root: str | Path) -> Path:
-    """Return the path to the monitoring ConfigMaps manifest.
-
-    Contains both cluster-monitoring-config and user-workload-monitoring-config.
-
-    Returns:
-        Path to trustyai/service/monitoring-config.yaml
-    """
-    return Path(repo_root) / "trustyai" / "service" / "monitoring-config.yaml"
-
 
 def get_trustyai_service_manifest(repo_root: str | Path) -> Path:
     """Return the path to the TrustyAIService CR manifest.

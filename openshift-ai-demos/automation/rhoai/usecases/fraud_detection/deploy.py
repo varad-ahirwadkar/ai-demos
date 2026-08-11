@@ -20,7 +20,7 @@ model_uri behaviour (fraud_detection.model_uri in config):
 from typing import Any
 
 from rhoai.ocp import resources as ocp_resources
-from rhoai.platform import inference, manifests, storage
+from rhoai.platform import inference, manifests, storage, trustyai
 from rhoai.usecases.fraud_detection import assets
 from rhoai.utils import yaml_io
 from rhoai.utils.logger import get_logger
@@ -76,10 +76,15 @@ def deploy(config: dict[str, Any]) -> None:
         isvc_name, namespace, "fraud-detection", assets.get_sample_inference_request()
     )
 
-    # 6 — TrustyAI Service (bias + data-drift monitoring for the predictor above)
-    # trustyai_name    = fd_cfg.get("trustyai_service_name", "trustyai-service")
-    # trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
-    # trustyai.apply_monitoring_config(assets.get_trustyai_monitoring_manifest(repo_root))
-    # trustyai.patch_inferenceservice_config(namespace)
-    # trustyai.apply_trustyai_service(assets.get_trustyai_service_manifest(repo_root), namespace)
-    # trustyai.wait_until_ready(trustyai_name, namespace, trustyai_timeout)
+    # 6 — TrustyAI prerequisites + service (bias + data-drift monitoring)
+    trustyai_name    = fd_cfg.get("trustyai_service_name", "trustyai-service")
+    trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
+    rbac_path        = manifests.get_trustyai_rbac(repo_root)
+    trustyai.enable_user_workload_monitoring(manifests.get_trustyai_monitoring_config(repo_root))
+    trustyai.apply_rbac(rbac_path, namespace)
+    trustyai.create_logger_ca_bundle(namespace)
+    trustyai.patch_inferenceservice_config(namespace)
+    trustyai.apply_trustyai_service(
+        assets.get_trustyai_service_manifest(repo_root), namespace
+    )
+    trustyai.wait_until_ready(trustyai_name, namespace, trustyai_timeout)
