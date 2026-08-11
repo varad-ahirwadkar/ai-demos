@@ -82,14 +82,14 @@ def deploy(config: dict[str, Any]) -> None:
     )
 
     # 6 — TrustyAI prerequisites + service (bias + data-drift monitoring)
-    # trustyai_name    = dep_cfg.get("trustyai_service_name", "trustyai-service")
-    # trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
-    # rbac_path        = manifests.get_trustyai_rbac(repo_root)
-    # trustyai.enable_user_workload_monitoring(manifests.get_trustyai_monitoring_config(repo_root))
-    # trustyai.apply_rbac(rbac_path, namespace)
-    # trustyai.create_logger_ca_bundle(namespace)
-    # trustyai.patch_inferenceservice_config(namespace)
-    # trustyai.apply_trustyai_service(
-    #     assets.get_trustyai_service_manifest(repo_root), namespace
-    # )
-    # trustyai.wait_until_ready(trustyai_name, namespace, trustyai_timeout)
+    trustyai_name    = dep_cfg.get("trustyai_service_name", "trustyai-service")
+    trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
+    rbac_path        = manifests.get_trustyai_rbac(repo_root)
+    trustyai.enable_user_workload_monitoring(manifests.get_trustyai_monitoring_config(repo_root))
+    trustyai.apply_rbac(rbac_path, namespace)
+    trustyai.create_logger_ca_bundle(namespace)
+    trustyai.patch_inferenceservice_config(namespace)
+    trustyai.apply_trustyai_service(
+        assets.get_trustyai_service_manifest(repo_root), namespace
+    )
+    trustyai.wait_until_ready(trustyai_name, namespace, trustyai_timeout)
