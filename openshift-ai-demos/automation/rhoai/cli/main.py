@@ -7,6 +7,15 @@ Registers command groups:
 Declared as the console script in pyproject.toml:
     [project.scripts]
     rhoai = "cli.main:app"
+
+Log-level behaviour
+-------------------
+  (default / INFO)  Logger output is suppressed — only structured typer.echo
+                    output is shown.  Clean UX for day-to-day use.
+  --log-level DEBUG All log.info / log.debug lines are printed alongside the
+                    structured output.  Useful for developers and CI debugging.
+  --log-level WARNING / ERROR
+                    Only warnings and errors from the logger are shown.
 """
 
 import typer
@@ -27,7 +36,15 @@ app.add_typer(usecase_cmd.app,  name="usecase")
 
 @app.callback()
 def _callback(
-    log_level: str = typer.Option("INFO", "--log-level", "-l", help="DEBUG, INFO, WARNING, ERROR."),
+    log_level: str = typer.Option(
+        "INFO", "--log-level", "-l",
+        help=(
+            "Logger verbosity. "
+            "INFO (default): logger lines hidden, only structured output shown. "
+            "DEBUG: all log lines printed alongside structured output. "
+            "WARNING/ERROR: only warnings/errors from the logger."
+        ),
+    ),
 ) -> None:
     logger.configure(level=log_level)
 

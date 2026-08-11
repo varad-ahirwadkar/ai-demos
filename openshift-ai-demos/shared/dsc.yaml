@@ -12,7 +12,7 @@ spec:
   components:
     aipipelines: {}
     dashboard:
-      managementState: Managed
+      managementState: Removed
     feastoperator:
       managementState: Removed
     kserve:
@@ -38,7 +38,7 @@ spec:
         lmeval:
           permitCodeExecution: allow
           permitOnline: allow
-      managementState: Managed
+      managementState: Removed
     workbenches:
       managementState: Managed
       workbenchNamespace: rhods-notebooks

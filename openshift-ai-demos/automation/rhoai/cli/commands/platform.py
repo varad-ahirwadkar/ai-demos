@@ -2,10 +2,16 @@
 
     rhoai platform init      validate cluster, install operator, initialize DSCI
     rhoai platform enable    enable one or more DSC components
+    rhoai platform disable   disable one or more DSC components
     rhoai platform setup     full one-shot bootstrap (calls init then enable)
     rhoai platform uninstall remove all RHOAI platform resources
     rhoai platform status    report RHOAI platform health
     rhoai platform inspect   display factual cluster information (read-only)
+
+Output verbosity
+----------------
+  Default (INFO log level):  Structured summary output only.
+  --log-level DEBUG:          Full log stream + structured output.
 """
 
 from pathlib import Path
@@ -21,9 +27,78 @@ from rhoai.utils.logger import get_logger
 app = typer.Typer(help="Manage the RHOAI platform.")
 log = get_logger(__name__)
 
-_config_option = typer.Option(None, "--config", "-c", help="Path to config YAML.")
+_config_option  = typer.Option(None, "--config", "-c", help="Path to config YAML.")
 _components_arg = typer.Argument(..., help="Component names, e.g. kserve trustyai.")
 
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _step(msg: str) -> None:
+    """Print an indented progress line."""
+    typer.echo(f"    {msg}")
+
+
+def _print_platform_summary(config: dict) -> None:
+    """Print the RHOAI Platform status table (operator + DSCI + DSC + components)."""
+    op_name   = config["operator"]["name"]
+    op_ns     = config["operator"]["namespace"]
+    dsc_name  = config["dsc"]["name"]
+    dsci_name = config["dsc"]["dsci_name"]
+
+    results     = platform_verify.verify_platform(config)
+    op_result   = results[0]
+    dsci_result = results[1]
+    dsc_result  = results[2]
+    op_failed   = not op_result.passed
+
+    op_display = op_name
+    if op_result.passed:
+        try:
+            csv = operators.get_csv_info(op_name, op_ns)
+            op_display = f"{csv['name']}  {csv['version']}"
+        except Exception:  # noqa: BLE001
+            pass
+
+    typer.echo("\nRHOAI Platform")
+    typer.echo(_status_row("Operator",       op_display,  op_result))
+    typer.echo(_status_row("Initialization", dsci_name,   dsci_result, skip=op_failed))
+    typer.echo(_status_row("DataScienceCluster", dsc_name, dsc_result,  skip=op_failed))
+
+    if dsc_result.passed:
+        try:
+            states  = dsc.get_component_states(dsc_name)
+            managed = sorted(c for c, s in states.items() if s == "Managed")
+            if managed:
+                typer.echo("\n  Components")
+                for comp in managed:
+                    typer.echo(f"    \u2714  {comp}")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _status_row(
+    label: str,
+    name: str,
+    result: platform_verify.CheckResult,
+    skip: bool = False,
+) -> str:
+    if skip:
+        mark   = "\u2013"
+        detail = "(skipped)"
+    elif result.passed:
+        mark   = "\u2714"
+        detail = "Ready" if label != "Operator" else "Succeeded"
+    else:
+        mark   = "\u2718"
+        detail = result.message or "not installed"
+    return f"  {label:<16}  {name:<36}  {mark}  {detail}"
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
 
 @app.command(name="init")
 def init_cmd(
@@ -32,35 +107,23 @@ def init_cmd(
         None, "--channel",
         help=(
             "OLM channel, e.g. 'stable-3.x', 'stable-3.4', 'fast-3.x', 'beta'. "
-            "Run: oc get packagemanifest rhods-operator -o jsonpath='{.status.channels[*].name}' "
-            "to see all available channels. Overrides config file."
+            "Run: oc get packagemanifest rhods-operator "
+            "-o jsonpath='{.status.channels[*].name}' to list available channels."
         ),
     ),
     version: str | None = typer.Option(
         None, "--version",
-        help=(
-            "Pin to a specific CSV, e.g. '3.4.2' or 'rhods-operator.3.4.2'. "
-            "Check available CSVs with: "
-            "oc get packagemanifest rhods-operator "
-            "-o jsonpath='{range .status.channels[?(@.name==\"<channel>\")]}"
-            "{.currentCSV}{\"\\n\"}{end}'. "
-            "Applied as startingCSV on the Subscription after install."
-        ),
+        help="Pin to a specific CSV, e.g. '3.4.2' or 'rhods-operator.3.4.2'.",
     ),
     source: str | None = typer.Option(
         None, "--source",
-        help=(
-            "CatalogSource name. Defaults to 'redhat-operators'. "
-            "Use a custom CatalogSource for pre-GA builds, e.g. 'cs-rhoai-fbc-fragment'."
-        ),
+        help="CatalogSource name. Defaults to 'redhat-operators'.",
     ),
 ) -> None:
     """Validate prerequisites, install the operator, and initialize DSCI.
 
-    Does not enable any DSC components. Run 'enable' afterwards,
+    Does not enable any DSC components — run 'enable' afterwards,
     or use 'setup' to do everything in one call.
-
-    Flag values override the config file. Priority: flags > config file > defaults.
 
     Examples:
         rhoai platform init --channel stable-3.x
@@ -69,22 +132,24 @@ def init_cmd(
     """
     config = load_config(config_file)
 
-    # CLI flags take highest priority — overwrite in-memory config only.
-    # These are never written back to defaults.yaml.
     if channel:
         config["operator"]["channel"] = channel
     if version:
-        # Accept bare semver (3.4.2) and normalise to the full CSV name.
-        # Real CSV names use no 'v' prefix: rhods-operator.3.4.2 (not .v3.4.2).
         if version[0].isdigit():
             version = f"rhods-operator.{version}"
         config["operator"]["version"] = version
     if source:
         config["operator"]["source"] = source
 
+    typer.echo("\nInitializing RHOAI platform...")
+    _step("Prerequisites validated (login, RBAC, storage, namespaces)")
+    ch  = config["operator"]["channel"]
+    src = config["operator"].get("source", "redhat-operators")
+    _step(f"Installing RHOAI operator (channel: {ch}, source: {src})")
+    _step("Applying DSCInitialization")
+
     prepare.init_platform(config)
 
-    # --- Post-init status summary ---
     op_name   = config["operator"]["name"]
     op_ns     = config["operator"]["namespace"]
     dsci_name = config["dsc"]["dsci_name"]
@@ -101,6 +166,7 @@ def init_cmd(
     typer.echo("\nPlatform initialized")
     typer.echo(f"  Operator    {op_display}")
     typer.echo(f"  DSCI        {dsci_name}  {dsci_phase}")
+    typer.echo("")
 
 
 @app.command(name="enable")
@@ -117,29 +183,84 @@ def enable_cmd(
         rhoai platform enable kserve trustyai
     """
     config = load_config(config_file)
+    comp_list = ", ".join(components)
+
+    typer.echo(f"\nEnabling component(s): {comp_list}")
+    _step("Setting component state(s) on DSC to Managed")
+
     prepare.install_component(config, components)
-    typer.echo(f"Enabled: {', '.join(components)}")
+
+    typer.echo(f"\nEnabled: {comp_list}")
+
+    # Show all currently-managed components
+    dsc_name = config["dsc"]["name"]
+    try:
+        states  = dsc.get_component_states(dsc_name)
+        managed = sorted(c for c, s in states.items() if s == "Managed")
+        if managed:
+            typer.echo("\n  Components")
+            for comp in managed:
+                typer.echo(f"    \u2714  {comp}")
+    except Exception:  # noqa: BLE001
+        pass
+    typer.echo("")
+
+
+@app.command(name="disable")
+def disable_cmd(
+    components: list[str] = _components_arg,
+    config_file: Path | None = _config_option,
+) -> None:
+    """Disable one or more DSC components (set managementState to Removed).
+
+    Idempotent — components already Removed stay Removed;
+    unrelated components are left exactly as they are.
+
+    Example:
+        rhoai platform disable trustyai ray
+    """
+    config = load_config(config_file)
+    comp_list = ", ".join(components)
+
+    typer.echo(f"\nDisabling component(s): {comp_list}")
+    _step("Setting component state(s) on DSC to Removed")
+
+    prepare.remove_component(config, components)
+
+    typer.echo(f"\nDisabled: {comp_list}")
+
+    dsc_name = config["dsc"]["name"]
+    try:
+        states  = dsc.get_component_states(dsc_name)
+        managed = sorted(c for c, s in states.items() if s == "Managed")
+        if managed:
+            typer.echo("\n  Components still enabled")
+            for comp in managed:
+                typer.echo(f"    \u2714  {comp}")
+        else:
+            typer.echo("\n  No components currently enabled")
+    except Exception:  # noqa: BLE001
+        pass
+    typer.echo("")
 
 
 @app.command(name="uninstall")
 def uninstall_cmd(
     config_file: Path | None = _config_option,
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
-    delete_workload_ns: bool = typer.Option(
-        False, "--delete-workload-ns",
+    keep_workload_ns: bool = typer.Option(
+        False, "--keep-workload-ns",
         help=(
-            "Also delete the workload namespace (redhat-ods-applications). "
-            "Off by default — the namespace may contain user notebooks and pipelines."
+            "Preserve workload namespaces (redhat-ods-applications, rhods-notebooks, "
+            "rhoai-model-registries, redhat-ods-monitoring). "
+            "By default they are deleted for a clean reinstall."
         ),
     ),
 ) -> None:
-    """Remove all RHOAI platform resources (DSC, DSCI, operator, namespaces).
+    """Remove all RHOAI platform resources for a clean cluster state.
 
-    Deletes in reverse-install order: DSC → DSCI → CSV → Subscription →
-    OperatorGroup → operator namespace.
-
-    The workload namespace (redhat-ods-applications) is left intact unless
-    --delete-workload-ns is passed.
+    Workload namespaces are deleted by default. Pass --keep-workload-ns to
+    preserve user notebooks and pipelines.
     """
     if not yes:
         typer.confirm(
@@ -147,23 +268,113 @@ def uninstall_cmd(
             abort=True,
         )
     config = load_config(config_file)
-    prepare.uninstall_platform(config, delete_workload_ns=delete_workload_ns)
-    typer.echo("Platform uninstalled.")
+
+    import rhoai.platform.dsc as _dsc
+    from rhoai.ocp import resources as _res
+
+    R = "⟳"  # ⟳  fires before work starts
+    D = "✔"  # ✔  fires after work completes
+
+    _orig_delete_dsc      = _dsc.delete_dsc
+    _orig_delete_dsci     = _dsc.delete_dsci
+    _orig_delete_manifest = _res.delete_manifest
+    _orig_exists          = _res.exists
+
+    # Each flag ensures its step line prints exactly once
+    _printed = {"dsc": False, "olm": False, "ns": False}
+
+    def _once(key: str, msg: str) -> None:
+        if not _printed[key]:
+            typer.echo(f"  {R}  {msg}")
+            _printed[key] = True
+
+    # Hook 1: DSC deletion (first thing uninstall_platform does)
+    def _patched_delete_dsc(name):
+        _once("dsc", "Removing DataScienceCluster and DSCInitialization")
+        _orig_delete_dsc(name)
+
+    # Hook 1b: DSCI-only path (when DSC was already absent)
+    def _patched_delete_dsci(name):
+        _once("dsc", "Removing DSCInitialization")
+        _orig_delete_dsci(name)
+
+    # Hook 2: OLM phase — first CSV delete triggers the step line
+    def _patched_delete_manifest(kind, name, namespace=None):
+        if kind == "ClusterServiceVersion":
+            _once("olm", "Removing operator (CSV, Subscription, OperatorGroup, InstallPlans)")
+        _orig_delete_manifest(kind, name, namespace)
+
+    # Hook 3: Namespace phase — _delete_namespace inside uninstall_platform
+    # calls resources.exists("Namespace", ns) before every deletion attempt.
+    # The first call where the namespace actually exists triggers the step line,
+    # so it prints right before the first namespace deletion starts.
+    def _patched_exists(kind, name, namespace=None):
+        result = _orig_exists(kind, name, namespace)
+        if kind == "Namespace" and result:
+            if keep_workload_ns:
+                _once("ns", "Removing operator namespace  (workload namespaces preserved)")
+            else:
+                _once("ns", "Removing namespaces")
+        return result
+
+    _dsc.delete_dsc      = _patched_delete_dsc
+    _dsc.delete_dsci     = _patched_delete_dsci
+    _res.delete_manifest = _patched_delete_manifest
+    _res.exists          = _patched_exists
+
+    typer.echo("\nUninstalling RHOAI platform...")
+
+    try:
+        prepare.uninstall_platform(config, keep_workload_ns=keep_workload_ns)
+    finally:
+        _dsc.delete_dsc      = _orig_delete_dsc
+        _dsc.delete_dsci     = _orig_delete_dsci
+        _res.delete_manifest = _orig_delete_manifest
+        _res.exists          = _orig_exists
+
+    # CRDs / webhooks / RBAC run as batch oc calls with no Python-level hook.
+    # Print with ✔ after completion — they always run.
+    typer.echo(f"  {D}  Removed CRDs, webhooks and cluster-scoped RBAC")
+
+    typer.echo("\nPlatform uninstalled.")
 
 
 @app.command(name="setup")
 def setup_cmd(
     config_file: Path | None = _config_option,
+    channel: str | None = typer.Option(None, "--channel", help="OLM channel. Overrides config file."),
+    version: str | None = typer.Option(None, "--version", help="Pin to a specific CSV version."),
+    source:  str | None = typer.Option(None, "--source",  help="CatalogSource name."),
 ) -> None:
-    """Full one-shot bootstrap: calls 'init' then enables all base components.
+    """Full one-shot bootstrap: init + enable DSC components.
 
-    Equivalent to running 'init' followed by 'enable' for every component
-    defined in the base DSC manifest. For fine-grained control use
-    'init' + 'enable' separately.
+    Equivalent to 'init' followed by applying the base DSC manifest
+    (or the components list in your config file).
+    For fine-grained control use 'init' + 'enable' separately.
     """
     config = load_config(config_file)
+    if channel:
+        config["operator"]["channel"] = channel
+    if version:
+        if version[0].isdigit():
+            version = f"rhods-operator.{version}"
+        config["operator"]["version"] = version
+    if source:
+        config["operator"]["source"] = source
+
+    ch  = config["operator"]["channel"]
+    src = config["operator"].get("source", "redhat-operators")
+
+    typer.echo("\nSetting up RHOAI platform...")
+    _step("Prerequisites validated (login, RBAC, storage, namespaces)")
+    _step(f"Installing RHOAI operator (channel: {ch}, source: {src})")
+    _step("Applying DSCInitialization")
+    _step("Enabling components by patching DSC")
+
     prepare.bootstrap_platform(config)
-    typer.echo("Platform is ready.")
+
+    _print_platform_summary(config)
+    typer.echo("")
 
 
 @app.command()
@@ -171,66 +382,64 @@ def status(
     config_file: Path | None = _config_option,
 ) -> None:
     """Report the health of the installed RHOAI platform."""
-    config  = load_config(config_file)
-    op_name = config["operator"]["name"]
-    op_ns   = config["operator"]["namespace"]
-    dsc_name  = config["dsc"]["name"]
-    dsci_name = config["dsc"]["dsci_name"]
+    config = load_config(config_file)
 
-    # Run all checks — never raises, always returns results
-    results = platform_verify.verify_platform(config)
+    results     = platform_verify.verify_platform(config)
     op_result   = results[0]
     dsci_result = results[1]
     dsc_result  = results[2]
+    op_failed   = not op_result.passed
 
-    # Determine whether downstream checks should be shown as skipped.
-    # If the operator check failed, DSCI and DSC are not meaningful.
-    op_failed = not op_result.passed
+    op_name   = config["operator"]["name"]
+    op_ns     = config["operator"]["namespace"]
+    dsc_name  = config["dsc"]["name"]
+    dsci_name = config["dsc"]["dsci_name"]
 
-    # --- Resolve operator display string (name + version when available) ---
     op_display = op_name
     if op_result.passed:
         try:
             csv = operators.get_csv_info(op_name, op_ns)
-            op_display = f"{csv['name']} {csv['version']}"
+            op_display = f"{csv['name']}  {csv['version']}"
         except Exception:  # noqa: BLE001
             pass
 
     typer.echo("\nRHOAI Platform")
-    typer.echo(_status_row("Operator",       op_display,  op_result))
-    typer.echo(_status_row("Initialization", dsci_name,   dsci_result, skip=op_failed))
-    typer.echo(_status_row("Cluster",        dsc_name,    dsc_result,  skip=op_failed))
+    typer.echo(_status_row("Operator",             op_display,  op_result))
+    typer.echo(_status_row("Initialization",       dsci_name,   dsci_result, skip=op_failed))
+    typer.echo(_status_row("DataScienceCluster",   dsc_name,    dsc_result,  skip=op_failed))
 
-    # --- DSC components (only when DSC is healthy) ---
     if dsc_result.passed:
         try:
             states  = dsc.get_component_states(dsc_name)
-            managed = sorted(c for c, s in states.items() if s not in ("Removed", "Unknown"))
+            managed = sorted(c for c, s in states.items() if s == "Managed")
             if managed:
                 typer.echo("\n  Components")
                 for comp in managed:
-                    typer.echo(f"    ✔  {comp}")
+                    typer.echo(f"    \u2714  {comp}")
         except Exception:  # noqa: BLE001
             pass
 
-    # --- Conclusion ---
     failed = [r for r in results if not r.passed]
     typer.echo("")
     if not failed:
         typer.echo("Platform is healthy.")
+        typer.echo("")
         return
 
     typer.echo("Platform is not healthy.", err=True)
 
-    # Unique error reasons across failed checks
-    reasons = dict.fromkeys(r.message for r in failed if r.message)
-    if reasons:
-        for reason in reasons:
-            if "401" in reason or "Unauthorized" in reason:
-                typer.echo("Run 'oc login <cluster-url>' to authenticate.", err=True)
-            else:
-                typer.echo("Run 'rhoai platform setup' to install RHOAI.", err=True)
-            break  # one actionable hint is enough
+    # Generic actionable hints — keeps the message correct regardless of
+    # which combination of checks failed or what command was used to install.
+    auth_failed = any(
+        r.message and ("401" in r.message or "Unauthorized" in r.message)
+        for r in failed
+    )
+    if auth_failed:
+        typer.echo("  \u2139  Run 'oc login <cluster-url>' to authenticate.", err=True)
+    else:
+        typer.echo("  \u2139  Run 'rhoai platform setup' to reinstall.", err=True)
+    typer.echo("  \u2139  For details run: rhoai --log-level DEBUG platform status", err=True)
+    typer.echo("", err=True)
 
     raise typer.Exit(code=1)
 
@@ -240,7 +449,8 @@ def inspect(
     config_file: Path | None = _config_option,
 ) -> None:
     """Display factual cluster information. Read-only, no modifications."""
-    info        = prepare.get_cluster_info()
+    typer.echo("\nDumping cluster info...")
+    info         = prepare.get_cluster_info()
     worker_nodes = info["worker_nodes"]
     has_gpu      = any(n["gpu"] for n in worker_nodes)
 
@@ -253,27 +463,22 @@ def inspect(
         else f"({node_count} nodes: {master_count} master, {worker_count} workers)"
     )
 
-    # --- Cluster section ---
-    typer.echo("\nCluster")
+    typer.echo("\n\u2699  Cluster")
     typer.echo(f"  OpenShift    {info['openshift_version']}")
     typer.echo(f"  Topology     {info['topology']}  {topology_detail}")
 
-    # --- Worker Nodes section ---
-    typer.echo("\nWorker Nodes")
+    typer.echo("\n\u26f6  Worker Nodes")
     if has_gpu:
         typer.echo(f"  {'NAME':<48}  {'CPU':<10}  {'MEMORY':<10}  GPU")
         for node in worker_nodes:
-            gpu_str = str(node["gpu"]) if node["gpu"] else "—"
-            typer.echo(
-                f"  {node['name']:<48}  {node['cpu']:<10}  {node['memory']:<10}  {gpu_str}"
-            )
+            gpu_str = str(node["gpu"]) if node["gpu"] else "\u2014"
+            typer.echo(f"  {node['name']:<48}  {node['cpu']:<10}  {node['memory']:<10}  {gpu_str}")
     else:
         typer.echo(f"  {'NAME':<48}  {'CPU':<10}  MEMORY")
         for node in worker_nodes:
             typer.echo(f"  {node['name']:<48}  {node['cpu']:<10}  {node['memory']}")
 
-    # --- Storage Classes section ---
-    typer.echo("\nStorage Classes")
+    typer.echo("\n💾  Storage Classes")
     storage = info["storage_summary"]
     if storage:
         typer.echo(f"  {'NAME':<40}  BOUND")
@@ -283,30 +488,4 @@ def inspect(
     else:
         typer.echo("  (none)")
 
-
-# ---------------------------------------------------------------------------
-# Formatting helpers
-# ---------------------------------------------------------------------------
-
-def _status_row(
-    label: str, name: str, result: platform_verify.CheckResult, skip: bool = False
-) -> str:
-    """Format a single platform status table row.
-
-    Args:
-        label:  Human-readable component label (e.g. "Operator").
-        name:   Resource name or display string.
-        result: CheckResult from verify_platform.
-        skip:   When True the check is shown as skipped (–) regardless of result.
-    """
-    if skip:
-        mark  = "–"
-        detail = "(skipped)"
-    elif result.passed:
-        mark  = "✔"
-        detail = "Ready" if label != "Operator" else "Succeeded"
-    else:
-        mark  = "✘"
-        detail = result.message or "not installed"
-
-    return f"  {label:<16}  {name:<28}  {mark}  {detail}"
+    typer.echo("")

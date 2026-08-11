@@ -21,8 +21,9 @@ status reporting, and clean uninstall.
 |---|---|
 | `rhoai platform init` | Install operator + initialise DSCI |
 | `rhoai platform enable` | Enable one or more DSC components |
-| `rhoai platform setup` | One-shot bootstrap (init + all base components) |
-| `rhoai platform uninstall` | Remove all RHOAI platform resources |
+| `rhoai platform disable` | Disable one or more DSC components |
+| `rhoai platform setup` | One-shot bootstrap (init + components from config) |
+| `rhoai platform uninstall` | Remove all RHOAI platform resources (cluster-clean) |
 | `rhoai platform status` | Report platform health |
 | `rhoai platform inspect` | Display cluster info (read-only) |
 
@@ -53,6 +54,8 @@ platform:
 dsc:
   name: default-dsc
   dsci_name: default-dsci
+
+components: []   # used by 'setup' — empty = apply full dsc.yaml as-is
 ```
 
 Pass `--config /path/to/my-config.yaml` to any command to override defaults without
@@ -146,18 +149,6 @@ prerequisites that are not yet automated:
 
 #### 1. Pull secret for `quay.io/rhoai`
 
-Pre-GA images are hosted on `quay.io/rhoai` and require a robot account token.
-The CLI will verify that a pull secret covering `quay.io/rhoai` is present in the
-cluster's global pull secret before proceeding.
-
-```bash
-# Check whether quay.io/rhoai is already in the global pull secret
-oc get secret/pull-secret -n openshift-config \
-  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | jq '.auths | keys'
-```
-
-If `quay.io/rhoai` is absent, add your credentials:
-
 ```bash
 oc registry login \
   --registry=quay.io/rhoai \
@@ -171,17 +162,12 @@ oc set data secret/pull-secret \
 
 #### 2. ImageContentSourcePolicy (ICSP)
 
-Pre-GA images may be served from an internal mirror. An ICSP is required to redirect
-pulls from the public registry to the mirror. Apply the ICSP manifest provided with
-the EA release before installing.
+Apply the ICSP manifest provided with the EA release to redirect pulls from the
+public registry to the internal mirror.
 
 #### 3. CatalogSource
 
-A custom CatalogSource pointing at the pre-GA FBC (File-Based Catalog) image must
-exist in `openshift-marketplace` before running `init`.
-
 ```bash
-# Example CatalogSource for a pre-GA build
 cat <<EOF | oc apply -f -
 apiVersion: operators.coreos.com/v1alpha1
 kind: CatalogSource
@@ -195,14 +181,12 @@ spec:
   publisher: Red Hat
 EOF
 
-# Wait for the CatalogSource to become READY
 oc get catalogsource cs-rhoai-fbc-fragment -n openshift-marketplace -w
 ```
 
 Once all three prerequisites are in place:
 
 ```bash
-# Pre-GA install — will be fully automated in a future release
 rhoai platform init --channel beta --source cs-rhoai-fbc-fragment
 ```
 
@@ -262,29 +246,74 @@ rhoai platform enable kserve --config /path/to/my-config.yaml
 
 ---
 
-## `rhoai platform setup`
+## `rhoai platform disable`
 
-Full one-shot bootstrap — runs `init` then applies the complete base DSC manifest
-from the repo (all components at their manifest-defined default states).
+Disables one or more DSC components (sets `managementState` to `Removed`). Requires
+`init` to have run first and a DataScienceCluster to already exist.
 
-Use this for a quick full install. Use `init` + `enable` separately when you want
-fine-grained control over which components are enabled.
+**Behaviour:**
+- Idempotent — components already `Removed` stay `Removed`
+- Components not named are left exactly as they are (no accidental enables)
+- Raises an error immediately if the component name is unknown (typo guard)
+
+### Syntax
 
 ```bash
-rhoai platform setup
-
-# With a config file
-rhoai platform setup --config /path/to/my-config.yaml
+rhoai platform disable <component> [<component> ...]
 ```
 
-To enable only specific components, set a `components` list in your config file:
+### Examples
+
+```bash
+# Disable a single component
+rhoai platform disable trustyai
+
+# Disable multiple components in one call
+rhoai platform disable ray kueue trainingoperator
+
+# With a config file
+rhoai platform disable trustyai --config /path/to/my-config.yaml
+```
+
+> **Note:** `disable` requires the DataScienceCluster to already exist. If it does
+> not (i.e. `enable` or `setup` was never run), the command will exit with an error.
+
+---
+
+## `rhoai platform setup`
+
+Full one-shot bootstrap — runs `init` followed by enabling DSC components.
+
+**Two modes:**
+
+| Mode | When | Behaviour |
+|---|---|---|
+| **Full** | `components` not set in config (default) | Applies `shared/dsc.yaml` as-is — enables whatever is `Managed` in that file |
+| **Selective** | `components` list set in config | Patches only the listed components to `Managed`; everything else is left `Removed` |
+
+Use `setup` when you want a single command to go from zero to a running platform.
+Use `init` + `enable`/`disable` when you need day-2 fine-grained control.
+
+```bash
+# Full install — applies dsc.yaml defaults
+rhoai platform setup
+
+# Selective install — only the listed components are enabled
+rhoai platform setup --config my-config.yaml
+```
+
+**Config file for selective setup:**
 
 ```yaml
 # my-config.yaml
+operator:
+  channel: stable-3.x
+  source: redhat-operators
 components:
   - dashboard
   - kserve
   - workbenches
+  - modelregistry
 ```
 
 ```bash
@@ -295,48 +324,58 @@ rhoai platform setup --config my-config.yaml
 
 ## `rhoai platform uninstall`
 
-Removes all RHOAI platform resources in reverse-install order.
+Performs a **complete teardown** of all RHOAI platform resources, leaving the cluster
+clean for a fresh reinstall. Workload namespaces are deleted by default.
 
 **Deletion sequence:**
-1. DataScienceCluster
+1. DataScienceCluster — operator deprovisions components gracefully first
 2. DSCInitialization
-3. ClusterServiceVersion (CSV)
-4. Subscription
-5. OperatorGroup
-6. Operator namespace (`redhat-ods-operator`)
-7. Workload namespace (`redhat-ods-applications`) — **opt-in only**
+3. ClusterServiceVersion (CSV), Subscription, OperatorGroup, InstallPlans
+4. Cluster-wide sweep of any stale rhods/rhoai/odh CSVs
+5. CRDs registered by the operator
+6. Validating and mutating webhooks (rhoai/rhods/odh/kserve/trustyai) — prevents namespaces getting stuck Terminating
+7. Cluster-scoped RBAC (ClusterRoles / ClusterRoleBindings)
+8. Operator namespace (`redhat-ods-operator`)
+9. Workload namespaces: `redhat-ods-applications`, `rhods-notebooks`,
+   `rhoai-model-registries`, `redhat-ods-monitoring`
+   — skipped automatically if never created (e.g. `rhoai-model-registries` only
+   exists when `modelregistry` was enabled)
 
-Every step is safe to run on a partially-installed cluster — missing resources are
-skipped with an info log rather than raising an error.
+Every step is safe on a partially-installed cluster — missing resources are skipped
+with an info log rather than raising an error.
+
+**Stuck namespace handling:** if any namespace gets stuck in `Terminating` after
+deletion, the CLI automatically strips its finalizers and waits for removal.
 
 ### Flags
 
 | Flag | Default | Description |
 |---|---|---|
 | `--yes`, `-y` | `false` | Skip the confirmation prompt |
-| `--delete-workload-ns` | `false` | Also delete `redhat-ods-applications` |
+| `--keep-workload-ns` | `false` | Preserve workload namespaces instead of deleting them |
 | `--config`, `-c` | _(none)_ | Path to a config YAML file |
 
 ### Examples
 
 ```bash
-# Interactive prompt — removes everything except redhat-ods-applications
-rhoai platform uninstall
-
-# Skip confirmation
+# Full clean wipe — cluster ready for fresh reinstall (default)
 rhoai platform uninstall -y
 
-# Full wipe — also deletes redhat-ods-applications
-rhoai platform uninstall -y --delete-workload-ns
+# Interactive prompt
+rhoai platform uninstall
+
+# Preserve user workloads (notebooks, pipelines, models)
+rhoai platform uninstall -y --keep-workload-ns
 
 # With a config file (e.g. different namespace)
 rhoai platform uninstall --config /path/to/my-config.yaml -y
 ```
 
-> **Why is `redhat-ods-applications` kept by default?**
-> It may contain user notebooks, pipelines, inference services, and PVCs. Deleting it
-> automatically could cause data loss. Pass `--delete-workload-ns` only when you
-> intentionally want a complete teardown of all RHOAI resources.
+> **Why are workload namespaces deleted by default?**
+> The primary use case is testing and development where a clean cluster state is
+> required for each reinstall. Pass `--keep-workload-ns` only when you want to
+> preserve user notebooks, pipelines, inference services, and PVCs across
+> a platform reinstall.
 
 ---
 
@@ -401,31 +440,49 @@ Storage Classes
 
 ## Typical workflows
 
-### Fresh install — latest 3.x, core components only
+### Fresh install — selective components
 
 ```bash
 oc login <cluster-url>
 rhoai platform init --channel stable-3.x
-rhoai platform enable dashboard kserve workbenches modelregistry aipipelines
+rhoai platform enable dashboard kserve workbenches modelregistry
 rhoai platform status
 ```
 
-### Fresh install — pinned version, full one-shot
+### Fresh install — one-shot via config
 
 ```bash
-rhoai platform init --channel stable-3.4 --version 3.4.2
-rhoai platform setup
+# my-config.yaml: operator.channel + components list
+rhoai platform setup --config my-config.yaml
+rhoai platform status
 ```
 
-### Teardown and reinstall
+### Day-2 component changes
 
 ```bash
-# Full wipe including workload namespace
-rhoai platform uninstall -y --delete-workload-ns
+# Add a component after initial setup
+rhoai platform enable trustyai
 
-# Reinstall on a different channel
+# Remove a component that is no longer needed
+rhoai platform disable ray kueue
+```
+
+### Teardown and reinstall (fresh cluster state)
+
+```bash
+# Full wipe — deletes all namespaces, CRDs, webhooks, RBAC
+rhoai platform uninstall -y
+
+# Reinstall
 rhoai platform init --channel stable-3.x
 rhoai platform enable dashboard kserve workbenches modelregistry
+```
+
+### Teardown preserving user workloads
+
+```bash
+# Removes the operator but keeps notebooks, pipelines, and models
+rhoai platform uninstall -y --keep-workload-ns
 ```
 
 ### Using a config file (CI/CD)
@@ -440,6 +497,7 @@ components:
   - kserve
   - workbenches
   - modelregistry
+  - aipipelines
 ```
 
 ```bash

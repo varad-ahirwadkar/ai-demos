@@ -122,6 +122,40 @@ def install_component(config: dict[str, Any], components: list[str]) -> None:
     dsc.wait_until_ready(dsc_name, config["timeouts"]["dsc_ready"])
 
 
+def remove_component(config: dict[str, Any], components: list[str]) -> None:
+    """Set one or more DSC components to Removed. Requires init_platform to have run first.
+
+    Idempotent — components already Removed stay Removed; unrelated components
+    are left exactly as they are.
+    """
+    from rhoai.platform import dsc, operators
+
+    op_name  = config["operator"]["name"]
+    op_ns    = config["operator"]["namespace"]
+    dsc_name = config["dsc"]["name"]
+
+    invalid = sorted(c for c in components if c not in VALID_COMPONENTS)
+    if invalid:
+        valid_list = ", ".join(sorted(VALID_COMPONENTS))
+        raise typer.BadParameter(
+            "unknown component(s): " + ", ".join(invalid) + ".\n"
+            "Valid components:\n  " + valid_list
+        )
+
+    if not operators.is_installed(op_name, op_ns):
+        raise RuntimeError(
+            "Operator not found. Run 'rhoai platform init' first."
+        )
+
+    if not resources.exists("DataScienceCluster", dsc_name):
+        raise RuntimeError(
+            f"DataScienceCluster '{dsc_name}' not found — nothing to disable. "
+            "Run 'rhoai platform enable' to create it first."
+        )
+
+    dsc.set_component_states(dsc_name, {c: "Removed" for c in components})
+    dsc.wait_until_ready(dsc_name, config["timeouts"]["dsc_ready"])
+
 def bootstrap_platform(config: dict[str, Any]) -> None:
     """Full platform bootstrap: init_platform, then enable DSC components.
 
@@ -145,18 +179,35 @@ def bootstrap_platform(config: dict[str, Any]) -> None:
 deploy_platform = bootstrap_platform
 
 
-def uninstall_platform(config: dict[str, Any], delete_workload_ns: bool = False) -> None:
+def uninstall_platform(config: dict[str, Any], keep_workload_ns: bool = False) -> None:
     """Remove all RHOAI platform resources installed by init/setup.
 
     Deletion order (reverse of install):
-        1. DataScienceCluster
+        1. DataScienceCluster   — trigger operator component teardown, then wait
+                                  for workload pods to drain before continuing
         2. DSCInitialization
-        3. CSV
-        4. Subscription
-        5. OperatorGroup
-        6. Operator namespace (redhat-ods-operator)
-        7. Workload namespace (redhat-ods-applications) — opt-in only
+        3. CSV, Subscription, OperatorGroup, InstallPlans (cluster-wide sweep)
+        4. Dependency operators auto-detected on the cluster:
+             servicemeshoperator3 (NIM / gateway routing)
+             servicemeshoperator  (legacy Maistra v2)
+           Each is only cleaned up when its Subscription is present —
+           we never touch operators we did not install.
+        5. CRDs registered by the RHOAI operator label + explicit RHOAI CRD list
+        6. Stale APIServices (block namespace deletion with DiscoveryFailure)
+        7. Webhooks (validating + mutating)
+        8. Cluster-scoped RBAC (ClusterRoles, ClusterRoleBindings)
+        9. Operator namespace   (redhat-ods-operator)
+       10. Workload namespaces  — discovered dynamically via operator labels
+                                  plus a static fallback list.
+                                  Deleted by default; use --keep-workload-ns to
+                                  preserve user notebooks and pipelines.
+
+    Every step is safe on a partially-installed cluster — missing resources are
+    skipped with an info log rather than raising an error.
     """
+    import subprocess
+    import time
+
     from rhoai.ocp import wait
     from rhoai.platform import dsc, operators
 
@@ -166,9 +217,216 @@ def uninstall_platform(config: dict[str, Any], delete_workload_ns: bool = False)
     dsc_name   = config["dsc"]["name"]
     dsci_name  = config["dsc"]["dsci_name"]
 
-    # 1. DataScienceCluster
+    # Patterns used for webhook / RBAC name matching
+    _RHOAI_PATTERNS = (
+        "rhods", "rhoai", "opendatahub", "odh",
+        "kserve", "trustyai", "notebook", "dashboard",
+        "model-registry", "modelregistry", "data-science",
+        "istio", "maistra", "knative",
+    )
+
+    def _oc(*args: str) -> None:
+        subprocess.run(["oc", *args], capture_output=True)
+
+    def _oc_out(*args: str) -> str:
+        r = subprocess.run(["oc", *args], capture_output=True, text=True)
+        return r.stdout
+
+    def _oc_lines(*args: str) -> list[str]:
+        return [l for l in _oc_out(*args).splitlines() if l.strip()]
+
+    def _matches(name: str) -> bool:
+        return any(p in name for p in _RHOAI_PATTERNS)
+
+    def _subscription_exists(pattern: str) -> bool:
+        """Return True if any Subscription name matches pattern cluster-wide."""
+        return any(
+            pattern in line
+            for line in _oc_lines("get", "subscriptions", "-A", "--no-headers")
+        )
+
+    def _force_delete_crd(crd: str) -> None:
+        """Delete a CRD, stripping its finalizers first if needed."""
+        _oc("delete", "crd", crd, "--ignore-not-found", "--timeout=30s")
+        _oc("patch", "crd", crd, "--type=merge",
+            "-p", '{"metadata":{"finalizers":null}}')
+
+    def _delete_resources(kind: str) -> None:
+        """Strip finalizers then delete all instances of a CRD kind cluster-wide."""
+        # Strip finalizers
+        for line in _oc_lines(
+            "get", kind, "--all-namespaces", "--ignore-not-found", "--no-headers",
+            "-o", "custom-columns=KIND:.kind,NAME:.metadata.name,NS:.metadata.namespace",
+        ):
+            parts = line.split()
+            if len(parts) >= 3:
+                res_kind, name, ns = parts[0], parts[1], parts[2]
+                _oc("patch", res_kind, name, "-n", ns,
+                    "--type=merge", "-p", '{"metadata":{"finalizers":null}}')
+        _oc("delete", kind, "--all", "-A", "--ignore-not-found", "--timeout=30s")
+
+    def _delete_olm_for(ns: str, sub_pattern: str, csv_pattern: str) -> None:
+        """Delete Subscription + InstallPlan + CSV matching patterns in a namespace."""
+        for sub in _oc_lines(
+            "get", "subscription", "-n", ns, "--no-headers", "--ignore-not-found",
+            "-o", "custom-columns=NAME:.metadata.name",
+        ):
+            if sub_pattern in sub:
+                _oc("delete", "subscription", sub, "-n", ns, "--ignore-not-found")
+        for ip in _oc_lines(
+            "get", "installplan", "-n", ns, "--no-headers", "--ignore-not-found",
+            "-o", "custom-columns=NAME:.metadata.name",
+        ):
+            _oc("delete", "installplan", ip, "-n", ns, "--ignore-not-found")
+        for csv in _oc_lines(
+            "get", "csv", "-n", ns, "--no-headers", "--ignore-not-found",
+            "-o", "custom-columns=NAME:.metadata.name",
+        ):
+            if csv_pattern in csv:
+                _oc("delete", "csv", csv, "-n", ns, "--ignore-not-found")
+
+    def _cleanup_stale_apiservices() -> None:
+        """Remove APIServices whose Available condition is not True.
+
+        Stale APIServices cause NamespaceDeletionDiscoveryFailure and keep
+        namespaces stuck in Terminating indefinitely.
+        """
+        log.info("Checking for stale APIServices")
+        for api in _oc_lines(
+            "get", "apiservice",
+            "-o", "jsonpath={range .items[?(@.status.conditions[0].status!='True')]}{.metadata.name}{'\\n'}{end}",
+        ):
+            log.info("  Deleting stale APIService %s", api)
+            _oc("delete", "apiservice", api, "--ignore-not-found", "--timeout=15s")
+
+    def _cleanup_servicemesh3() -> None:
+        """Remove Service Mesh 3 (Sail / Istio) operator and all its resources."""
+        log.info("Cleaning up ServiceMesh 3 (servicemeshoperator3)")
+        _delete_resources("gateways.gateway.networking.k8s.io")
+        _delete_resources("gatewayclasses.gateway.networking.k8s.io")
+        _delete_resources("istios.sailoperator.io")
+        _delete_resources("istiorevisions.sailoperator.io")
+        _delete_resources("istiorevisiontags.sailoperator.io")
+        _delete_resources("istiocnis.sailoperator.io")
+        _delete_resources("ztunnels.sailoperator.io")
+
+        _delete_olm_for("openshift-operators", "servicemeshoperator3", "servicemeshoperator3")
+
+        for crd in [
+            "authorizationpolicies.security.istio.io",
+            "destinationrules.networking.istio.io",
+            "envoyfilters.networking.istio.io",
+            "gateways.networking.istio.io",
+            "peerauthentications.security.istio.io",
+            "proxyconfigs.networking.istio.io",
+            "requestauthentications.security.istio.io",
+            "serviceentries.networking.istio.io",
+            "sidecars.networking.istio.io",
+            "telemetries.telemetry.istio.io",
+            "virtualservices.networking.istio.io",
+            "wasmplugins.extensions.istio.io",
+            "workloadentries.networking.istio.io",
+            "workloadgroups.networking.istio.io",
+            "istiocsrs.operator.openshift.io",
+            "istios.sailoperator.io",
+            "istiorevisions.sailoperator.io",
+            "istiorevisiontags.sailoperator.io",
+            "istiocnis.sailoperator.io",
+            "ztunnels.sailoperator.io",
+        ]:
+            _force_delete_crd(crd)
+
+        _oc("delete", "operator", "servicemeshoperator3.openshift-operators", "--ignore-not-found")
+        log.info("ServiceMesh 3 cleanup complete")
+
+    def _cleanup_servicemesh2() -> None:
+        """Remove Service Mesh 2 (Maistra) operator and all its resources."""
+        log.info("Cleaning up ServiceMesh 2 (Maistra / servicemeshoperator)")
+        _delete_resources("servicemeshcontrolplanes.maistra.io")
+        _delete_resources("servicemeshmemberrolls.maistra.io")
+        _delete_resources("servicemeshmembers.maistra.io")
+
+        _delete_olm_for("openshift-operators", "servicemeshoperator", "servicemeshoperator")
+
+        _oc("delete", "namespace", "istio-system", "--ignore-not-found", "--timeout=60s")
+
+        for crd in [
+            "servicemeshcontrolplanes.maistra.io",
+            "servicemeshmemberrolls.maistra.io",
+            "servicemeshmembers.maistra.io",
+            "exportedservicesets.federation.maistra.io",
+            "importedservicesets.federation.maistra.io",
+            "servicemeshpeers.federation.maistra.io",
+        ]:
+            _force_delete_crd(crd)
+
+        _oc("delete", "operator", "servicemeshoperator.openshift-operators", "--ignore-not-found")
+        log.info("ServiceMesh 2 cleanup complete")
+
+    def _strip_resource_finalizers(ns: str) -> None:
+        """Remove finalizers from every object inside a namespace."""
+        log.info("  Stripping resource finalizers in '%s'", ns)
+        for api_resource in _oc_lines(
+            "api-resources", "--verbs=list", "--namespaced", "-o", "name",
+        ):
+            raw = _oc_out(
+                "get", api_resource, "-n", ns,
+                "--ignore-not-found",
+                "-o", "jsonpath={range .items[?(@.metadata.finalizers)]}{.metadata.name}{'\\n'}{end}",
+            )
+            for obj_name in (l for l in raw.splitlines() if l.strip()):
+                log.info("    Removing finalizers on %s/%s", api_resource, obj_name)
+                _oc("patch", api_resource, obj_name, "-n", ns,
+                    "--type=merge", "-p", '{"metadata":{"finalizers":[]}}')
+
+    def _delete_namespace(ns: str) -> None:
+        """Delete a namespace robustly, handling stuck-Terminating cases."""
+        if not resources.exists("Namespace", ns):
+            log.info("Namespace '%s' not found — skipping", ns)
+            return
+        log.info("Deleting namespace '%s'", ns)
+        _oc("delete", "namespace", ns, "--ignore-not-found", "--timeout=60s")
+        time.sleep(3)
+        phase = subprocess.run(
+            ["oc", "get", "ns", ns, "-o", "jsonpath={.status.phase}"],
+            capture_output=True, text=True,
+        ).stdout.strip()
+        if phase == "Terminating":
+            log.info("  Namespace '%s' stuck Terminating — force-clearing", ns)
+            _cleanup_stale_apiservices()
+            _oc("delete", "all", "--all", "-n", ns, "--ignore-not-found", "--timeout=30s")
+            _strip_resource_finalizers(ns)
+            _oc("patch", "namespace", ns,
+                "--type=merge", "-p", '{"spec":{"finalizers":[]}}')
+        wait.wait_until_deleted("Namespace", ns, timeout=180)
+
+    # ------------------------------------------------------------------
+    # 1. DataScienceCluster — delete then wait for component pods to drain
+    # ------------------------------------------------------------------
     if resources.exists("DataScienceCluster", dsc_name):
         dsc.delete_dsc(dsc_name)
+        log.info("Waiting for component pods to drain from workload namespaces")
+        _drain_deadline = time.monotonic() + 120
+        _drain_namespaces = [
+            cluster_ns, "rhods-notebooks",
+            "rhoai-model-registries", "redhat-ods-monitoring",
+        ]
+        while time.monotonic() < _drain_deadline:
+            pod_count = sum(
+                len(_oc_lines(
+                    "get", "pods", "-n", _ns,
+                    "--no-headers", "--ignore-not-found",
+                    "--field-selector=status.phase!=Succeeded,status.phase!=Failed",
+                ))
+                for _ns in _drain_namespaces
+            )
+            if pod_count == 0:
+                log.info("  All component pods drained")
+                break
+            log.info("  %d pod(s) still running — waiting", pod_count)
+            time.sleep(10)
+        else:
+            log.info("  Drain timeout reached — proceeding with force cleanup")
     else:
         log.info("DataScienceCluster '%s' not found — skipping", dsc_name)
 
@@ -178,7 +436,7 @@ def uninstall_platform(config: dict[str, Any], delete_workload_ns: bool = False)
     else:
         log.info("DSCInitialization '%s' not found — skipping", dsci_name)
 
-    # 3. CSV
+    # 3. OLM resources: CSV, Subscription, OperatorGroup, InstallPlans
     csv_name = operators.resolve_csv_name(op_name, op_ns)
     if resources.exists("ClusterServiceVersion", csv_name, op_ns):
         log.info("Deleting CSV '%s'", csv_name)
@@ -186,14 +444,12 @@ def uninstall_platform(config: dict[str, Any], delete_workload_ns: bool = False)
     else:
         log.info("CSV '%s' not found — skipping", csv_name)
 
-    # 4. Subscription
     if resources.exists("Subscription", op_name, op_ns):
         log.info("Deleting Subscription '%s'", op_name)
         resources.delete_manifest("Subscription", op_name, op_ns)
     else:
         log.info("Subscription '%s' not found — skipping", op_name)
 
-    # 5. OperatorGroup
     og_name = config.get("operator", {}).get("group_name", op_name)
     if resources.exists("OperatorGroup", og_name, op_ns):
         log.info("Deleting OperatorGroup '%s'", og_name)
@@ -201,30 +457,98 @@ def uninstall_platform(config: dict[str, Any], delete_workload_ns: bool = False)
     else:
         log.info("OperatorGroup '%s' not found — skipping", og_name)
 
-    # 6. Operator namespace
-    if resources.exists("Namespace", op_ns):
-        log.info("Deleting namespace '%s'", op_ns)
-        resources.delete_manifest("Namespace", op_ns)
-        wait.wait_until_deleted("Namespace", op_ns, timeout=120)
-    else:
-        log.info("Namespace '%s' not found — skipping", op_ns)
+    _oc("delete", "installplan", "--all", "-n", op_ns, "--ignore-not-found")
 
-    # 7. Workload namespace — opt-in only
-    if delete_workload_ns:
-        if resources.exists("Namespace", cluster_ns):
-            log.info("Deleting workload namespace '%s'", cluster_ns)
-            resources.delete_manifest("Namespace", cluster_ns)
-            wait.wait_until_deleted("Namespace", cluster_ns, timeout=120)
-        else:
-            log.info("Workload namespace '%s' not found — skipping", cluster_ns)
+    # Cluster-wide sweep: stale CSVs/Subs matching rhoai/rhods/opendatahub
+    log.info("Sweeping remaining rhods/rhoai CSVs cluster-wide")
+    for ns_csv in _oc_lines(
+        "get", "csv", "-A", "--no-headers",
+        "-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name",
+    ):
+        parts = ns_csv.split()
+        if len(parts) == 2 and any(p in parts[1] for p in ("rhods", "rhoai", "opendatahub")):
+            _oc("delete", "csv", parts[1], "-n", parts[0], "--ignore-not-found")
+
+    # 4. Dependency operators — only if their Subscription is present on the cluster
+    if _subscription_exists("servicemeshoperator3"):
+        _cleanup_servicemesh3()
     else:
+        log.info("servicemeshoperator3 not found — skipping")
+
+    if _subscription_exists("servicemeshoperator") and not _subscription_exists("servicemeshoperator3"):
+        _cleanup_servicemesh2()
+    else:
+        log.info("servicemeshoperator (v2/Maistra) not found — skipping")
+
+    # 5. CRDs — operator-label-based + explicit RHOAI CRD list
+    log.info("Deleting operator-owned CRDs")
+    _oc("delete", "crd", "-l",
+        f"operators.coreos.com/{op_name}.{op_ns}",
+        "--ignore-not-found", "--timeout=60s")
+
+    # Explicit sweep for CRDs the label may miss (e.g. created by components
+    # whose controllers register CRDs under their own labels)
+    log.info("Sweeping remaining RHOAI/ODH CRDs by name pattern")
+    for crd_line in _oc_lines("get", "crd", "--no-headers", "-o", "custom-columns=NAME:.metadata.name"):
+        if any(p in crd_line for p in (
+            "opendatahub.io", "datasciencecluster", "dscinitialization",
+            "kserve.io", "knative", "maistra.io", "sailoperator.io",
+            "kubeflow.org", "ray.io", "codeflare.dev",
+            "feast.dev", "llamastack.io", "mlflow", "ogx.io",
+            "nim.opendatahub", "trustyai.opendatahub",
+        )):
+            _force_delete_crd(crd_line.strip())
+
+    # 6. Stale APIServices — do this before namespace deletion
+    _cleanup_stale_apiservices()
+
+    # 7. Webhooks
+    log.info("Removing validating and mutating webhooks")
+    for wh_type in ("validatingwebhookconfigurations", "mutatingwebhookconfigurations"):
+        for wh_name in _oc_lines(
+            "get", wh_type, "--no-headers",
+            "-o", "custom-columns=NAME:.metadata.name",
+        ):
+            if _matches(wh_name):
+                log.info("  Deleting %s/%s", wh_type, wh_name)
+                _oc("delete", wh_type, wh_name, "--ignore-not-found")
+
+    # 8. Cluster-scoped RBAC
+    log.info("Removing cluster-scoped RBAC")
+    for rbac_kind in ("clusterrolebindings", "clusterroles"):
+        for rbac_name in _oc_lines(
+            "get", rbac_kind, "--no-headers",
+            "-o", "custom-columns=NAME:.metadata.name",
+        ):
+            if _matches(rbac_name):
+                _oc("delete", rbac_kind, rbac_name, "--ignore-not-found")
+
+    # 9. Operator namespace (redhat-ods-operator)
+    _delete_namespace(op_ns)
+
+    # 10. Workload namespaces
+    _static_workload_ns = [
+        cluster_ns,               # redhat-ods-applications
+        "rhods-notebooks",        # workbenches default
+        "rhoai-model-registries", # modelregistry default
+        "redhat-ods-monitoring",  # DSCI monitoring namespace
+    ]
+
+    if keep_workload_ns:
         log.info(
-            "Workload namespace '%s' left intact (pass --delete-workload-ns to remove)",
-            cluster_ns,
+            "Keeping workload namespaces (--keep-workload-ns set): %s",
+            ", ".join(_static_workload_ns),
         )
+    else:
+        _labelled = _oc_lines(
+            "get", "namespaces",
+            "-l", "opendatahub.io/generated-namespace=true",
+            "--no-headers", "-o", "custom-columns=NAME:.metadata.name",
+        )
+        for ns in list(dict.fromkeys(_labelled + _static_workload_ns)):
+            _delete_namespace(ns)
 
     log.info("Platform uninstall complete")
-
 
 
 def validate_login() -> None:
