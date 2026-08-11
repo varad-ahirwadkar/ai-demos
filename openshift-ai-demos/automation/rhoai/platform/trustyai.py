@@ -11,6 +11,7 @@ Does not own model serving — that lives in platform/inference.py.
 Does not contain REST API calls — those live in platform/trustyai_client.py.
 """
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -178,8 +179,6 @@ def get_bearer_token(service_account: str, namespace: str) -> str:
     Raises:
         RuntimeError: If the TokenRequest fails.
     """
-    import json
-
     log.info("Obtaining bearer token for ServiceAccount '%s'", service_account)
     result = subprocess.run(
         [

@@ -219,9 +219,9 @@ def _fresh_prepare_module():
     import importlib
     import sys
 
-    import rhoai.platform.dsc       # noqa: F401 — side-effect: loads into sys.modules
-    import rhoai.platform.operators  # noqa: F401
+    import rhoai.platform.dsc  # noqa: F401 — side-effect: loads into sys.modules
     import rhoai.platform.manifests  # noqa: F401
+    import rhoai.platform.operators  # noqa: F401
     sys.modules.pop("rhoai.platform.prepare", None)
     return importlib.import_module("rhoai.platform.prepare")
 
@@ -383,7 +383,6 @@ class TestInstallComponent:
         """When no DSC exists yet, install_component bootstraps it from the base
         manifest before patching — so component fields are always schema-valid.
         """
-        import rhoai.platform.dsc  # ensure module is loaded before monkeypatching
         prep_mod = _fresh_prepare_module()
 
         operators_mock = MagicMock()
@@ -413,7 +412,6 @@ class TestInstallComponent:
         """When a DSC already exists, install_component must only patch — it must
         never re-apply the full manifest, which would reset unrelated components.
         """
-        import rhoai.platform.dsc  # ensure module is loaded before monkeypatching
         prep_mod = _fresh_prepare_module()
 
         operators_mock = MagicMock()
@@ -463,7 +461,6 @@ class TestInstallComponent:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """All names in VALID_COMPONENTS must be accepted without error."""
-        import rhoai.platform.dsc  # ensure module is loaded before monkeypatching
         from rhoai.platform.prepare import VALID_COMPONENTS
 
         prep_mod = _fresh_prepare_module()

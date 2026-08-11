@@ -40,8 +40,10 @@ def init_cmd(
         None, "--version",
         help=(
             "Pin to a specific CSV, e.g. '3.4.2' or 'rhods-operator.3.4.2'. "
-            "Check available CSVs with: oc get packagemanifest rhods-operator "
-            "-o jsonpath='{range .status.channels[?(@.name==\"<channel>\")]}{.currentCSV}{\"\\n\"}{end}'. "
+            "Check available CSVs with: "
+            "oc get packagemanifest rhods-operator "
+            "-o jsonpath='{range .status.channels[?(@.name==\"<channel>\")]}"
+            "{.currentCSV}{\"\\n\"}{end}'. "
             "Applied as startingCSV on the Subscription after install."
         ),
     ),
