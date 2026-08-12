@@ -13,7 +13,9 @@ Does not contain REST API calls — those live in platform/trustyai_client.py.
 
 import json
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from rhoai.ocp import resources, wait
 from rhoai.utils.logger import get_logger
@@ -111,11 +113,16 @@ def apply_trustyai_service(manifest_path: Path, namespace: str) -> None:
     resources.apply_manifest(manifest_path, namespace)
 
 
-def wait_until_ready(name: str, namespace: str, timeout: int = 300) -> None:
+def wait_until_ready(
+    name: str,
+    namespace: str,
+    timeout: int = 300,
+    on_tick: Callable[[float], Any] | None = None,
+) -> None:
     """Block until the TrustyAIService reaches Ready. Raises TimeoutError."""
     log.info("Waiting for TrustyAIService '%s'", name)
     log.debug("Timeout: %ss", timeout)
-    wait.wait_until_ready(_SERVICE_KIND, name, namespace, timeout=timeout)
+    wait.wait_until_ready(_SERVICE_KIND, name, namespace, timeout=timeout, on_tick=on_tick)
 
 
 def verify(name: str, namespace: str) -> None:

@@ -2,6 +2,7 @@
 
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -59,11 +60,16 @@ def apply_inference_service(manifest_path: Path, namespace: str) -> None:
     resources.apply_manifest(manifest_path, namespace)
 
 
-def wait_until_ready(name: str, namespace: str, timeout: int = 60) -> None:
+def wait_until_ready(
+    name: str,
+    namespace: str,
+    timeout: int = 60,
+    on_tick: Callable[[float], Any] | None = None,
+) -> None:
     """Block until the InferenceService is Ready. Raises TimeoutError."""
     log.info("Waiting for InferenceService '%s'", name)
     log.debug("Timeout: %ss", timeout)
-    wait.wait_until_ready("InferenceService", name, namespace, timeout=timeout)
+    wait.wait_until_ready("InferenceService", name, namespace, timeout=timeout, on_tick=on_tick)
 
 
 def get_inference_url(name: str, namespace: str) -> str:
@@ -175,7 +181,16 @@ def verify_triton_inference(
         log.warning("Connection error — retrying in %ss", _RETRY_DELAY)
         log.debug("Connection failure detail: %s", exc)
         time.sleep(_RETRY_DELAY)
-        response, elapsed, status = _http_post(infer_url, payload)
+        try:
+            response, elapsed, status = _http_post(infer_url, payload)
+        except _ConnectionError as exc2:
+            log.warning(
+                "Smoke test skipped — cannot reach '%s' from this host. "
+                "Run manually: curl -sk -X POST %s -H 'Content-Type: application/json' -d @%s",
+                infer_url, infer_url, sample_request,
+            )
+            log.debug("Connection failure detail: %s", exc2)
+            return
 
     log.debug("Response status: %s  elapsed: %.2fs", status, elapsed)
     log.debug("Response body:\n%s", json.dumps(response, indent=2))

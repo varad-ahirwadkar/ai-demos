@@ -6,6 +6,7 @@ Dependency is one-way: wait.py → resources.py (never the reverse).
 
 import time
 from collections.abc import Callable
+from typing import Any
 
 from rhoai.ocp import resources
 from rhoai.utils.logger import get_logger
@@ -21,6 +22,7 @@ def wait_until_ready(
     namespace: str | None = None,
     timeout: int = 300,
     interval: int = _DEFAULT_INTERVAL,
+    on_tick: Callable[[float], Any] | None = None,
 ) -> None:
     """Block until ocp.resources.is_ready() returns True. Raises TimeoutError."""
     wait_until(
@@ -28,6 +30,7 @@ def wait_until_ready(
         f"{kind}/{name} ready",
         timeout,
         interval,
+        on_tick=on_tick,
     )
 
 
@@ -37,6 +40,7 @@ def wait_until_deleted(
     namespace: str | None = None,
     timeout: int = 120,
     interval: int = 5,
+    on_tick: Callable[[float], Any] | None = None,
 ) -> None:
     """Block until the resource no longer exists. Raises TimeoutError."""
     wait_until(
@@ -44,6 +48,7 @@ def wait_until_deleted(
         f"{kind}/{name} deleted",
         timeout,
         interval,
+        on_tick=on_tick,
     )
 
 
@@ -52,17 +57,31 @@ def wait_until(
     description: str,
     timeout: int = 300,
     interval: int = _DEFAULT_INTERVAL,
+    on_tick: Callable[[float], Any] | None = None,
 ) -> None:
     """Block until condition() returns True or timeout is exceeded.
 
-    Use when wait_until_ready / wait_until_deleted don't fit (e.g. custom CRD condition).
-    Raises TimeoutError with description in the message.
+    Args:
+        condition:   Called each interval; returns True when done.
+        description: Human-readable label used in log messages and TimeoutError.
+        timeout:     Maximum seconds to wait before raising TimeoutError.
+        interval:    Seconds between condition checks.
+        on_tick:     Optional callback invoked after each sleep with elapsed
+                     seconds as the sole argument.  Use this to push live
+                     elapsed-time updates into a progress spinner.
+
+    Raises:
+        TimeoutError: If condition() does not return True within timeout seconds.
     """
-    deadline = time.monotonic() + timeout
+    start    = time.monotonic()
+    deadline = start + timeout
     while time.monotonic() < deadline:
         if condition():
             log.debug("Ready: %s", description)
             return
-        log.debug("Waiting: %s", description)
+        elapsed = time.monotonic() - start
+        log.debug("Waiting: %s  (%.0fs)", description, elapsed)
+        if on_tick:
+            on_tick(elapsed)
         time.sleep(interval)
     raise TimeoutError(f"Timed out after {timeout}s waiting for: {description}")

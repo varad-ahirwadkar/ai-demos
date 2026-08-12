@@ -19,7 +19,7 @@ storage:
 
 deployment:
   namespace: test-fraud
-  inference_service_name: demo-loan-nn-onnx-beta
-  model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model #pvc://fraud-model-pvc/models
+  inference_service_name: fraud-detection
+  model_uri: pvc://fraud-model-pvc/models #pvc://fraud-model-pvc/bias-monitoring/biased_model 
   trustyai_service_name: trustyai-service
   trustyai_service_account: trustyai-user

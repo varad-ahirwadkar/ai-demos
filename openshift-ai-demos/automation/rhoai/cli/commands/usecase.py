@@ -11,7 +11,7 @@ from pathlib import Path
 import typer
 
 from rhoai.config.loader import load_config
-from rhoai.platform import inference
+from rhoai.platform import inference, trustyai
 from rhoai.usecases import registry
 from rhoai.utils.errors import friendly_error
 from rhoai.utils.logger import get_logger
@@ -29,7 +29,17 @@ def deploy(
     config_file: Path | None = _config_option,
 ) -> None:
     """Deploy the named use case."""
-    config = load_config(config_file)
+    config    = load_config(config_file)
+    dep_cfg   = config.get("deployment", {})
+    namespace = dep_cfg.get("namespace") or config["platform"]["namespace"]
+    isvc_name = dep_cfg.get("inference_service_name", name)
+    model_uri = dep_cfg.get("model_uri", "(from manifest)")
+
+    typer.echo(f"\nDeploying  : {name}")
+    typer.echo(f"Namespace  : {namespace}")
+    typer.echo(f"Model      : {isvc_name}")
+    typer.echo(f"Storage    : {model_uri}\n")
+
     try:
         registry.get(name).deploy(config)
     except Exception as exc:  # noqa: BLE001
@@ -48,7 +58,7 @@ def verify(
         registry.get(name).verify(config)
     except Exception as exc:  # noqa: BLE001
         _exit_with_error(exc)
-    typer.echo(f"\n  ✔  {name}  verification passed.")
+    typer.echo(f"\n  ✔  {name}  is healthy and serving requests.")
 
 
 @app.command()
@@ -85,28 +95,39 @@ def list_cmd() -> None:
 def _print_deploy_summary(name: str, config: dict) -> None:
     """Print a concise post-deployment summary to stdout.
 
-    Resolves the InferenceService endpoint from the cluster. If the URL
-    lookup fails for any reason the summary is still printed without it —
-    the deployment itself succeeded.
+    Resolves the InferenceService and TrustyAI URLs from the cluster.
+    URL lookups are best-effort — the summary is always printed even if
+    the cluster is unreachable after a successful deploy.
     """
-    dep_cfg   = config.get("deployment", {})
-    namespace = dep_cfg.get("namespace") or config["platform"]["namespace"]
-    isvc_name = dep_cfg.get("inference_service_name", name)
+    dep_cfg        = config.get("deployment", {})
+    namespace      = dep_cfg.get("namespace") or config["platform"]["namespace"]
+    isvc_name      = dep_cfg.get("inference_service_name", name)
+    trustyai_name  = dep_cfg.get("trustyai_service_name", "trustyai-service")
 
-    url = ""
+    model_url    = ""
+    trustyai_url = ""
     try:
-        url = inference.get_inference_url(isvc_name, namespace)
+        model_url = inference.get_inference_url(isvc_name, namespace)
     except Exception:  # noqa: BLE001
-        pass  # URL unavailable — don't fail the summary
+        pass
+    try:
+        trustyai_url = trustyai.get_trustyai_url(trustyai_name, namespace)
+    except Exception:  # noqa: BLE001
+        pass
 
-    typer.echo(f"\n  Use case:   {name}")
-    typer.echo(f"  Namespace:  {namespace}")
-    if url:
-        typer.echo(f"  Endpoint:   {url}")
-    typer.echo(f"  Next:       rhoai usecase verify {name}")
+    typer.echo("\nDeployment complete.\n")
+    typer.echo(f"  Use case   : {name}")
+    typer.echo(f"  Namespace  : {namespace}")
+    if model_url:
+        typer.echo(f"  Model URL  : {model_url}")
+    if trustyai_url:
+        typer.echo(f"  TrustyAI   : {trustyai_url}")
+    typer.echo(f"\n  Next: rhoai usecase verify {name}")
 
 
 def _exit_with_error(exc: Exception) -> None:
     """Print a clean one-line error and exit 1. Never shows a traceback."""
-    typer.echo(f"\nError: {friendly_error(exc)}", err=True)
+    log.debug("Unhandled exception", exc_info=exc)
+    typer.echo(f"\n  ✖  Deployment failed: {friendly_error(exc)}", err=True)
+    log.debug("Exception type: %s", type(exc).__name__)
     raise typer.Exit(code=1)

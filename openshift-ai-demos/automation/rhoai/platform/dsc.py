@@ -21,9 +21,17 @@ def apply_dsc(manifest_path: Path) -> None:
 
 
 def wait_until_ready(name: str, timeout: int) -> None:
-    """Block until the DataScienceCluster reaches Ready phase. Raises TimeoutError."""
+    """Block until the DataScienceCluster is fully reconciled and Ready.
+
+    Checks both ``status.phase == "Ready"`` and that the operator has observed
+    the current spec generation (``status.observedGeneration >= metadata.generation``).
+    This prevents the wait from returning on a stale Ready status that precedes
+    the operator picking up a recent spec change (e.g. a component patch).
+
+    Raises TimeoutError if the condition is not met within timeout seconds.
+    """
     log.info("Waiting for DSC '%s' (timeout: %ss)", name, timeout)
-    wait.wait_until(lambda: _is_ready(name), f"DataScienceCluster/{name} Ready", timeout)
+    wait.wait_until(lambda: _is_reconciled(name), f"DataScienceCluster/{name} Ready", timeout)
 
 
 def wait_dsci_ready(name: str, timeout: int) -> None:
@@ -121,3 +129,19 @@ def is_dsci_ready(name: str) -> bool:
 
 def _is_ready(name: str) -> bool:
     return is_dsc_ready(name)
+
+
+def _is_reconciled(name: str) -> bool:
+    """Return True when the DSC is Ready *and* the operator has observed the current generation.
+
+    ``metadata.generation`` is incremented by the API server on every spec
+    write.  ``status.observedGeneration`` is set by the RHOAI operator each
+    time it completes a reconciliation loop.  Requiring
+    ``observedGeneration >= generation`` ensures the wait does not exit on a
+    stale Ready status that predates a recent patch.
+    """
+    obj        = resources.get("DataScienceCluster", name)
+    phase      = obj.get("status", {}).get("phase")
+    generation = obj.get("metadata", {}).get("generation", 0)
+    observed   = obj.get("status", {}).get("observedGeneration", 0)
+    return phase == "Ready" and observed >= generation

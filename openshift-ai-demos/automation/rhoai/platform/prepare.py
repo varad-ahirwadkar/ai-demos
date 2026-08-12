@@ -156,14 +156,83 @@ def remove_component(config: dict[str, Any], components: list[str]) -> None:
     dsc.set_component_states(dsc_name, {c: "Removed" for c in components})
     dsc.wait_until_ready(dsc_name, config["timeouts"]["dsc_ready"])
 
-def bootstrap_platform(config: dict[str, Any]) -> None:
+def platform_needs_reconciliation(config: dict[str, Any]) -> bool:
+    """Return True if bootstrap_platform() must modify the cluster to reach the desired state.
+
+    Performs read-only checks only — never writes or waits.  Called by
+    bootstrap_platform() to skip the full reconciliation cycle when the
+    platform is already healthy and the requested component states already match.
+
+    Returns False (fast-path) when ALL of the following hold:
+        1. Operator CSV is Succeeded.
+        2. DSCInitialization is Ready.
+        3. DataScienceCluster is Ready.
+        4. Every component in config["components"] is already Managed
+           (or no specific components are requested).
+    """
+    from rhoai.platform import dsc, operators
+
+    op_name   = config["operator"]["name"]
+    op_ns     = config["operator"]["namespace"]
+    dsc_name  = config["dsc"]["name"]
+    dsci_name = config["dsc"]["dsci_name"]
+
+    if not operators.is_installed(op_name, op_ns):
+        log.debug("platform_needs_reconciliation: operator not installed")
+        return True
+
+    if not dsc.is_dsci_ready(dsci_name):
+        log.debug("platform_needs_reconciliation: DSCI not ready")
+        return True
+
+    if not dsc.is_dsc_ready(dsc_name):
+        log.debug("platform_needs_reconciliation: DSC not ready")
+        return True
+
+    components = config.get("components") or []
+    if components:
+        try:
+            states = dsc.get_component_states(dsc_name)
+        except Exception:  # noqa: BLE001
+            log.debug("platform_needs_reconciliation: could not read component states")
+            return True
+        not_managed = [c for c in components if states.get(c) != "Managed"]
+        if not_managed:
+            log.debug("platform_needs_reconciliation: not yet Managed: %s", not_managed)
+            return True
+
+    log.debug("platform_needs_reconciliation: platform already in desired state")
+    return False
+
+
+def bootstrap_platform(
+    config: dict[str, Any],
+    _needs_reconciliation: bool | None = None,
+) -> None:
     """Full platform bootstrap: init_platform, then enable DSC components.
+
+    On an already-configured cluster this is a fast verification pass —
+    reconciliation is skipped when the platform is already in the desired state.
 
     Backs 'rhoai platform setup'. Two modes controlled by config["components"]:
     - Non-empty list → patch only those components to Managed.
     - Empty (default) → apply the full base DSC manifest as-is.
+
+    Args:
+        _needs_reconciliation: Pre-computed result of platform_needs_reconciliation().
+            Pass this when the caller has already called platform_needs_reconciliation()
+            to avoid a redundant second check. If None (default), the check runs here.
     """
     from rhoai.platform import dsc, manifests
+
+    needs_recon = (
+        _needs_reconciliation
+        if _needs_reconciliation is not None
+        else platform_needs_reconciliation(config)
+    )
+    if not needs_recon:
+        log.info("Platform already in desired state — skipping reconciliation")
+        return
 
     init_platform(config)
 

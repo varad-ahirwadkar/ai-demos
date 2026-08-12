@@ -30,7 +30,7 @@ def verify(config: dict[str, Any]) -> None:
 
     log.info("Smoke-testing Triton inference for '%s'", isvc_name)
     inference.verify_triton_inference(
-        isvc_name, namespace, "fraud-detection", assets.get_sample_inference_request()
+        isvc_name, namespace, isvc_name, assets.get_sample_inference_request()
     )
 
     log.info("Checking TrustyAIService '%s'", trustyai_name)

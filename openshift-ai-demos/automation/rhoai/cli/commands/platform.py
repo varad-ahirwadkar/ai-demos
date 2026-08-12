@@ -142,12 +142,6 @@ def init_cmd(
         config["operator"]["source"] = source
 
     typer.echo("\nInitializing RHOAI platform...")
-    _step("Prerequisites validated (login, RBAC, storage, namespaces)")
-    ch  = config["operator"]["channel"]
-    src = config["operator"].get("source", "redhat-operators")
-    _step(f"Installing RHOAI operator (channel: {ch}, source: {src})")
-    _step("Applying DSCInitialization")
-
     prepare.init_platform(config)
 
     op_name   = config["operator"]["name"]
@@ -163,9 +157,9 @@ def init_cmd(
 
     dsci_phase = resources.status("DSCInitialization", dsci_name).get("phase", "Unknown")
 
-    typer.echo("\nPlatform initialized")
-    typer.echo(f"  Operator    {op_display}")
-    typer.echo(f"  DSCI        {dsci_name}  {dsci_phase}")
+    typer.echo("\n  ✔  RHOAI platform initialized")
+    typer.echo(f"     Operator  : {op_display}")
+    typer.echo(f"     Platform  : {dsci_phase}")
     typer.echo("")
 
 
@@ -185,12 +179,9 @@ def enable_cmd(
     config = load_config(config_file)
     comp_list = ", ".join(components)
 
-    typer.echo(f"\nEnabling component(s): {comp_list}")
-    _step("Setting component state(s) on DSC to Managed")
-
+    typer.echo(f"\nEnabling: {comp_list}")
     prepare.install_component(config, components)
-
-    typer.echo(f"\nEnabled: {comp_list}")
+    typer.echo(f"\n  ✔  Enabled: {comp_list}")
 
     # Show all currently-managed components
     dsc_name = config["dsc"]["name"]
@@ -222,12 +213,9 @@ def disable_cmd(
     config = load_config(config_file)
     comp_list = ", ".join(components)
 
-    typer.echo(f"\nDisabling component(s): {comp_list}")
-    _step("Setting component state(s) on DSC to Removed")
-
+    typer.echo(f"\nDisabling: {comp_list}")
     prepare.remove_component(config, components)
-
-    typer.echo(f"\nDisabled: {comp_list}")
+    typer.echo(f"\n  ✔  Disabled: {comp_list}")
 
     dsc_name = config["dsc"]["name"]
     try:
@@ -322,7 +310,7 @@ def uninstall_cmd(
     _res.delete_manifest = _patched_delete_manifest
     _res.exists          = _patched_exists
 
-    typer.echo("\nUninstalling RHOAI platform...")
+    typer.echo("\nRemoving RHOAI platform...")
 
     try:
         prepare.uninstall_platform(config, keep_workload_ns=keep_workload_ns)
@@ -336,7 +324,7 @@ def uninstall_cmd(
     # Print with ✔ after completion — they always run.
     typer.echo(f"  {D}  Removed CRDs, webhooks and cluster-scoped RBAC")
 
-    typer.echo("\nPlatform uninstalled.")
+    typer.echo("\n  ✔  RHOAI platform removed.")
 
 
 @app.command(name="setup")
@@ -366,11 +354,6 @@ def setup_cmd(
     src = config["operator"].get("source", "redhat-operators")
 
     typer.echo("\nSetting up RHOAI platform...")
-    _step("Prerequisites validated (login, RBAC, storage, namespaces)")
-    _step(f"Installing RHOAI operator (channel: {ch}, source: {src})")
-    _step("Applying DSCInitialization")
-    _step("Enabling components by patching DSC")
-
     prepare.bootstrap_platform(config)
 
     _print_platform_summary(config)

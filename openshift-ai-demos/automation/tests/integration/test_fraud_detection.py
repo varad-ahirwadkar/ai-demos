@@ -129,20 +129,19 @@ class TestDeploySmoke:
         storage_mock       = MagicMock()
         inference_mock     = MagicMock()
         ocp_resources_mock = MagicMock()
-        trustyai_mock      = MagicMock()
         prepare_mock       = MagicMock()
+        # platform_needs_reconciliation returns False → fast-path, no bootstrap call.
+        prepare_mock.platform_needs_reconciliation.return_value = False
 
         monkeypatch.setattr(deploy_mod, "storage",       storage_mock)
         monkeypatch.setattr(deploy_mod, "inference",     inference_mock)
         monkeypatch.setattr(deploy_mod, "ocp_resources", ocp_resources_mock)
-        monkeypatch.setattr(deploy_mod, "trustyai",      trustyai_mock)
         monkeypatch.setattr(deploy_mod, "prepare",       prepare_mock)
 
         return {
             "storage":       storage_mock,
             "inference":     inference_mock,
             "ocp_resources": ocp_resources_mock,
-            "trustyai":      trustyai_mock,
             "prepare":       prepare_mock,
         }
 
@@ -173,9 +172,9 @@ class TestDeploySmoke:
         # Step 5: Triton Template → ServingRuntime; InferenceService via apply_dict
         mocks["inference"].apply_serving_runtime_from_template.assert_called_once()
         mocks["ocp_resources"].apply_dict.assert_called_once()
-        mocks["inference"].wait_until_ready.assert_called_once_with(
-            "fraud-detection", "test-ns", config["timeouts"]["inference_ready"]
-        )
+        # on_tick is passed as a kwarg from the spinner; verify positional args only
+        call_args = mocks["inference"].wait_until_ready.call_args
+        assert call_args.args == ("fraud-detection", "test-ns", config["timeouts"]["inference_ready"])
 
         # Step 5b: smoke test — verify_triton_inference called after ready
         mocks["inference"].verify_triton_inference.assert_called_once()

@@ -188,7 +188,7 @@ class TestWaitUntilReady:
         monkeypatch.setattr("rhoai.platform.trustyai.wait", mock_wait)
         trustyai.wait_until_ready("trustyai-service", "ns", timeout=120)
         mock_wait.wait_until_ready.assert_called_once_with(
-            "TrustyAIService", "trustyai-service", "ns", timeout=120
+            "TrustyAIService", "trustyai-service", "ns", timeout=120, on_tick=None
         )
 
 

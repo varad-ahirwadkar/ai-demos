@@ -107,3 +107,68 @@ class TestIsReady:
         mock_resources.status.return_value = {"phase": "Progressing"}
         monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
         assert dsc._is_ready("default-dsc") is False
+
+
+class TestIsReconciled:
+    """_is_reconciled requires phase==Ready AND observedGeneration >= generation."""
+
+    def _mock(self, monkeypatch: pytest.MonkeyPatch, phase: str, generation: int, observed: int) -> None:
+        mock_resources = MagicMock()
+        mock_resources.get.return_value = {
+            "metadata": {"generation": generation},
+            "status":   {"phase": phase, "observedGeneration": observed},
+        }
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+
+    def test_true_when_ready_and_generation_matches(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._mock(monkeypatch, "Ready", generation=3, observed=3)
+        assert dsc._is_reconciled("default-dsc") is True
+
+    def test_true_when_ready_and_observed_exceeds_generation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # observed can legitimately exceed generation in some operator implementations
+        self._mock(monkeypatch, "Ready", generation=2, observed=3)
+        assert dsc._is_reconciled("default-dsc") is True
+
+    def test_false_when_ready_but_generation_not_yet_observed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # DSC is still Ready from the previous spec — operator hasn't picked up the patch yet
+        self._mock(monkeypatch, "Ready", generation=4, observed=3)
+        assert dsc._is_reconciled("default-dsc") is False
+
+    def test_false_when_reconciling_and_generation_observed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Operator is working on the new generation but not done yet
+        self._mock(monkeypatch, "Progressing", generation=4, observed=4)
+        assert dsc._is_reconciled("default-dsc") is False
+
+    def test_false_when_not_ready_and_generation_not_observed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._mock(monkeypatch, "Progressing", generation=4, observed=3)
+        assert dsc._is_reconciled("default-dsc") is False
+
+
+class TestWaitUntilReady:
+    def test_uses_is_reconciled_not_is_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """wait_until_ready must poll _is_reconciled, not the bare phase check."""
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.dsc.wait", mock_wait)
+
+        dsc.wait_until_ready("default-dsc", 600)
+
+        mock_wait.wait_until.assert_called_once()
+        condition_fn = mock_wait.wait_until.call_args[0][0]
+
+        # Confirm the condition uses _is_reconciled by testing its behaviour:
+        # Ready + generation not yet observed → False (stale Ready must not exit)
+        mock_resources = MagicMock()
+        mock_resources.get.return_value = {
+            "metadata": {"generation": 5},
+            "status":   {"phase": "Ready", "observedGeneration": 4},
+        }
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        assert condition_fn() is False
+
+        # Ready + generation observed → True
+        mock_resources.get.return_value = {
+            "metadata": {"generation": 5},
+            "status":   {"phase": "Ready", "observedGeneration": 5},
+        }
+        assert condition_fn() is True
+
