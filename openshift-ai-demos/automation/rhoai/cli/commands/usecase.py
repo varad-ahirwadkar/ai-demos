@@ -35,10 +35,10 @@ def deploy(
     isvc_name = dep_cfg.get("inference_service_name", name)
     model_uri = dep_cfg.get("model_uri", "(from manifest)")
 
-    typer.echo(f"\nDeploying  : {name}")
-    typer.echo(f"Namespace  : {namespace}")
-    typer.echo(f"Model      : {isvc_name}")
-    typer.echo(f"Storage    : {model_uri}\n")
+    typer.echo(f"\nDeploying : {name}")
+    typer.echo(f"Namespace : {namespace}")
+    typer.echo(f"Service   : {isvc_name}")
+    typer.echo(f"Storage   : {model_uri}\n")
 
     try:
         registry.get(name).deploy(config)
@@ -53,12 +53,19 @@ def verify(
     config_file: Path | None = _config_option,
 ) -> None:
     """Verify the named use case deployment."""
-    config = load_config(config_file)
+    config    = load_config(config_file)
+    dep_cfg   = config.get("deployment", {})
+    namespace = dep_cfg.get("namespace") or config["platform"]["namespace"]
+    isvc_name = dep_cfg.get("inference_service_name", name)
+
+    typer.echo(f"\nVerifying : {name}")
+    typer.echo(f"Namespace : {namespace}\n")
+
     try:
         registry.get(name).verify(config)
     except Exception as exc:  # noqa: BLE001
         _exit_with_error(exc)
-    typer.echo(f"\n  ✔  {name}  is healthy and serving requests.")
+    _print_verify_summary(name, isvc_name, namespace, config)
 
 
 @app.command()
@@ -78,8 +85,8 @@ def cleanup(
     dep_cfg   = config.get("deployment", {})
     namespace = dep_cfg.get("namespace") or config["platform"]["namespace"]
 
-    typer.echo(f"\nCleaning up : {name}")
-    typer.echo(f"Namespace   : {namespace}\n")
+    typer.echo(f"\nRemoving  : {name}")
+    typer.echo(f"Namespace : {namespace}\n")
 
     try:
         registry.get(name).cleanup(config)
@@ -90,7 +97,7 @@ def cleanup(
     except Exception as exc:  # noqa: BLE001
         _exit_with_error(exc)
 
-    typer.echo(f"\n  ✔  {name}  cleaned up.")
+    typer.echo(f"\n✔  {name}  removed.")
 
 
 @app.command(name="list")
@@ -107,15 +114,15 @@ def _print_deploy_summary(name: str, config: dict) -> None:
     URL lookups are best-effort — the summary is always printed even if
     the cluster is unreachable after a successful deploy.
     """
-    dep_cfg        = config.get("deployment", {})
-    namespace      = dep_cfg.get("namespace") or config["platform"]["namespace"]
-    isvc_name      = dep_cfg.get("inference_service_name", name)
-    trustyai_name  = dep_cfg.get("trustyai_service_name", "trustyai-service")
+    dep_cfg       = config.get("deployment", {})
+    namespace     = dep_cfg.get("namespace") or config["platform"]["namespace"]
+    isvc_name     = dep_cfg.get("inference_service_name", name)
+    trustyai_name = dep_cfg.get("trustyai_service_name", "trustyai-service")
 
-    model_url    = ""
+    endpoint     = ""
     trustyai_url = ""
     try:
-        model_url = inference.get_inference_url(isvc_name, namespace)
+        endpoint = inference.get_inference_url(isvc_name, namespace)
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -124,18 +131,34 @@ def _print_deploy_summary(name: str, config: dict) -> None:
         pass
 
     typer.echo("\nDeployment complete.\n")
-    typer.echo(f"  Use case   : {name}")
-    typer.echo(f"  Namespace  : {namespace}")
-    if model_url:
-        typer.echo(f"  Model URL  : {model_url}")
+    typer.echo(f"  Use case  : {name}")
+    typer.echo(f"  Namespace : {namespace}")
+    if endpoint:
+        typer.echo(f"  Endpoint  : {endpoint}")
     if trustyai_url:
-        typer.echo(f"  TrustyAI   : {trustyai_url}")
+        typer.echo(f"  TrustyAI  : {trustyai_url}")
     typer.echo(f"\n  Next: rhoai usecase verify {name}")
+
+
+def _print_verify_summary(name: str, isvc_name: str, namespace: str, config: dict) -> None:
+    """Print a concise post-verification summary to stdout."""
+    endpoint = ""
+    try:
+        endpoint = inference.get_inference_url(isvc_name, namespace)
+    except Exception:  # noqa: BLE001
+        pass
+
+    typer.echo("\nVerification complete.\n")
+    typer.echo(f"  Use case  : {name}")
+    typer.echo(f"  Namespace : {namespace}")
+    if endpoint:
+        typer.echo(f"  Endpoint  : {endpoint}")
+    typer.echo(f"\n✔  {name}  is healthy and serving inference requests.")
 
 
 def _exit_with_error(exc: Exception) -> None:
     """Print a clean one-line error and exit 1. Never shows a traceback."""
     log.debug("Unhandled exception", exc_info=exc)
-    typer.echo(f"\n  ✖  {friendly_error(exc)}", err=True)
+    typer.echo(f"\n✖  {friendly_error(exc)}", err=True)
     log.debug("Exception type: %s", type(exc).__name__)
     raise typer.Exit(code=1)
