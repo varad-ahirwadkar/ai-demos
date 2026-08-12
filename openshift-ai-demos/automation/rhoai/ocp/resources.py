@@ -77,60 +77,76 @@ def _resource(client: dynamic.DynamicClient, kind: str, api_version: str | None 
     return client.resources.get(kind=kind)
 
 
-def process_template(path: Path, namespace: str) -> None:
-    """Process an OpenShift Template and apply all rendered objects.
+def process_template(
+    path: Path,
+    platform_namespace: str,
+    deploy_namespace: str,
+    params: dict[str, str] | None = None,
+) -> None:
+    """Apply an OpenShift Template to the platform namespace, then render and deploy it.
 
-    Strips metadata.namespace from the Template before processing so that
-    oc process accepts the target namespace regardless of what namespace is
-    baked into the Template file itself.
+    Mirrors the original manual flow:
+        oc apply  -n <platform_namespace> -f <template-file>
+        oc process -n <platform_namespace> <template-name> [-p K=V ...] | oc apply -n <deploy_namespace> -f -
 
-    Equivalent to:
-        oc process --namespace=<namespace> -f <stripped-template> | oc apply -n <namespace> -f -
+    The Template is uploaded to <platform_namespace> (e.g. redhat-ods-applications)
+    where RHOAI stores its serving-runtime templates, then rendered there so that
+    any cluster-side parameter defaults are resolved, and the resulting objects
+    are applied into <deploy_namespace> (the workload namespace).
+
+    Args:
+        params: Optional template parameter overrides passed as ``-p KEY=VALUE``
+                to ``oc process``. Keys not supplied fall back to the template defaults.
 
     Idempotent. Raises RuntimeError if oc is not on PATH or any step fails.
     """
-    import json
-    import tempfile
+    log.debug(
+        "Processing Template %s: platform_ns=%s deploy_ns=%s params=%s",
+        path.name, platform_namespace, deploy_namespace, params,
+    )
 
-    log.debug("Processing Template %s in '%s'", path.name, namespace)
-
-    # Load the template and remove metadata.namespace so oc process does not
-    # reject it when the baked-in namespace differs from the target namespace.
+    # Step 1 — upload the Template into the platform namespace.
+    # Use the namespace embedded in the template file itself so the upload
+    # always targets the correct namespace even when platform_namespace has
+    # been overridden (e.g. via RHOAI_NAMESPACE) to the workload namespace.
     template = load(path)
-    template.get("metadata", {}).pop("namespace", None)
-    template_json = json.dumps(template)
+    template_name = template.get("metadata", {}).get("name", path.stem)
+    upload_namespace = template.get("metadata", {}).get("namespace") or platform_namespace
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False
-    ) as tmp:
-        tmp.write(template_json)
-        tmp_path = tmp.name
-
-    try:
-        result = subprocess.run(
-            ["oc", "process", f"--namespace={namespace}", "-f", tmp_path],
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        import os
-        os.unlink(tmp_path)
-
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"oc process failed for {path.name}: {result.stderr.strip()}"
-        )
     apply_result = subprocess.run(
-        ["oc", "apply", "-n", namespace, "-f", "-"],
-        input=result.stdout,
+        ["oc", "apply", "-n", upload_namespace, "-f", str(path)],
         capture_output=True,
         text=True,
     )
     if apply_result.returncode != 0:
         raise RuntimeError(
-            f"oc apply failed after processing {path.name}: {apply_result.stderr.strip()}"
+            f"oc apply (template upload) failed for {path.name}: {apply_result.stderr.strip()}"
         )
-    log.debug("Template %s applied successfully", path.name)
+
+    # Step 2 — process the template server-side from the platform namespace.
+    param_flags = [arg for k, v in (params or {}).items() for arg in ("-p", f"{k}={v}")]
+    process_result = subprocess.run(
+        ["oc", "process", "-n", upload_namespace, template_name, *param_flags],
+        capture_output=True,
+        text=True,
+    )
+    if process_result.returncode != 0:
+        raise RuntimeError(
+            f"oc process failed for {path.name}: {process_result.stderr.strip()}"
+        )
+
+    # Step 3 — apply the rendered objects into the deployment namespace.
+    create_result = subprocess.run(
+        ["oc", "apply", "-n", deploy_namespace, "-f", "-"],
+        input=process_result.stdout,
+        capture_output=True,
+        text=True,
+    )
+    if create_result.returncode != 0:
+        raise RuntimeError(
+            f"oc apply (rendered objects) failed for {path.name}: {create_result.stderr.strip()}"
+        )
+    log.debug("Template %s applied successfully to '%s'", path.name, deploy_namespace)
 
 
 def apply_manifest(path: Path, namespace: str | None = None) -> dict[str, Any]:

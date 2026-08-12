@@ -2,13 +2,10 @@
 # Override only what differs from config/defaults.yaml.
 
 # Absolute path to the root of the openshift-ai-demos repository.
-repo_root: /path/to/openshift-ai-demos
-
-platform:
-  namespace: redhat-ods-applications
+repo_root: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos
 
 operator:
-  channel: stable
+  channel: stable-3.5
 
 # DSC components to enable during platform setup.
 components:
@@ -21,8 +18,8 @@ storage:
   class_name: ""   # empty = accept any available ReadWriteOnce class
 
 deployment:
-  namespace: fraud-detection
-  inference_service_name: fraud-detection
-  model_uri: pvc://fraud-model-pvc/models
+  namespace: test-fraud
+  inference_service_name: demo-loan-nn-onnx-beta
+  model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model #pvc://fraud-model-pvc/models
   trustyai_service_name: trustyai-service
   trustyai_service_account: trustyai-user

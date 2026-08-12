@@ -27,18 +27,30 @@ def apply_serving_runtime(manifest_path: Path, namespace: str) -> None:
     resources.apply_manifest(manifest_path, namespace)
 
 
-def apply_serving_runtime_from_template(template_path: Path, namespace: str) -> None:
+def apply_serving_runtime_from_template(
+    template_path: Path,
+    platform_namespace: str,
+    deploy_namespace: str,
+    model_name: str | None = None,
+) -> None:
     """Instantiate an OpenShift Template and apply the resulting ServingRuntime.
 
-    Equivalent to:
-        oc process -n <namespace> -f <template_path> | oc apply -f -
+    Mirrors the original manual flow:
+        oc process -n <platform_namespace> <template-name> [-p MODEL_NAME=<name>] | oc apply -n <deploy_namespace> -f -
 
-    Use this when the ServingRuntime is defined inside a Template object
-    (e.g. triton-ppc64le-runtime-template.yaml).
+    The Template is first uploaded to <platform_namespace> (redhat-ods-applications)
+    where RHOAI catalogs serving-runtime templates, then processed server-side,
+    and the resulting ServingRuntime is applied into <deploy_namespace>.
+
+    Args:
+        model_name: Passed as the MODEL_NAME template parameter so Triton loads only
+                    that model directory (matching the InferenceService name). Falls back
+                    to the template's built-in default when None.
     """
     log.info("Deploying Triton ServingRuntime")
     log.debug("Processing ServingRuntime template %s", template_path.name)
-    resources.process_template(template_path, namespace)
+    params = {"MODEL_NAME": model_name} if model_name else None
+    resources.process_template(template_path, platform_namespace, deploy_namespace, params)
 
 
 def apply_inference_service(manifest_path: Path, namespace: str) -> None:

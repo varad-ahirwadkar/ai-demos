@@ -20,11 +20,12 @@ app = typer.Typer(help="Deploy and manage AI use cases.")
 log = get_logger(__name__)
 
 _config_option = typer.Option(None, "--config", "-c", help="Path to config YAML.")
+_name_argument = typer.Argument("fraud-detection", help="Use case name.")
 
 
 @app.command()
 def deploy(
-    name: str = typer.Argument(..., help="Use case name, e.g. 'fraud-detection'."),
+    name: str = _name_argument,
     config_file: Path | None = _config_option,
 ) -> None:
     """Deploy the named use case."""
@@ -38,7 +39,7 @@ def deploy(
 
 @app.command()
 def verify(
-    name: str = typer.Argument(..., help="Use case name, e.g. 'fraud-detection'."),
+    name: str = _name_argument,
     config_file: Path | None = _config_option,
 ) -> None:
     """Verify the named use case deployment."""
@@ -52,7 +53,7 @@ def verify(
 
 @app.command()
 def cleanup(
-    name: str = typer.Argument(..., help="Use case name, e.g. 'fraud-detection'."),
+    name: str = _name_argument,
     config_file: Path | None = _config_option,
     delete_platform: bool = typer.Option(
         False,

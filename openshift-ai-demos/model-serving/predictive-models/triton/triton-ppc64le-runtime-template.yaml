@@ -4,6 +4,10 @@
 # Instantiate with:
 #   oc process -n <namespace> -f triton-ppc64le-runtime-template.yaml | oc apply -f -
 #
+# Parameters:
+#   MODEL_NAME  — directory name of the model inside the model repository
+#                 (must match the InferenceService name; default: fraud-detection)
+#
 # The automation applies this via rhoai.platform.inference.apply_serving_runtime_from_template().
 apiVersion: template.openshift.io/v1
 kind: Template
@@ -30,6 +34,8 @@ objects:
     - command:
       - tritonserver
       - --model-repository=/mnt/models
+      - --model-control-mode=explicit
+      - --load-model=${MODEL_NAME}
       image: quay.io/powercloud/tritonserver:latest
       name: kserve-container
       ports:
@@ -46,3 +52,10 @@ objects:
     - name: python
     - autoSelect: true
       name: onnx
+parameters:
+- description: >
+    Directory name of the model inside the model repository.
+    Must match the InferenceService name (KServe mounts the model directory
+    under this name). Stray directories such as .ipynb_checkpoints are ignored.
+  name: MODEL_NAME
+  value: fraud-detection
