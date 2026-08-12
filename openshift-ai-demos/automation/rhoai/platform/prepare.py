@@ -132,7 +132,7 @@ def install_component(config: dict[str, Any], components: list[str]) -> None:
         dsc.apply_dsc(manifests.get_dsc(config["repo_root"]))
 
     dsc.set_component_states(dsc_name, {c: "Managed" for c in components})
-    dsc.wait_until_ready(dsc_name, config["timeouts"]["dsc_ready"])
+    dsc.wait_until_ready_after_change(dsc_name, config["timeouts"]["dsc_ready"])
 
 
 def remove_component(config: dict[str, Any], components: list[str]) -> None:
@@ -167,7 +167,7 @@ def remove_component(config: dict[str, Any], components: list[str]) -> None:
         )
 
     dsc.set_component_states(dsc_name, {c: "Removed" for c in components})
-    dsc.wait_until_ready(dsc_name, config["timeouts"]["dsc_ready"])
+    dsc.wait_until_ready_after_change(dsc_name, config["timeouts"]["dsc_ready"])
 
 def platform_needs_reconciliation(config: dict[str, Any]) -> bool:
     """Return True if bootstrap_platform() must modify the cluster to reach the desired state.

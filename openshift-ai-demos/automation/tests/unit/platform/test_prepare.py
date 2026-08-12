@@ -405,7 +405,7 @@ class TestInstallComponent:
         dsc_mock.set_component_states.assert_called_once_with(
             "default-dsc", {"kserve": "Managed", "trustyai": "Managed"}
         )
-        dsc_mock.wait_until_ready.assert_called_once()
+        dsc_mock.wait_until_ready_after_change.assert_called_once()
 
     def test_does_not_recreate_dsc_when_already_present(
         self, monkeypatch: pytest.MonkeyPatch

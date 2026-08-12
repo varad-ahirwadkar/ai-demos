@@ -34,6 +34,40 @@ def wait_until_ready(name: str, timeout: int) -> None:
     wait.wait_until(lambda: _is_reconciled(name), f"DataScienceCluster/{name} Ready", timeout)
 
 
+def wait_until_ready_after_change(name: str, timeout: int) -> None:
+    """Wait for DSC to become Ready after a component state change.
+
+    After patching component states the DSC reconciler takes a few seconds
+    to notice the change and transition from Ready → Progressing.  A plain
+    wait_until_ready() call can return immediately if it polls before that
+    transition starts, falsely signalling completion.
+
+    Strategy:
+      1. Poll every 1 s for up to 30 s waiting for the DSC to leave Ready
+         (reconciliation started).  Check fires immediately on entry — no
+         upfront sleep — so a fast transition is caught without delay.
+      2. Once the DSC leaves Ready (or 30 s elapses), call wait_until_ready
+         to wait for it to return to Ready with the full timeout budget.
+      3. If DSC never leaves Ready in 30 s the change was either a no-op
+         or reconciliation completed between the patch and the first poll —
+         wait_until_ready then returns immediately since it is already Ready.
+    """
+    import time
+
+    log.info("Waiting for DSC '%s' to start reconciling", name)
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if not _is_ready(name):
+            log.info("DSC '%s' is reconciling — waiting for Ready", name)
+            break
+        time.sleep(1)          # 1 s interval — catches fast transitions quickly
+    else:
+        log.info("DSC '%s' did not leave Ready within 30s — already converged or no-op", name)
+
+    # Now wait for Ready with the full caller-supplied timeout
+    wait_until_ready(name, timeout)
+
+
 def wait_dsci_ready(name: str, timeout: int) -> None:
     """Block until the DSCInitialization reaches Ready phase. Raises TimeoutError."""
     log.info("Waiting for DSCI '%s' (timeout: %ss)", name, timeout)
