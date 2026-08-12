@@ -74,7 +74,13 @@ def cleanup(
     """Remove the named use case resources."""
     from rhoai.platform import dsc
 
-    config = load_config(config_file)
+    config    = load_config(config_file)
+    dep_cfg   = config.get("deployment", {})
+    namespace = dep_cfg.get("namespace") or config["platform"]["namespace"]
+
+    typer.echo(f"\nCleaning up : {name}")
+    typer.echo(f"Namespace   : {namespace}\n")
+
     try:
         registry.get(name).cleanup(config)
         if delete_platform:
@@ -83,6 +89,8 @@ def cleanup(
             dsc.delete_dsci(config["dsc"]["dsci_name"])
     except Exception as exc:  # noqa: BLE001
         _exit_with_error(exc)
+
+    typer.echo(f"\n  ✔  {name}  cleaned up.")
 
 
 @app.command(name="list")
@@ -128,6 +136,6 @@ def _print_deploy_summary(name: str, config: dict) -> None:
 def _exit_with_error(exc: Exception) -> None:
     """Print a clean one-line error and exit 1. Never shows a traceback."""
     log.debug("Unhandled exception", exc_info=exc)
-    typer.echo(f"\n  ✖  Deployment failed: {friendly_error(exc)}", err=True)
+    typer.echo(f"\n  ✖  {friendly_error(exc)}", err=True)
     log.debug("Exception type: %s", type(exc).__name__)
     raise typer.Exit(code=1)

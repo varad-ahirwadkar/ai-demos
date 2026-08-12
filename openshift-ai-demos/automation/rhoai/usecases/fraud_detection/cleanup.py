@@ -10,6 +10,7 @@ from typing import Any
 from rhoai.platform import inference, trustyai
 from rhoai.usecases.fraud_detection import assets
 from rhoai.utils.logger import get_logger
+from rhoai.utils.progress import step
 
 log = get_logger(__name__)
 
@@ -22,14 +23,16 @@ def cleanup(config: dict[str, Any]) -> None:
     trustyai_name = dep_cfg.get("trustyai_service_name", "trustyai-service")
     sa_name       = dep_cfg.get("trustyai_service_account", "trustyai-user")
 
-    log.info("=== Cleaning up Fraud Detection ===")
+    log.info("Cleaning up Fraud Detection in '%s'", namespace)
 
     # Reverse deploy order: TrustyAI first, then model serving
-    trustyai.delete_trustyai_service(trustyai_name, namespace)
-    trustyai.delete_role_binding(f"{sa_name}-view", namespace)
-    trustyai.delete_service_account(sa_name, namespace)
-    inference.delete_inference_service(isvc_name, namespace)
-    # Runtime name comes from the assets constant — not user-facing config
-    inference.delete_serving_runtime(assets.SERVING_RUNTIME_NAME, namespace)
+    with step(f"Removing TrustyAI '{trustyai_name}'"):
+        trustyai.delete_trustyai_service(trustyai_name, namespace)
+        trustyai.delete_role_binding(f"{sa_name}-view", namespace)
+        trustyai.delete_service_account(sa_name, namespace)
 
-    log.info("=== Fraud Detection cleanup complete ===")
+    with step(f"Removing InferenceService '{isvc_name}'"):
+        inference.delete_inference_service(isvc_name, namespace)
+
+    with step(f"Removing ServingRuntime '{assets.SERVING_RUNTIME_NAME}'"):
+        inference.delete_serving_runtime(assets.SERVING_RUNTIME_NAME, namespace)
