@@ -56,9 +56,9 @@ components:
 deployment:
   namespace: test-fraud
   models:
-    - name: fraud-detection
-      model_uri: pvc://fraud-model-pvc/models
-      inference_request: requests/fraud-detection.json
+    - name: demo-loan-nn-onnx-alpha
+      model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
+      inference_request: automation/rhoai/usecases/inputs/demo-loan.json
     
     - name: demo-loan-nn-onnx-beta
       model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
@@ -210,7 +210,7 @@ Same as every other command — quiet by default, full trace with
 `--log-level DEBUG` before the subcommand:
 
 ```bash
-rhoai --log-level DEBUG usecase deploy fraud-detection -c config-fraud-detection.yaml
+rhoai --log-level DEBUG usecase deploy fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
 ```
 
 See the [top-level README](../../README.md#logging) for details.

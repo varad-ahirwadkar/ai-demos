@@ -59,7 +59,7 @@ Configuration is assembled from three sources, merged in priority order:
 |---|---|---|
 | `RHOAI_KUBECONFIG` | `platform.kubeconfig` | Path to kubeconfig (defaults to `~/.kube/config`) |
 | `RHOAI_REPO_ROOT` | `repo_root` | Absolute path to the `openshift-ai-demos` repo root |
-| `RHOAI_LOG_LEVEL` | `log_level` | `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
+| `RHOAI_LOG_LEVEL` | `log_level` | `DEBUG`, `INFO` |
 | `RHOAI_CONFIG` | — | Path to a config YAML file (replaces `--config`) |
 
 ### Minimal config file
