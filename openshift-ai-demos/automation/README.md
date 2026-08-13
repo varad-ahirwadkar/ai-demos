@@ -1,8 +1,13 @@
 # rhoai-automation
 
-CLI automation for deploying and managing Red Hat OpenShift AI (RHOAI) use cases.
+A CLI-first automation framework for installing Red Hat OpenShift AI (RHOAI)
+and deploying RHOAI use cases on OpenShift clusters — validate the cluster,
+install the operator, configure the platform, and deploy a working use case
+with a handful of commands instead of a manual, multi-step procedure.
 
-For architecture and developer docs see [`docs/README.md`](docs/README.md).
+- For architecture and developer docs, see [`docs/README.md`](docs/README.md).
+- For platform commands (`rhoai platform ...`), see [`rhoai/platform/README.md`](rhoai/platform/README.md).
+- For use cases (`rhoai usecase ...`), see [`rhoai/usecases/README.md`](rhoai/usecases/README.md).
 
 ---
 
@@ -11,8 +16,9 @@ For architecture and developer docs see [`docs/README.md`](docs/README.md).
 | Requirement | Notes |
 |---|---|
 | Python ≥ 3.12 | `python3 --version` |
-| `oc` CLI | Must be logged in to the target cluster (`oc login`) |
+| `oc` CLI | Must be logged in to the target cluster (`oc login <cluster-url>`) |
 | OpenShift cluster | OCP 4.20+, ppc64le or x86_64 |
+| Cluster-admin permissions | Required to install the RHOAI operator |
 
 ---
 
@@ -24,7 +30,7 @@ cd openshift-ai-demos/automation
 python3 -m venv .venv
 source .venv/bin/activate
 
-pip install -e .
+pip install -e .          # add "[dev]" instead if you'll be running tests
 
 rhoai --help
 ```
@@ -33,252 +39,158 @@ rhoai --help
 
 ## Configuration
 
-Every command accepts `--config` / `-c` pointing to a YAML file.
-Without it, the built-in defaults in [`rhoai/config/defaults.yaml`](rhoai/config/defaults.yaml) apply.
+Every command accepts `--config`/`-c` at the subcommand level, pointing to a
+YAML file. Without it, the bundled defaults in
+[`rhoai/config/defaults.yaml`](rhoai/config/defaults.yaml) apply.
 
-A ready-to-use example is at [`config-fraud-detection.yaml`](config-fraud-detection.yaml).
+Configuration is assembled from three sources, merged in priority order:
 
-### Minimal config
+```
+1. CLI flags                      (highest priority — this run only, never written to disk)
+       ↓
+2. --config file / RHOAI_ env vars
+       ↓
+3. rhoai/config/defaults.yaml     (bundled defaults)
+```
+
+### Environment variable overrides
+
+| Variable | Config key | Description |
+|---|---|---|
+| `RHOAI_KUBECONFIG` | `platform.kubeconfig` | Path to kubeconfig (defaults to `~/.kube/config`) |
+| `RHOAI_REPO_ROOT` | `repo_root` | Absolute path to the `openshift-ai-demos` repo root |
+| `RHOAI_LOG_LEVEL` | `log_level` | `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
+| `RHOAI_CONFIG` | — | Path to a config YAML file (replaces `--config`) |
+
+### Minimal config file
 
 ```yaml
-# Absolute path to the root of the openshift-ai-demos repository.
-repo_root: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos
+# my-cluster.yaml
+repo_root: /path/to/ai-demos/openshift-ai-demos   # absolute path to the repo root
 
 operator:
-  channel: stable-3.5
+  channel: stable-3.x
 
-# DSC components to enable during platform setup.
-components:
+components:              # DSC components 'rhoai platform setup' should enable
   - dashboard
   - workbenches
   - kserve
   - trustyai
-
-storage:
-  class_name: ""   # empty = accept any available ReadWriteOnce class
-
-deployment:
-  namespace: test-fraud
-
-  models:
-    - name: demo-loan-nn-onnx-alpha
-      model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
-      inference_request: automation/rhoai/usecases/inputs/demo-loan.json
-
-    - name: demo-loan-nn-onnx-beta
-      model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
-      inference_request: automation/rhoai/usecases/inputs/demo-loan.json
-
 ```
 
-### `models`
+See [`rhoai/platform/README.md`](rhoai/platform/README.md#configuration) for
+the full set of defaults and every available config key.
 
-Each entry under `deployment.models` defines one independent model deployment:
+---
 
-| Field | Required | Description |
-|---|---|---|
-| `name` | ✔ | Kubernetes resource name for the `InferenceService` and `ServingRuntime` |
-| `model_uri` | ✔ | Where the model is loaded from (see below) |
-| `inference_request` | ✔ | Path to a KServe v2 JSON payload used for post-deploy validation, relative to `repo_root` |
+## `rhoai platform`
 
-Multiple entries deploy multiple models in sequence, each with its own `ServingRuntime` and `InferenceService`.
-This is used for bias monitoring workflows where a baseline and a candidate model run side by side.
+Installs and manages the RHOAI platform itself: operator, DSCInitialization,
+DataScienceCluster components, health, and uninstall.
 
-### `model_uri` formats
-
-| Format | Example | Notes |
-|---|---|---|
-| `pvc://<claim>/<path>` | `pvc://fraud-model-pvc/models` | Model pre-loaded on a PersistentVolumeClaim |
-
-### Environment variable overrides
-
-| Variable | Config key |
+| Command | Purpose |
 |---|---|
-| `RHOAI_NAMESPACE` | `platform.namespace` |
-| `RHOAI_REPO_ROOT` | `repo_root` |
-| `RHOAI_KUBECONFIG` | `platform.kubeconfig` |
-| `RHOAI_CONFIG` | Path to config YAML (replaces `--config`) |
-| `RHOAI_LOG_LEVEL` | `log_level` |
+| `rhoai platform init` | Install operator + initialize DSCI |
+| `rhoai platform enable` / `disable` | Enable / disable DSC components |
+| `rhoai platform setup` | One-shot bootstrap (init + components) |
+| `rhoai platform status` | Report platform health |
+| `rhoai platform inspect` | Display cluster info (read-only) |
+| `rhoai platform uninstall` | Remove all RHOAI platform resources |
+
+```bash
+# One-shot bootstrap
+rhoai platform setup --config my-cluster.yaml
+
+# Or step by step
+rhoai platform init   --config my-cluster.yaml --channel stable-3.x
+rhoai platform enable kserve trustyai --config my-cluster.yaml
+rhoai platform status --config my-cluster.yaml
+```
+
+Full command reference, channel/version discovery, component list, and
+uninstall behavior: **[`rhoai/platform/README.md`](rhoai/platform/README.md)**.
 
 ---
 
-## Fraud Detection use case
+## `rhoai usecase`
 
-### Deploy
-
-```bash
-rhoai usecase deploy fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
-```
-
-Checks the RHOAI platform (configuring it if needed), then for each configured model:
-deploys a dedicated Triton `ServingRuntime` and `InferenceService`, waits until Ready,
-and validates that the model is serving inference requests.
-
-```
-Deploying : fraud-detection
-Namespace : test-fraud
-Models    : 2
-
-Checking RHOAI platform...
-
-  ✔  Operator ready
-  ✔  DSCI 'default-dsci' ready
-  ✔  DSC 'default-dsc' ready
-  ✔  Components enabled: Dashboard, Workbenches, KServe, TrustyAI
-
-✔  Platform ready  (5s)
-
-Deploying 'demo-loan-nn-onnx-alpha'...
-
-✔  Configuring Triton ServingRuntime  (6s)
-✔  Deploying service 'demo-loan-nn-onnx-alpha'  (21s)
-✔  Validating model inference  (1s)
-
-✔  'demo-loan-nn-onnx-alpha' ready  (30s)
-
-Deploying 'demo-loan-nn-onnx-beta'...
-
-✔  Configuring Triton ServingRuntime  (6s)
-✔  Deploying service 'demo-loan-nn-onnx-beta'  (10s)
-✔  Validating model inference  (1s)
-
-✔  'demo-loan-nn-onnx-beta' ready  (19s)
-
-Deployment complete.
-
-  Use case  : fraud-detection
-  Namespace : test-fraud
-
-Models
-
-✔  demo-loan-nn-onnx-alpha
-
-  Source      : pvc://fraud-model-pvc/bias-monitoring/unbiased_model
-  Status      : Ready
-  Validation  : Passed
-
-✔  demo-loan-nn-onnx-beta
-
-  Source      : pvc://fraud-model-pvc/bias-monitoring/biased_model
-  Status      : Ready
-  Validation  : Passed
-
-Next
-
-  rhoai usecase verify fraud-detection \
-    -c openshift-ai-demos/automation/config-fraud-detection.yaml
-```
-
-If the endpoint is unreachable from the machine running the CLI (for example, a local
-workstation that cannot resolve the cluster's `.apps` route), inference validation is
-marked **Unavailable** and the deployment is still considered successful.
-The `Follow-up actions` section lists the affected models and the exact command to rerun
-once the endpoint is reachable:
-
-```
-Follow-up actions
-
-⚠  demo-loan-nn-onnx-alpha
-
-  Endpoint:
-    https://demo-loan-nn-onnx-alpha-test-fraud.apps.rdr-varad-421.ocp-rhoai.com/v2/models/demo-loan-nn-onnx-alpha/infer
-
-  Model inference could not be validated because the endpoint
-  was not reachable from this machine.
-
-  Verify the cluster route is reachable from your workstation.
-
-  If hostname resolution fails, check your DNS or /etc/hosts configuration.
-
-  Then rerun:
-
-    rhoai usecase verify fraud-detection \
-      -c openshift-ai-demos/automation/config-fraud-detection.yaml
-
-Next
-
-  rhoai usecase verify fraud-detection \
-    -c openshift-ai-demos/automation/config-fraud-detection.yaml
-```
-
-### Verify
-
-```bash
-rhoai usecase verify fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
-```
-
-Checks the platform, confirms each `InferenceService` is Ready, and runs a live inference
-request for each configured model using its `inference_request` payload.
-
-### Cleanup
-
-```bash
-rhoai usecase cleanup fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
-```
-
-Removes each model's `InferenceService` and its dedicated `ServingRuntime`.
-Pass `--delete-platform` to also remove the DSC and DSCI.
-
----
-
-## Platform commands
-
-```bash
-# One-shot bootstrap: install operator + enable DSC components
-rhoai platform setup -c config-fraud-detection.yaml
-
-# Individual steps
-rhoai platform init   -c config-fraud-detection.yaml --channel stable-3.5
-rhoai platform enable kserve trustyai -c config-fraud-detection.yaml
-
-# Inspect cluster and platform health
-rhoai platform inspect -c config-fraud-detection.yaml
-rhoai platform status  -c config-fraud-detection.yaml
-
-# Full uninstall
-rhoai platform uninstall -c config-fraud-detection.yaml --yes
-```
-
----
-
-## Command reference
-
-```
-rhoai [--log-level LEVEL] <command> [options]
-```
-
-> `--log-level` must come immediately after `rhoai`, before the subcommand.  
-> Default is `INFO` (structured output only). Use `DEBUG` for full log output, including
-> inference endpoint URLs and curl reproduction commands for failed validation.
-
-### `rhoai usecase`
+Deploys customer-facing solutions built on top of the platform layer — each
+use case is a self-contained `deploy` / `verify` / `cleanup` sequence.
 
 | Command | Description |
 |---|---|
-| `deploy <name> [-c CONFIG]` | Deploy the named use case |
-| `verify <name> [-c CONFIG]` | Verify the deployment is healthy |
-| `cleanup <name> [-c CONFIG] [--delete-platform]` | Remove use-case resources |
-| `list` | List available use cases |
+| `rhoai usecase list` | List all registered use cases |
+| `rhoai usecase deploy <name>` | Deploy a use case end-to-end, bootstrapping the platform if needed |
+| `rhoai usecase verify <name>` | Check that all use-case resources are healthy |
+| `rhoai usecase cleanup <name>` | Remove use-case resources (`--delete-platform` to also remove DSC/DSCI) |
 
-### `rhoai platform`
+```bash
+rhoai usecase deploy fraud-detection --config config-fraud-detection.yaml
+rhoai usecase verify fraud-detection --config config-fraud-detection.yaml
+```
 
-| Command | Description |
-|---|---|
-| `init [-c CONFIG] [--channel CH] [--version VER]` | Install operator + initialize DSCI |
-| `setup [-c CONFIG] [--channel CH]` | Full bootstrap (init + enable components) |
-| `enable <components...> [-c CONFIG]` | Enable DSC components |
-| `disable <components...> [-c CONFIG]` | Disable DSC components |
-| `status [-c CONFIG]` | Report platform health |
-| `inspect [-c CONFIG]` | Display cluster info (read-only) |
-| `uninstall [-c CONFIG] [--yes] [--keep-workload-ns]` | Remove all RHOAI resources |
+Worked example, sample output, and config reference for the Fraud Detection
+use case: **[`rhoai/usecases/README.md`](rhoai/usecases/README.md)**.
 
-### Timeout defaults
+---
+
+## CLI usage
+
+All commands accept `--config`/`-c` at the subcommand level to specify a
+config file. Log verbosity is set with `--log-level`/`-l` on the root
+command, **before** the subcommand.
+
+```bash
+rhoai --help
+rhoai platform --help
+rhoai usecase  --help
+```
+
+---
+
+## Logging
+
+Commands run in quiet mode by default — only the structured summary output
+(the boxes and tables you see above) is printed.
+
+```bash
+# Normal output — structured summary only
+rhoai platform init --channel stable-3.x
+
+# Full log stream — useful when debugging a failure
+rhoai --log-level DEBUG platform init --channel stable-3.x
+```
+
+`--log-level` accepts `DEBUG`, `INFO`, and must come
+immediately after `rhoai`, before the subcommand.
+
+---
+
+## Timeout defaults
 
 | Operation | Default |
 |---|---|
-| Operator ready | 300 s |
-| DSC ready | 600 s |
-| InferenceService ready | 120 s |
-| TrustyAI ready | 300 s |
+| Operator ready | 300s |
+| DSC ready | 600s |
+| InferenceService ready | 120s |
+| TrustyAI ready | 300s |
 
 Override under the `timeouts:` key in your config file.
+
+## Testing
+
+The test suite requires no live cluster — all Kubernetes API calls are
+mocked.
+
+```bash
+pytest                                       # full suite
+pytest -v                                    # verbose
+pytest tests/unit/platform/test_prepare.py   # a single file
+ruff check rhoai/                            # lint
+```
+
+See [`docs/README.md`](docs/README.md) for test layout and
+conventions.
+
+---
+
