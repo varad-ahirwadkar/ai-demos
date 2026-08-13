@@ -56,17 +56,34 @@ components:
 
 deployment:
   namespace: test-fraud
-  inference_service_name: fraud-detection
-  model_uri: pvc://fraud-model-pvc/models
-```
-### `model_uri`
 
-```yaml
-model_uri: pvc://<claim-name>/<path>   # e.g. pvc://fraud-model-pvc/models
+  models:
+    - name: fraud-detection
+      model_uri: pvc://fraud-model-pvc/models
+      inference_request: requests/fraud-detection.json
 ```
 
-The model must be pre-loaded onto a PersistentVolumeClaim in the deployment namespace.
+### `models`
 
+Each entry under `deployment.models` defines one independent model deployment:
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | ✔ | Kubernetes resource name for the `InferenceService` and `ServingRuntime` |
+| `model_uri` | ✔ | Where the model is loaded from (see below) |
+| `inference_request` | ✔ | Path to a KServe v2 JSON payload used for post-deploy validation, relative to `repo_root` |
+
+Multiple entries deploy multiple models in sequence, each with its own `ServingRuntime` and `InferenceService`.
+This is used for bias monitoring workflows where a baseline and a candidate model run side by side.
+
+### `model_uri` formats
+
+| Format | Example | Notes |
+|---|---|---|
+| `pvc://<claim>/<path>` | `pvc://fraud-model-pvc/models` | Model pre-loaded on a PersistentVolumeClaim |
+| `hf://<org>/<repo>` | `hf://ibm/granite-3b` | Downloaded from Hugging Face at startup |
+| `oci://<registry>/<image>` | `oci://quay.io/org/model:tag` | Pulled from an OCI registry |
+| `<s3-path>` | `models/fraud-detection` | Plain S3 path; also reads `s3-credentials` secret |
 
 ### Environment variable overrides
 
@@ -85,17 +102,17 @@ The model must be pre-loaded onto a PersistentVolumeClaim in the deployment name
 ### Deploy
 
 ```bash
-rhoai usecase deploy fraud-detection -c config-fraud-detection.yaml
+rhoai usecase deploy fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
 ```
 
-Checks the RHOAI platform (configuring it if needed), deploys the Triton ServingRuntime
-and InferenceService, and validates that the model is serving inference requests.
+Checks the RHOAI platform (configuring it if needed), then for each configured model:
+deploys a dedicated Triton `ServingRuntime` and `InferenceService`, waits until Ready,
+and validates that the model is serving inference requests.
 
 ```
 Deploying : fraud-detection
 Namespace : test-fraud
-Service   : fraud-detection
-Storage   : pvc://fraud-model-pvc/models
+Models    : 2
 
 Checking RHOAI platform...
 
@@ -104,35 +121,98 @@ Checking RHOAI platform...
   ✔  DSC 'default-dsc' ready
   ✔  Components enabled: Dashboard, Workbenches, KServe, TrustyAI
 
-✔  Platform ready  (6s)
-✔  Configuring Triton ServingRuntime  (8s)
-✔  Deploying model 'fraud-detection'  (21s)
+✔  Platform ready  (5s)
+
+Deploying 'demo-loan-nn-onnx-alpha'...
+
+✔  Configuring Triton ServingRuntime  (6s)
+✔  Deploying service 'demo-loan-nn-onnx-alpha'  (21s)
 ✔  Validating model inference  (1s)
+
+✔  'demo-loan-nn-onnx-alpha' ready  (30s)
+
+Deploying 'demo-loan-nn-onnx-beta'...
+
+✔  Configuring Triton ServingRuntime  (6s)
+✔  Deploying service 'demo-loan-nn-onnx-beta'  (10s)
+✔  Validating model inference  (1s)
+
+✔  'demo-loan-nn-onnx-beta' ready  (19s)
 
 Deployment complete.
 
   Use case  : fraud-detection
   Namespace : test-fraud
-  Endpoint  : https://fraud-detection-test-fraud.apps.<cluster>
 
-  Next: rhoai usecase verify fraud-detection
+Models
+
+✔  demo-loan-nn-onnx-alpha
+
+  Source      : pvc://fraud-model-pvc/bias-monitoring/unbiased_model
+  Status      : Ready
+  Validation  : Passed
+
+✔  demo-loan-nn-onnx-beta
+
+  Source      : pvc://fraud-model-pvc/bias-monitoring/biased_model
+  Status      : Ready
+  Validation  : Passed
+
+Next
+
+  rhoai usecase verify fraud-detection \
+    -c openshift-ai-demos/automation/config-fraud-detection.yaml
+```
+
+If the endpoint is unreachable from the machine running the CLI (for example, a local
+workstation that cannot resolve the cluster's `.apps` route), inference validation is
+marked **Unavailable** and the deployment is still considered successful.
+The `Follow-up actions` section lists the affected models and the exact command to rerun
+once the endpoint is reachable:
+
+```
+Follow-up actions
+
+⚠  demo-loan-nn-onnx-alpha
+
+  Endpoint:
+    https://demo-loan-nn-onnx-alpha-test-fraud.apps.rdr-varad-421.ocp-rhoai.com/v2/models/demo-loan-nn-onnx-alpha/infer
+
+  Model inference could not be validated because the endpoint
+  was not reachable from this machine.
+
+  Verify the cluster route is reachable from your workstation.
+
+  If hostname resolution fails, check your DNS or /etc/hosts configuration.
+
+  Then rerun:
+
+    rhoai usecase verify fraud-detection \
+      -c openshift-ai-demos/automation/config-fraud-detection.yaml
+
+Next
+
+  rhoai usecase verify fraud-detection \
+    -c openshift-ai-demos/automation/config-fraud-detection.yaml
 ```
 
 ### Verify
 
 ```bash
-rhoai usecase verify fraud-detection -c config-fraud-detection.yaml
+rhoai usecase verify fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
 ```
 
-Checks the platform, confirms the InferenceService is Ready, and runs a live inference request.
+Checks the platform, confirms each `InferenceService` is Ready, and runs a live inference
+request for each configured model using its `inference_request` payload.
 
 ### Cleanup
 
 ```bash
-rhoai usecase cleanup fraud-detection -c config-fraud-detection.yaml
+rhoai usecase cleanup fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
 ```
 
-Removes the InferenceService and ServingRuntime. Pass `--delete-platform` to also remove the DSC and DSCI.
+Removes each model's `InferenceService` and its dedicated `ServingRuntime`.
+Pass `--delete-platform` to also remove the DSC and DSCI.
 
 ---
 
@@ -163,7 +243,8 @@ rhoai [--log-level LEVEL] <command> [options]
 ```
 
 > `--log-level` must come immediately after `rhoai`, before the subcommand.  
-> Default is `INFO` (structured output only). Use `DEBUG` for full log output.
+> Default is `INFO` (structured output only). Use `DEBUG` for full log output, including
+> inference endpoint URLs and curl reproduction commands for failed validation.
 
 ### `rhoai usecase`
 
