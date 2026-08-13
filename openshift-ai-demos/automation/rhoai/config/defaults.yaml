@@ -35,15 +35,22 @@ storage:
 
 deployment:
   namespace: ""                             # workload namespace; falls back to platform.namespace when empty
-  inference_service_name: fraud-detection   # metadata.name in the InferenceService manifest
   trustyai_service_name: trustyai-service   # metadata.name in trustyai/service/trustyai-service.yaml
   trustyai_service_account: trustyai-user   # ServiceAccount used to call the TrustyAI REST API
-  model_uri: pvc://fraud-model-pvc/models   # default: model pre-loaded on a PVC
-  # Override model_uri to change where the model is loaded from:
-  #   pvc://<claim-name>/<path>   — model pre-loaded on a PersistentVolumeClaim (default)
+
+  # List of models to deploy. Each entry is an independent InferenceService.
+  # For bias monitoring, supply two entries (e.g. baseline + candidate).
+  # model_uri formats:
+  #   pvc://<claim-name>/<path>   — model pre-loaded on a PersistentVolumeClaim
   #   hf://<org>/<repo>           — model downloaded directly from Hugging Face
   #   oci://<registry>/<image>    — model stored as an OCI artifact
   #   <s3-path>                   — plain S3 path; also fills shared/s3-secret.yaml values
+  models:
+    - name: fraud-detection
+      model_uri: pvc://fraud-model-pvc/models
+      # Path to the KServe v2 JSON inference request used for smoke-testing.
+      # Relative to repo_root; required for deployment validation and verify.
+      inference_request: ""
 
 timeouts:
   operator_ready: 300   # seconds

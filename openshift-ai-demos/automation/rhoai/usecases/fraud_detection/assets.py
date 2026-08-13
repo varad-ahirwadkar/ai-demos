@@ -3,20 +3,24 @@
 The only file that knows where fraud-detection manifests live on disk.
 Shared platform manifests are delegated to platform.manifests — only
 fraud-detection-specific paths are resolved here.
-
-Internal constants (not user-facing config):
-    SERVING_RUNTIME_NAME  — the ServingRuntime resource name created by the Triton Template.
-                            Used by cleanup to delete it; never exposed in defaults.yaml.
 """
 
 from pathlib import Path
 
 from rhoai.platform import manifests
 
-# The ServingRuntime name produced by the Triton OpenShift Template.
-# Matches metadata.name inside triton-ppc64le-runtime-template.yaml.
-# Cleanup reads this constant directly — users never need to configure it.
-SERVING_RUNTIME_NAME = "triton-ppc64le-runtime"
+
+def serving_runtime_name(model_name: str) -> str:
+    """Return the ServingRuntime resource name for a given model.
+
+    Convention: ``triton-<model_name>``.  Each model deployment creates its
+    own ServingRuntime so that Triton's ``--load-model`` flag is correct for
+    that model and runtimes never overwrite each other.
+
+    This value is passed as RUNTIME_NAME to the Triton Template and must match
+    the ``spec.predictor.model.runtime`` field in the InferenceService manifest.
+    """
+    return f"triton-{model_name}"
 
 
 def get_serving_runtime_template(repo_root: str | Path) -> Path:
@@ -56,13 +60,3 @@ def get_trustyai_service_manifest(repo_root: str | Path) -> Path:
     return Path(repo_root) / "trustyai" / "service" / "trustyai-service.yaml"
 
 
-def get_sample_inference_request() -> Path:
-    """Return the path to the KServe v2 sample inference payload.
-
-    The file lives alongside this package, so no repo_root is needed.
-    Used by verify_triton_inference() as the smoke-test request body.
-
-    Returns:
-        Path to usecases/fraud_detection/data/sample-fraud.json
-    """
-    return Path(__file__).parent / "data" / "sample-fraud.json"

@@ -32,26 +32,32 @@ def apply_serving_runtime_from_template(
     template_path: Path,
     platform_namespace: str,
     deploy_namespace: str,
-    model_name: str | None = None,
+    model_name: str,
+    runtime_name: str,
 ) -> None:
     """Instantiate an OpenShift Template and apply the resulting ServingRuntime.
 
     Mirrors the original manual flow:
-        oc process -n <platform_namespace> <template-name> [-p MODEL_NAME=<name>] | oc apply -n <deploy_namespace> -f -
+        oc process -n <platform_namespace> <template-name> -p MODEL_NAME=<m> -p RUNTIME_NAME=<r> \
+            | oc apply -n <deploy_namespace> -f -
 
     The Template is first uploaded to <platform_namespace> (redhat-ods-applications)
     where RHOAI catalogs serving-runtime templates, then processed server-side,
     and the resulting ServingRuntime is applied into <deploy_namespace>.
 
     Args:
-        model_name: Passed as the MODEL_NAME template parameter so Triton loads only
-                    that model directory (matching the InferenceService name). Falls back
-                    to the template's built-in default when None.
+        model_name:   Passed as MODEL_NAME — the model directory Triton loads
+                      (must match the InferenceService name).
+        runtime_name: Passed as RUNTIME_NAME — the metadata.name of the created
+                      ServingRuntime. Must be unique per deployment so that multiple
+                      models can coexist without overwriting each other's runtime.
     """
-    log.info("Deploying Triton ServingRuntime")
+    log.info("Deploying Triton ServingRuntime '%s'", runtime_name)
     log.debug("Processing ServingRuntime template %s", template_path.name)
-    params = {"MODEL_NAME": model_name} if model_name else None
-    resources.process_template(template_path, platform_namespace, deploy_namespace, params)
+    resources.process_template(
+        template_path, platform_namespace, deploy_namespace,
+        {"MODEL_NAME": model_name, "RUNTIME_NAME": runtime_name},
+    )
 
 
 def apply_inference_service(manifest_path: Path, namespace: str) -> None:

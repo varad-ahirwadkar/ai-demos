@@ -5,18 +5,20 @@ Does not call ocp/ directly — all cluster operations go through platform modul
 
 Deployment sequence:
     1-3. prepare.bootstrap_platform — validate cluster, operator, DSC/DSCI
-    4.   configure storage — S3 secret (skipped when model_uri is a non-S3 URI)
-    5.   deploy model      — Triton ServingRuntime (via Template) + InferenceService
-    6.   apply TrustyAI    — monitoring config, patch inferenceservice-config,
-                             deploy TrustyAIService (bias + drift monitoring)
+    4.   configure storage — S3 secret applied once if any model uses an S3 URI
+    5.   for each model in deployment.models:
+         a. Triton ServingRuntime (via Template)
+         b. InferenceService (deploy + wait until Ready)
+         c. smoke test
+    6.   apply TrustyAI (phase 2)
 
-model_uri behaviour (deployment.model_uri in config):
-    unset / empty       — use the manifest file unchanged; apply S3 secret
+model_uri behaviour (per model entry in deployment.models):
     pvc://, hf://, oci:// — set storageUri, remove storage block + S3 annotation,
                             skip S3 secret (model is self-contained)
-    any other string    — treat as S3 path; update storage.path, apply S3 secret
+    any other string      — treat as S3 path; update storage.path, apply S3 secret
 """
 
+from pathlib import Path
 from typing import Any
 
 from rhoai.ocp import resources as ocp_resources
@@ -52,29 +54,81 @@ _COMPONENT_DISPLAY: dict[str, str] = {
 }
 
 
+def _resolve_inference_request(model: dict[str, Any], repo_root: str) -> Path:
+    """Return the absolute Path to this model's inference request file.
+
+    The path is specified as ``inference_request`` in the model config entry,
+    relative to ``repo_root``.  Raises ValueError when the field is absent or empty.
+    """
+    rel = model.get("inference_request", "")
+    if not rel:
+        raise ValueError(
+            f"Model '{model.get('name', '?')}' has no inference_request configured. "
+            "Set inference_request: <path relative to repo_root> in the model entry."
+        )
+    return Path(repo_root) / rel
+
+
+def _deploy_model(
+    model: dict[str, Any],
+    repo_root: str,
+    platform_namespace: str,
+    namespace: str,
+    inference_timeout: int,
+) -> None:
+    """Deploy a single model: ServingRuntime, InferenceService, smoke test."""
+    name         = model["name"]
+    model_uri    = model.get("model_uri", "")
+    runtime_name = assets.serving_runtime_name(name)
+
+    with step("Configuring Triton ServingRuntime"):
+        inference.apply_serving_runtime_from_template(
+            assets.get_serving_runtime_template(repo_root), platform_namespace, namespace,
+            model_name=name,
+            runtime_name=runtime_name,
+        )
+
+    model_dict = yaml_io.load(assets.get_model_manifest(repo_root))
+    model_dict["metadata"]["name"] = name
+    # Point this ISVC at its own dedicated ServingRuntime.
+    model_dict["spec"]["predictor"]["model"]["runtime"] = runtime_name
+    if model_uri:
+        model_spec = model_dict["spec"]["predictor"]["model"]
+        if model_uri.startswith(_NON_S3_SCHEMES):
+            model_spec.pop("storage", None)
+            model_spec["storageUri"] = model_uri
+            model_dict["metadata"]["annotations"].pop(
+                "opendatahub.io/connection-type-ref", None
+            )
+        else:
+            model_spec.setdefault("storage", {})["path"] = model_uri
+
+    with step(f"Deploying service '{name}'") as s:
+        ocp_resources.apply_dict(model_dict, namespace)
+        inference.wait_until_ready(
+            name, namespace, inference_timeout,
+            on_tick=s.tick,
+        )
+
+    with step("Validating model inference"):
+        inference.verify_triton_inference(
+            name, namespace, name, _resolve_inference_request(model, repo_root)
+        )
+
+
 def deploy(config: dict[str, Any]) -> None:
     """Deploy the complete Fraud Detection solution."""
     repo_root          = config["repo_root"]
     dep_cfg            = config.get("deployment", {})
     platform_namespace = config["platform"]["namespace"]
     namespace          = dep_cfg.get("namespace") or platform_namespace
-    model_uri          = dep_cfg.get("model_uri", "")
-    isvc_name          = dep_cfg.get("inference_service_name", "fraud-detection")
+    models             = dep_cfg.get("models", [])
     # phase 2: trustyai_name    = dep_cfg.get("trustyai_service_name", "trustyai-service")
     # phase 2: trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
 
     log.info("Deploying Fraud Detection")
 
     # 1–3 — platform bootstrap (cluster validation, operator, DSC/DSCI).
-    #
-    # platform_needs_reconciliation() is called inside header_step so its
-    # work (several read-only API calls) is included in the elapsed time.
-    #
-    # Path 1 (fast-path): platform already matches desired state.
-    #   Sub-steps display the result of each check already performed above.
-    #
-    # Path 2 (reconciliation): bootstrap_platform() writes + waits.
-    #   Sub-steps display a config-derived summary — no re-verification.
     dsc_name      = config["dsc"]["name"]
     dsci_name     = config["dsc"]["dsci_name"]
     components    = config.get("components") or []
@@ -97,47 +151,21 @@ def deploy(config: dict[str, Any]) -> None:
         with sub_step(f"Components enabled: {component_str}"):
             pass
 
-    # 4 — S3 credentials (skipped when the model URI is self-contained)
-    if not model_uri or not model_uri.startswith(_NON_S3_SCHEMES):
+    # 4 — S3 credentials (applied once if any model uses an S3 URI).
+    if any(
+        not m.get("model_uri", "").startswith(_NON_S3_SCHEMES)
+        for m in models
+    ):
         with step("Configuring model storage credentials"):
             storage.apply_s3_secret(manifests.get_s3_secret(repo_root), namespace)
 
-    # 5 — Triton ServingRuntime (from Template) + predictive model InferenceService
-    with step("Configuring Triton ServingRuntime"):
-        inference.apply_serving_runtime_from_template(
-            assets.get_serving_runtime_template(repo_root), platform_namespace, namespace,
-            model_name=isvc_name,
-        )
-
-    model_dict = yaml_io.load(assets.get_model_manifest(repo_root))
-    # Always stamp the configured name onto the manifest so the ISVC is created
-    # with the right name regardless of what is hardcoded in the file.
-    model_dict["metadata"]["name"] = isvc_name
-    if model_uri:
-        model_spec = model_dict["spec"]["predictor"]["model"]
-        if model_uri.startswith(_NON_S3_SCHEMES):
-            # Replace S3 storage block with a self-contained storageUri
-            model_spec.pop("storage", None)
-            model_spec["storageUri"] = model_uri
-            model_dict["metadata"]["annotations"].pop(
-                "opendatahub.io/connection-type-ref", None
+    # 5 — Deploy each model.
+    for model in models:
+        with header_step(f"Deploying '{model['name']}'", outcome=f"'{model['name']}' ready"):
+            _deploy_model(
+                model, repo_root, platform_namespace, namespace,
+                config["timeouts"]["inference_ready"],
             )
-        else:
-            # Plain S3 path — update path only, keep existing key
-            model_spec.setdefault("storage", {})["path"] = model_uri
-
-    with step(f"Deploying model '{isvc_name}'") as s:
-        ocp_resources.apply_dict(model_dict, namespace)
-        inference.wait_until_ready(
-            isvc_name, namespace, config["timeouts"]["inference_ready"],
-            on_tick=s.tick,
-        )
-
-    # 5b — smoke test: confirm the model is reachable and serving requests
-    with step("Validating model inference"):
-        inference.verify_triton_inference(
-            isvc_name, namespace, isvc_name, assets.get_sample_inference_request()
-        )
 
     # 6 — TrustyAI prerequisites + service (bias + data-drift monitoring)
     # with step("Deploying TrustyAI"):

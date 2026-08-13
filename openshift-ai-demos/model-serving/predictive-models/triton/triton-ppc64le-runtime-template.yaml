@@ -5,8 +5,10 @@
 #   oc process -n <namespace> -f triton-ppc64le-runtime-template.yaml | oc apply -f -
 #
 # Parameters:
-#   MODEL_NAME  — directory name of the model inside the model repository
-#                 (must match the InferenceService name; default: fraud-detection)
+#   MODEL_NAME    — directory name of the model inside the model repository
+#                   (must match the InferenceService name; default: fraud-detection)
+#   RUNTIME_NAME  — metadata.name of the resulting ServingRuntime resource
+#                   (default: triton-fraud-detection)
 #
 # The automation applies this via rhoai.platform.inference.apply_serving_runtime_from_template().
 apiVersion: template.openshift.io/v1
@@ -27,8 +29,8 @@ objects:
       opendatahub.io/apiProtocol: REST
       openshift.io/display-name: Triton Server ServingRuntime for KServe (ppc64le)
     labels:
-      name: triton-ppc64le-runtime
-    name: triton-ppc64le-runtime
+      name: ${RUNTIME_NAME}
+    name: ${RUNTIME_NAME}
   spec:
     containers:
     - command:
@@ -59,3 +61,9 @@ parameters:
     under this name). Stray directories such as .ipynb_checkpoints are ignored.
   name: MODEL_NAME
   value: fraud-detection
+- description: >
+    metadata.name of the resulting ServingRuntime resource.
+    Each model deployment must use a unique name so that Triton runtimes
+    do not overwrite each other.
+  name: RUNTIME_NAME
+  value: triton-fraud-detection

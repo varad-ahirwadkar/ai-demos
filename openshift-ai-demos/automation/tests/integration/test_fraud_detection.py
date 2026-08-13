@@ -6,7 +6,7 @@ cleanly and that config defaults wire up correctly.
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 import yaml
@@ -65,10 +65,14 @@ class TestConfigDefaults:
     def test_deployment_defaults_present(self) -> None:
         config = load_config()
         dep = config.get("deployment", {})
-        assert dep.get("inference_service_name") == "fraud-detection"
+        # models list replaces the old scalar keys.
+        models = dep.get("models", [])
+        assert len(models) == 1
+        assert models[0]["name"] == "fraud-detection"
+        assert models[0]["model_uri"] == "pvc://fraud-model-pvc/models"
         assert dep.get("trustyai_service_name") == "trustyai-service"
-        # serving_runtime_name is an internal constant, not user-facing config.
-        assert assets.SERVING_RUNTIME_NAME == "triton-ppc64le-runtime"
+        # runtime name is derived, not a config constant.
+        assert assets.serving_runtime_name("fraud-detection") == "triton-fraud-detection"
 
     def test_timeouts_present(self) -> None:
         config = load_config()
@@ -99,11 +103,33 @@ class TestAssetPaths:
         p = assets.get_trustyai_service_manifest(tmp_path)
         assert p == tmp_path / "trustyai" / "service" / "trustyai-service.yaml"
 
-    def test_sample_inference_request_path(self) -> None:
-        p = assets.get_sample_inference_request()
-        assert p.name == "sample-fraud.json"
-        assert p.parent.name == "data"
-        assert p.exists(), "sample-fraud.json must exist alongside the package"
+
+def _write_request(tmp_path: Path, rel: str = "requests/model.json") -> str:
+    """Write a stub KServe v2 inference request and return its repo-relative path."""
+    import json as _json
+    dest = tmp_path / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(_json.dumps({"inputs": [{"name": "dense_input", "data": [0.1] * 10}]}))
+    return rel
+
+
+class TestResolveInferenceRequest:
+    def test_returns_absolute_path(self, tmp_path: Path) -> None:
+        from rhoai.usecases.fraud_detection.deploy import _resolve_inference_request
+        rel = _write_request(tmp_path, "requests/fraud.json")
+        model = {"name": "fraud-detection", "inference_request": rel}
+        result = _resolve_inference_request(model, str(tmp_path))
+        assert result == tmp_path / rel
+
+    def test_raises_when_missing(self, tmp_path: Path) -> None:
+        from rhoai.usecases.fraud_detection.deploy import _resolve_inference_request
+        with pytest.raises(ValueError, match="no inference_request configured"):
+            _resolve_inference_request({"name": "m"}, str(tmp_path))
+
+    def test_raises_when_empty(self, tmp_path: Path) -> None:
+        from rhoai.usecases.fraud_detection.deploy import _resolve_inference_request
+        with pytest.raises(ValueError, match="no inference_request configured"):
+            _resolve_inference_request({"name": "m", "inference_request": ""}, str(tmp_path))
 
 
 class TestDeploySmoke:
@@ -114,12 +140,23 @@ class TestDeploySmoke:
     test never touches the real filesystem beyond the stub file we create in tmp_path.
     """
 
-    def _make_config(self, tmp_path: Path, model_uri: str = "") -> dict:
+    def _make_config(
+        self,
+        tmp_path: Path,
+        models: list[dict] | None = None,
+    ) -> dict:
         config = load_config()
         config["repo_root"] = str(tmp_path)
         config["platform"]["namespace"] = "test-ns"
-        if model_uri:
-            config.setdefault("deployment", {})["model_uri"] = model_uri
+        if models is not None:
+            config.setdefault("deployment", {})["models"] = models
+        else:
+            # Default: single model with a stub request file.
+            rel = _write_request(tmp_path)
+            config.setdefault("deployment", {})["models"] = [
+                {"name": "fraud-detection", "model_uri": "pvc://fraud-model-pvc/models",
+                 "inference_request": rel},
+            ]
         return config
 
     def _patch_all(
@@ -153,7 +190,7 @@ class TestDeploySmoke:
         return importlib.import_module("rhoai.usecases.fraud_detection.deploy")
 
     # ------------------------------------------------------------------
-    # Core wiring test (default config — pvc:// model_uri, S3 skipped)
+    # Core wiring test (default config — pvc:// model, S3 skipped)
     # ------------------------------------------------------------------
 
     def test_deploy_calls_platform_modules(
@@ -166,17 +203,23 @@ class TestDeploySmoke:
         config = self._make_config(tmp_path)
         deploy_mod.deploy(config)
 
-        # Step 4: default model_uri is pvc:// → S3 secret is skipped
+        # Default models list has one pvc:// entry → S3 secret skipped.
         mocks["storage"].apply_s3_secret.assert_not_called()
 
-        # Step 5: Triton Template → ServingRuntime; InferenceService via apply_dict
+        # ServingRuntime applied with model_name and runtime_name.
         mocks["inference"].apply_serving_runtime_from_template.assert_called_once()
+        rt_call = mocks["inference"].apply_serving_runtime_from_template.call_args
+        assert rt_call.kwargs["model_name"]   == "fraud-detection"
+        assert rt_call.kwargs["runtime_name"] == "triton-fraud-detection"
+
+        # InferenceService applied once with runtime field stamped.
         mocks["ocp_resources"].apply_dict.assert_called_once()
-        # on_tick is passed as a kwarg from the spinner; verify positional args only
+        applied = mocks["ocp_resources"].apply_dict.call_args[0][0]
+        assert applied["spec"]["predictor"]["model"]["runtime"] == "triton-fraud-detection"
+
         call_args = mocks["inference"].wait_until_ready.call_args
         assert call_args.args == ("fraud-detection", "test-ns", config["timeouts"]["inference_ready"])
 
-        # Step 5b: smoke test — verify_triton_inference called after ready
         mocks["inference"].verify_triton_inference.assert_called_once()
         call_args = mocks["inference"].verify_triton_inference.call_args[0]
         assert call_args[0] == "fraud-detection"   # isvc_name
@@ -194,7 +237,10 @@ class TestDeploySmoke:
         deploy_mod = self._fresh_deploy_mod()
         mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
 
-        config = self._make_config(tmp_path, model_uri="pvc://fraud-model-pvc/models")
+        config = self._make_config(tmp_path, models=[
+            {"name": "fraud-detection", "model_uri": "pvc://fraud-model-pvc/models",
+             "inference_request": _write_request(tmp_path)},
+        ])
         deploy_mod.deploy(config)
 
         mocks["storage"].apply_s3_secret.assert_not_called()
@@ -203,6 +249,7 @@ class TestDeploySmoke:
         applied_dict = mocks["ocp_resources"].apply_dict.call_args[0][0]
         model_spec = applied_dict["spec"]["predictor"]["model"]
         assert model_spec["storageUri"] == "pvc://fraud-model-pvc/models"
+        assert model_spec["runtime"] == "triton-fraud-detection"
         assert "storage" not in model_spec
         assert "opendatahub.io/connection-type-ref" not in applied_dict["metadata"]["annotations"]
 
@@ -217,7 +264,10 @@ class TestDeploySmoke:
         deploy_mod = self._fresh_deploy_mod()
         mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
 
-        config = self._make_config(tmp_path, model_uri="models/my-fraud-model")
+        config = self._make_config(tmp_path, models=[
+            {"name": "fraud-detection", "model_uri": "models/my-fraud-model",
+             "inference_request": _write_request(tmp_path)},
+        ])
         deploy_mod.deploy(config)
 
         mocks["storage"].apply_s3_secret.assert_called_once()
@@ -227,3 +277,100 @@ class TestDeploySmoke:
         model_spec = applied_dict["spec"]["predictor"]["model"]
         assert model_spec["storage"]["path"] == "models/my-fraud-model"
         assert "storageUri" not in model_spec
+
+    # ------------------------------------------------------------------
+    # Multi-model: two entries → two ServingRuntimes, two ISVCs, two smoke tests
+    # ------------------------------------------------------------------
+
+    def test_deploy_two_models_calls_each_platform_api_twice(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+
+        req_baseline  = _write_request(tmp_path, "requests/baseline.json")
+        req_candidate = _write_request(tmp_path, "requests/candidate.json")
+        config = self._make_config(tmp_path, models=[
+            {"name": "fraud-detection-baseline",  "model_uri": "pvc://pvc/models",
+             "inference_request": req_baseline},
+            {"name": "fraud-detection-candidate", "model_uri": "pvc://pvc/biased",
+             "inference_request": req_candidate},
+        ])
+        deploy_mod.deploy(config)
+
+        # Both models are pvc:// → S3 secret never applied.
+        mocks["storage"].apply_s3_secret.assert_not_called()
+
+        # ServingRuntime applied once per model.
+        assert mocks["inference"].apply_serving_runtime_from_template.call_count == 2
+
+        # InferenceService applied once per model.
+        assert mocks["ocp_resources"].apply_dict.call_count == 2
+
+        # wait_until_ready called once per model with the correct name each time.
+        wait_calls = mocks["inference"].wait_until_ready.call_args_list
+        assert len(wait_calls) == 2
+        assert wait_calls[0].args[0] == "fraud-detection-baseline"
+        assert wait_calls[1].args[0] == "fraud-detection-candidate"
+
+        # Each ServingRuntime call uses a unique runtime_name derived from model name.
+        rt_calls = mocks["inference"].apply_serving_runtime_from_template.call_args_list
+        assert rt_calls[0].kwargs["runtime_name"] == "triton-fraud-detection-baseline"
+        assert rt_calls[1].kwargs["runtime_name"] == "triton-fraud-detection-candidate"
+
+        # Each ISVC dict has the correct runtime field stamped.
+        applied_dicts = [c[0][0] for c in mocks["ocp_resources"].apply_dict.call_args_list]
+        assert applied_dicts[0]["spec"]["predictor"]["model"]["runtime"] == "triton-fraud-detection-baseline"
+        assert applied_dicts[1]["spec"]["predictor"]["model"]["runtime"] == "triton-fraud-detection-candidate"
+
+        # verify_triton_inference receives each model's own request path.
+        smoke_calls = mocks["inference"].verify_triton_inference.call_args_list
+        assert len(smoke_calls) == 2
+        assert smoke_calls[0][0][0] == "fraud-detection-baseline"
+        assert smoke_calls[0][0][3] == tmp_path / req_baseline
+        assert smoke_calls[1][0][0] == "fraud-detection-candidate"
+        assert smoke_calls[1][0][3] == tmp_path / req_candidate
+
+    # ------------------------------------------------------------------
+    # Multi-model: S3 secret applied once even when only one model uses S3
+    # ------------------------------------------------------------------
+
+    def test_deploy_s3_secret_applied_once_when_any_model_uses_s3(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+
+        req = _write_request(tmp_path)
+        config = self._make_config(tmp_path, models=[
+            {"name": "baseline",  "model_uri": "pvc://pvc/models",  "inference_request": req},
+            {"name": "candidate", "model_uri": "models/biased",     "inference_request": req},
+        ])
+        deploy_mod.deploy(config)
+
+        # S3 secret applied exactly once regardless of how many models need it.
+        mocks["storage"].apply_s3_secret.assert_called_once()
+
+    # ------------------------------------------------------------------
+    # Multi-model: each ISVC receives the correct name from its model entry
+    # ------------------------------------------------------------------
+
+    def test_deploy_each_isvc_gets_correct_name(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+
+        req = _write_request(tmp_path)
+        config = self._make_config(tmp_path, models=[
+            {"name": "fraud-detection-baseline",  "model_uri": "pvc://pvc/models", "inference_request": req},
+            {"name": "fraud-detection-candidate", "model_uri": "pvc://pvc/biased", "inference_request": req},
+        ])
+        deploy_mod.deploy(config)
+
+        applied_dicts = [c[0][0] for c in mocks["ocp_resources"].apply_dict.call_args_list]
+        assert applied_dicts[0]["metadata"]["name"] == "fraud-detection-baseline"
+        assert applied_dicts[1]["metadata"]["name"] == "fraud-detection-candidate"
