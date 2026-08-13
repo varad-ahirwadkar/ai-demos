@@ -374,3 +374,125 @@ class TestDeploySmoke:
         applied_dicts = [c[0][0] for c in mocks["ocp_resources"].apply_dict.call_args_list]
         assert applied_dicts[0]["metadata"]["name"] == "fraud-detection-baseline"
         assert applied_dicts[1]["metadata"]["name"] == "fraud-detection-candidate"
+
+    # ------------------------------------------------------------------
+    # EndpointUnreachable: deploy marks step skipped, does not raise
+    # ------------------------------------------------------------------
+
+    def test_deploy_endpoint_unreachable_does_not_raise(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When verify_triton_inference raises EndpointUnreachable, deploy continues."""
+        from rhoai.platform.inference import EndpointUnreachable
+
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+        monkeypatch.setattr(deploy_mod, "_print_summary", MagicMock())
+
+        mocks["inference"].verify_triton_inference.side_effect = EndpointUnreachable(
+            "https://model.example.com/v2/models/fraud-detection/infer",
+            "curl -sk ...",
+        )
+
+        req = _write_request(tmp_path)
+        config = self._make_config(tmp_path, models=[
+            {"name": "fraud-detection", "model_uri": "pvc://fraud-model-pvc/models",
+             "inference_request": req},
+        ])
+        # Must not raise — deployment succeeded; only inference validation was skipped.
+        deploy_mod.deploy(config)
+        mocks["inference"].verify_triton_inference.assert_called_once()
+
+    def test_deploy_summary_shows_skipped_when_unreachable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_print_summary receives a result with validation_skipped=True."""
+        from rhoai.platform.inference import EndpointUnreachable
+        from rhoai.usecases.fraud_detection.deploy import _ModelResult
+
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+
+        captured: list[_ModelResult] = []
+        monkeypatch.setattr(deploy_mod, "_print_summary", lambda r, **_: captured.extend(r))
+
+        mocks["inference"].verify_triton_inference.side_effect = EndpointUnreachable(
+            "https://model.example.com/v2/models/fraud-detection/infer",
+            "curl -sk ...",
+        )
+
+        req = _write_request(tmp_path)
+        config = self._make_config(tmp_path, models=[
+            {"name": "fraud-detection", "model_uri": "pvc://fraud-model-pvc/models",
+             "inference_request": req},
+        ])
+        deploy_mod.deploy(config)
+
+        assert len(captured) == 1
+        assert captured[0].name == "fraud-detection"
+        assert captured[0].validation_skipped is True
+        assert captured[0].unreachable is not None
+
+    def test_deploy_summary_shows_passed_when_reachable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_print_summary receives a result with validation_skipped=False on success."""
+        from rhoai.usecases.fraud_detection.deploy import _ModelResult
+
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+
+        captured: list[_ModelResult] = []
+        monkeypatch.setattr(deploy_mod, "_print_summary", lambda r, **_: captured.extend(r))
+
+        req = _write_request(tmp_path)
+        config = self._make_config(tmp_path, models=[
+            {"name": "fraud-detection", "model_uri": "pvc://fraud-model-pvc/models",
+             "inference_request": req},
+        ])
+        deploy_mod.deploy(config)
+
+        assert len(captured) == 1
+        assert captured[0].name == "fraud-detection"
+        assert captured[0].validation_skipped is False
+        assert captured[0].unreachable is None
+
+class TestVerifyCmd:
+    """Unit tests for _verify_cmd — the copy-pasteable follow-up command builder."""
+
+    def test_no_config_file(self) -> None:
+        from rhoai.usecases.fraud_detection.deploy import _verify_cmd
+        cmd = _verify_cmd("fraud-detection", "")
+        assert cmd == "rhoai usecase verify fraud-detection"
+        assert "-c" not in cmd
+
+    def test_with_config_file(self) -> None:
+        from rhoai.usecases.fraud_detection.deploy import _verify_cmd
+        cmd = _verify_cmd("fraud-detection", "config-fraud-detection.yaml")
+        assert "rhoai usecase verify fraud-detection" in cmd
+        assert "-c config-fraud-detection.yaml" in cmd
+
+    def test_config_file_appears_in_follow_up_and_next(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When config_file is set, every printed command includes -c <path>."""
+        from unittest.mock import call, patch
+        from rhoai.usecases.fraud_detection.deploy import _ModelResult, _print_summary
+
+        printed: list[str] = []
+        with patch("rhoai.usecases.fraud_detection.deploy._console") as mock_console:
+            mock_console.print.side_effect = lambda s, *a, **kw: printed.append(str(s))
+            _print_summary(
+                [_ModelResult(name="m", validation_skipped=False)],
+                use_case="fraud-detection",
+                namespace="test-ns",
+                config_file="path/to/config.yaml",
+            )
+
+        full_output = "\n".join(printed)
+        # The Next section must include -c
+        assert "-c path/to/config.yaml" in full_output
+

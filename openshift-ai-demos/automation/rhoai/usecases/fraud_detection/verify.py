@@ -10,7 +10,11 @@ from rhoai.platform import inference
 # from rhoai.platform import trustyai  # phase 2
 from rhoai.platform import verify as platform_verify
 from rhoai.platform.inference import EndpointUnreachable
-from rhoai.usecases.fraud_detection.deploy import _resolve_inference_request, _warn_unreachable
+from rhoai.usecases.fraud_detection.deploy import (
+    _ModelResult,
+    _print_summary,
+    _resolve_inference_request,
+)
 from rhoai.utils.logger import get_logger
 from rhoai.utils.progress import header_step, step
 
@@ -30,11 +34,13 @@ def verify(config: dict[str, Any]) -> None:
     with step("Checking platform"):
         platform_verify.verify_platform(config)
 
+    results: list[_ModelResult] = []
     for model in models:
         name = model["name"]
         with header_step(f"Verifying '{name}'", outcome=f"'{name}' healthy"):
             with step(f"Checking InferenceService '{name}'"):
                 inference.verify(namespace, name=name)
+            result = _ModelResult(name=name)
             with step("Validating model inference") as s:
                 try:
                     inference.verify_triton_inference(
@@ -43,7 +49,17 @@ def verify(config: dict[str, Any]) -> None:
                     )
                 except EndpointUnreachable as exc:
                     s.skip()
-                    _warn_unreachable(exc)
+                    result.validation_skipped = True
+                    result.unreachable        = exc
+                    log.debug("Endpoint unreachable for '%s': %s", name, exc)
+            results.append(result)
+
+    _print_summary(
+        results,
+        use_case="fraud-detection",
+        namespace=namespace,
+        config_file=config.get("_config_file", ""),
+    )
 
     # phase 2:
     # with step(f"Checking TrustyAI '{trustyai_name}'"):

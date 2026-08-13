@@ -54,7 +54,7 @@ class _Spinner:
         self._status.update(f"{self._label}  ({int(elapsed)}s)...")
 
     def skip(self) -> None:
-        """Mark this step as skipped so the outcome line shows ⚠ instead of ✔."""
+        """Mark this step as unavailable so the outcome line shows ⚠ instead of ✔."""
         self._skipped = True
 
 
@@ -88,7 +88,7 @@ def step(label: str) -> Generator[_Spinner, None, None]:
             yield spinner
             elapsed = int(time.monotonic() - start)
             if spinner._skipped:
-                _console.print(f"\u26a0  {label}  skipped  ({elapsed}s)")
+                _console.print(f"\u26a0  {label}  unavailable  ({elapsed}s)")
             else:
                 _console.print(f"\u2714  {label}  ({elapsed}s)")
         except Exception:
@@ -107,7 +107,7 @@ def step(label: str) -> Generator[_Spinner, None, None]:
 
     elapsed = int(time.monotonic() - start)
     if spinner._skipped:
-        _console.print(f"\u26a0  {label}  skipped  ({elapsed}s)")
+        _console.print(f"\u26a0  {label}  unavailable  ({elapsed}s)")
     else:
         _console.print(f"\u2714  {label}  ({elapsed}s)")
 

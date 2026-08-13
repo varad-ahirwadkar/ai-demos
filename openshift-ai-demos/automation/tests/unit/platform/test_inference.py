@@ -189,14 +189,13 @@ class TestVerifyTritonInference:
         )
         assert post_mock.call_count == 2
 
-    def test_warns_and_returns_after_retry_also_fails(
+    def test_raises_endpoint_unreachable_after_both_attempts_fail(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        """When both attempts fail with a connection error, warn and return — do not raise.
+        """When both connection attempts fail, EndpointUnreachable is raised.
 
-        This handles the case where the automation runs on a host that cannot
-        reach the cluster's .apps routes (e.g. a local Mac).  The ISVC is
-        already confirmed Ready at this point so aborting the deploy would be wrong.
+        The caller (deploy/verify) is responsible for handling it gracefully.
+        This keeps the platform layer free of progress/UI concerns.
         """
         monkeypatch.setattr("rhoai.platform.inference.time.sleep", MagicMock())
         monkeypatch.setattr(
@@ -207,11 +206,40 @@ class TestVerifyTritonInference:
             side_effect=inference._ConnectionError("still down")
         )
         monkeypatch.setattr("rhoai.platform.inference._http_post", post_mock)
-        # Must NOT raise — just warn and return
-        inference.verify_triton_inference(
-            "fraud-detection", "ns", self._MODEL, self._sample_request(tmp_path)
-        )
+        with pytest.raises(inference.EndpointUnreachable) as exc_info:
+            inference.verify_triton_inference(
+                "fraud-detection", "ns", self._MODEL, self._sample_request(tmp_path)
+            )
         assert post_mock.call_count == 2
+        assert self._BASE_URL in exc_info.value.infer_url
+        assert "curl" in exc_info.value.curl_cmd
+
+
+# ---------------------------------------------------------------------------
+# _quiet_urllib3
+# ---------------------------------------------------------------------------
+
+class TestQuietUrllib3:
+    def test_suppresses_urllib3_warnings_within_block(self) -> None:
+        import logging
+        logger = logging.getLogger("urllib3")
+        logger.setLevel(logging.WARNING)
+        # Capture the level as _quiet_urllib3 will see it (after we set it).
+        level_before_block = logger.level
+        with inference._quiet_urllib3():
+            assert logging.getLogger("urllib3").level == logging.ERROR
+        assert logging.getLogger("urllib3").level == level_before_block
+
+    def test_restores_level_on_exception(self) -> None:
+        import logging
+        logger = logging.getLogger("urllib3")
+        logger.setLevel(logging.WARNING)
+        try:
+            with inference._quiet_urllib3():
+                raise RuntimeError("boom")
+        except RuntimeError:
+            pass
+        assert logging.getLogger("urllib3").level == logging.WARNING
 
 
 # ---------------------------------------------------------------------------

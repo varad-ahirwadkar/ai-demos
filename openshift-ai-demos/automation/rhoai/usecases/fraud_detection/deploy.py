@@ -11,6 +11,7 @@ Deployment sequence:
          b. InferenceService (deploy + wait until Ready)
          c. smoke test
     6.   apply TrustyAI (phase 2)
+    7.   print deployment summary
 
 model_uri behaviour (per model entry in deployment.models):
     pvc://, hf://, oci:// — set storageUri, remove storage block + S3 annotation,
@@ -18,6 +19,7 @@ model_uri behaviour (per model entry in deployment.models):
     any other string      — treat as S3 path; update storage.path, apply S3 secret
 """
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -33,25 +35,6 @@ from rhoai.utils.progress import header_step, step, sub_step
 
 log = get_logger(__name__)
 _console = Console(stderr=False, highlight=False)
-
-
-def _warn_unreachable(exc: EndpointUnreachable) -> None:
-    """Print a concise, user-oriented message when an endpoint cannot be reached."""
-    _console.print("\n\u26a0  Unable to reach the inference endpoint.\n")
-    _console.print(f"  Endpoint:\n    {exc.infer_url}\n")
-    _console.print(
-        "  Possible causes:\n"
-        "    \u2022 Endpoint is not reachable from this machine.\n"
-        "    \u2022 Hostname cannot be resolved.\n"
-        "    \u2022 Route is not accessible.\n"
-    )
-    _console.print(
-        "  Please verify:\n"
-        "    \u2022 The endpoint is reachable from your workstation.\n"
-        "    \u2022 DNS resolution or /etc/hosts entries are correctly configured.\n"
-    )
-    _console.print(f"  Manual validation:\n    {exc.curl_cmd}\n")
-
 
 _NON_S3_SCHEMES = ("pvc://", "hf://", "oci://")
 
@@ -76,6 +59,15 @@ _COMPONENT_DISPLAY: dict[str, str] = {
 }
 
 
+@dataclass
+class _ModelResult:
+    """Outcome of a single model deployment."""
+    name:               str
+    model_uri:          str                        = ""
+    validation_skipped: bool                       = False
+    unreachable:        EndpointUnreachable | None = field(default=None, repr=False)
+
+
 def _resolve_inference_request(model: dict[str, Any], repo_root: str) -> Path:
     """Return the absolute Path to this model's inference request file.
 
@@ -97,8 +89,12 @@ def _deploy_model(
     platform_namespace: str,
     namespace: str,
     inference_timeout: int,
-) -> None:
-    """Deploy a single model: ServingRuntime, InferenceService, smoke test."""
+) -> _ModelResult:
+    """Deploy a single model: ServingRuntime, InferenceService, smoke test.
+
+    Returns a _ModelResult that records whether validation was skipped.
+    The caller is responsible for surfacing any warnings in the summary.
+    """
     name         = model["name"]
     model_uri    = model.get("model_uri", "")
     runtime_name = assets.serving_runtime_name(name)
@@ -132,6 +128,7 @@ def _deploy_model(
             on_tick=s.tick,
         )
 
+    result = _ModelResult(name=name, model_uri=model_uri)
     with step("Validating model inference") as s:
         try:
             inference.verify_triton_inference(
@@ -139,7 +136,63 @@ def _deploy_model(
             )
         except EndpointUnreachable as exc:
             s.skip()
-            _warn_unreachable(exc)
+            result.validation_skipped = True
+            result.unreachable        = exc
+            log.debug("Endpoint unreachable for '%s': %s", name, exc)
+
+    return result
+
+
+def _verify_cmd(use_case: str, config_file: str) -> str:
+    """Return the copy-pasteable verify command, including -c if a config was used."""
+    if config_file:
+        return f"rhoai usecase verify {use_case} \\\n      -c {config_file}"
+    return f"rhoai usecase verify {use_case}"
+
+
+def _print_summary(
+    results: list[_ModelResult],
+    use_case: str,
+    namespace: str,
+    config_file: str = "",
+) -> None:
+    """Print the single end-of-deployment summary."""
+    verify_cmd = _verify_cmd(use_case, config_file)
+
+    _console.print("\nDeployment complete.\n")
+    _console.print(f"  Use case  : {use_case}")
+    _console.print(f"  Namespace : {namespace}\n")
+
+    # --- Per-model detail blocks ---
+    _console.print("Models\n")
+    for r in results:
+        validation = "Unavailable" if r.validation_skipped else "Passed"
+        source     = r.model_uri or "(from manifest)"
+        _console.print(f"\u2714  {r.name}\n")
+        _console.print(f"  Source      : {source}")
+        _console.print(f"  Status      : Ready")
+        _console.print(f"  Validation  : {validation}\n")
+
+    # --- Follow-up actions (only when at least one model could not be validated) ---
+    unvalidated = [r for r in results if r.validation_skipped]
+    if unvalidated:
+        _console.print("Follow-up actions\n")
+        for r in unvalidated:
+            _console.print(f"\u26a0  {r.name}\n")
+            if r.unreachable:
+                _console.print(f"  Endpoint:\n    {r.unreachable.infer_url}\n")
+                log.debug("Manual validation: %s", r.unreachable.curl_cmd)
+            _console.print(
+                "  Model inference could not be validated because the endpoint\n"
+                "  was not reachable from this machine.\n\n"
+                "  Verify the cluster route is reachable from your workstation.\n\n"
+                "  If hostname resolution fails, check your DNS or /etc/hosts configuration.\n\n"
+                f"  Then rerun:\n\n"
+                f"    {verify_cmd}\n"
+            )
+
+    # --- Next steps ---
+    _console.print(f"Next\n\n  {verify_cmd}\n")
 
 
 def deploy(config: dict[str, Any]) -> None:
@@ -185,13 +238,24 @@ def deploy(config: dict[str, Any]) -> None:
         with step("Configuring model storage credentials"):
             storage.apply_s3_secret(manifests.get_s3_secret(repo_root), namespace)
 
-    # 5 — Deploy each model.
+    # 5 — Deploy each model; collect results for the summary.
+    results: list[_ModelResult] = []
     for model in models:
         with header_step(f"Deploying '{model['name']}'", outcome=f"'{model['name']}' ready"):
-            _deploy_model(
-                model, repo_root, platform_namespace, namespace,
-                config["timeouts"]["inference_ready"],
+            results.append(
+                _deploy_model(
+                    model, repo_root, platform_namespace, namespace,
+                    config["timeouts"]["inference_ready"],
+                )
             )
+
+    # 7 — Deployment summary.
+    _print_summary(
+        results,
+        use_case="fraud-detection",
+        namespace=namespace,
+        config_file=config.get("_config_file", ""),
+    )
 
     # 6 — TrustyAI prerequisites + service (bias + data-drift monitoring)
     # with step("Deploying TrustyAI"):
