@@ -12,7 +12,7 @@ For architecture and developer docs see [`docs/README.md`](docs/README.md).
 |---|---|
 | Python ≥ 3.12 | `python3 --version` |
 | `oc` CLI | Must be logged in to the target cluster (`oc login`) |
-| OpenShift cluster | OCP 4.14+, ppc64le or x86_64 |
+| OpenShift cluster | OCP 4.20+, ppc64le or x86_64 |
 
 ---
 
@@ -81,9 +81,6 @@ This is used for bias monitoring workflows where a baseline and a candidate mode
 | Format | Example | Notes |
 |---|---|---|
 | `pvc://<claim>/<path>` | `pvc://fraud-model-pvc/models` | Model pre-loaded on a PersistentVolumeClaim |
-| `hf://<org>/<repo>` | `hf://ibm/granite-3b` | Downloaded from Hugging Face at startup |
-| `oci://<registry>/<image>` | `oci://quay.io/org/model:tag` | Pulled from an OCI registry |
-| `<s3-path>` | `models/fraud-detection` | Plain S3 path; also reads `s3-credentials` secret |
 
 ### Environment variable overrides
 
