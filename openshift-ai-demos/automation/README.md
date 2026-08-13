@@ -42,25 +42,35 @@ A ready-to-use example is at [`config-fraud-detection.yaml`](config-fraud-detect
 
 ```yaml
 # Absolute path to the root of the openshift-ai-demos repository.
-repo_root: /path/to/ai-demos/openshift-ai-demos
+repo_root: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos
 
 operator:
   channel: stable-3.5
 
-# DSC components to enable.
+# DSC components to enable during platform setup.
 components:
   - dashboard
   - workbenches
   - kserve
   - trustyai
 
+storage:
+  class_name: ""   # empty = accept any available ReadWriteOnce class
+
 deployment:
   namespace: test-fraud
+  trustyai_service_name: trustyai-service
+  trustyai_service_account: trustyai-user
 
   models:
-    - name: fraud-detection
-      model_uri: pvc://fraud-model-pvc/models
-      inference_request: requests/fraud-detection.json
+    - name: demo-loan-nn-onnx-alpha
+      model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
+      inference_request: automation/rhoai/usecases/inputs/demo-loan.json
+
+    - name: demo-loan-nn-onnx-beta
+      model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
+      inference_request: automation/rhoai/usecases/inputs/demo-loan.json
+
 ```
 
 ### `models`
