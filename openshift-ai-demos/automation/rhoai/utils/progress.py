@@ -47,10 +47,15 @@ class _Spinner:
     def __init__(self, status: Status, label: str) -> None:
         self._status = status
         self._label  = label
+        self._skipped = False
 
     def tick(self, elapsed: float) -> None:
         """Update the spinner text with current elapsed time."""
         self._status.update(f"{self._label}  ({int(elapsed)}s)...")
+
+    def skip(self) -> None:
+        """Mark this step as skipped so the outcome line shows ⚠ instead of ✔."""
+        self._skipped = True
 
 
 @contextmanager
@@ -61,13 +66,17 @@ def step(label: str) -> Generator[_Spinner, None, None]:
         label: Human-readable description shown next to the spinner.
 
     Yields:
-        _Spinner — call spinner.tick(elapsed_seconds) from within the block
-                   to show live elapsed time in the spinner text.
+        _Spinner — call ``spinner.tick(elapsed)`` to update elapsed time,
+                   or ``spinner.skip()`` to mark the step as skipped (⚠).
 
     Example::
 
         with step("Waiting for InferenceService") as s:
             wait_until_ready(..., on_tick=s.tick)
+
+        with step("Validating model inference") as s:
+            if unreachable:
+                s.skip()
     """
     start = time.monotonic()
 
@@ -78,7 +87,10 @@ def step(label: str) -> Generator[_Spinner, None, None]:
         try:
             yield spinner
             elapsed = int(time.monotonic() - start)
-            _console.print(f"\u2714  {label}  ({elapsed}s)")
+            if spinner._skipped:
+                _console.print(f"\u26a0  {label}  skipped  ({elapsed}s)")
+            else:
+                _console.print(f"\u2714  {label}  ({elapsed}s)")
         except Exception:
             _console.print(f"\u2716  {label}  failed")
             raise
@@ -94,7 +106,10 @@ def step(label: str) -> Generator[_Spinner, None, None]:
             raise
 
     elapsed = int(time.monotonic() - start)
-    _console.print(f"\u2714  {label}  ({elapsed}s)")
+    if spinner._skipped:
+        _console.print(f"\u26a0  {label}  skipped  ({elapsed}s)")
+    else:
+        _console.print(f"\u2714  {label}  ({elapsed}s)")
 
 
 @contextmanager

@@ -9,7 +9,8 @@ from typing import Any
 from rhoai.platform import inference
 # from rhoai.platform import trustyai  # phase 2
 from rhoai.platform import verify as platform_verify
-from rhoai.usecases.fraud_detection.deploy import _resolve_inference_request
+from rhoai.platform.inference import EndpointUnreachable
+from rhoai.usecases.fraud_detection.deploy import _resolve_inference_request, _warn_unreachable
 from rhoai.utils.logger import get_logger
 from rhoai.utils.progress import header_step, step
 
@@ -34,11 +35,15 @@ def verify(config: dict[str, Any]) -> None:
         with header_step(f"Verifying '{name}'", outcome=f"'{name}' healthy"):
             with step(f"Checking InferenceService '{name}'"):
                 inference.verify(namespace, name=name)
-            with step("Validating model inference"):
-                inference.verify_triton_inference(
-                    name, namespace, name,
-                    _resolve_inference_request(model, repo_root)
-                )
+            with step("Validating model inference") as s:
+                try:
+                    inference.verify_triton_inference(
+                        name, namespace, name,
+                        _resolve_inference_request(model, repo_root)
+                    )
+                except EndpointUnreachable as exc:
+                    s.skip()
+                    _warn_unreachable(exc)
 
     # phase 2:
     # with step(f"Checking TrustyAI '{trustyai_name}'"):

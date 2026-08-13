@@ -21,8 +21,10 @@ model_uri behaviour (per model entry in deployment.models):
 from pathlib import Path
 from typing import Any
 
+from rich.console import Console
 from rhoai.ocp import resources as ocp_resources
 from rhoai.platform import inference, manifests, prepare, storage
+from rhoai.platform.inference import EndpointUnreachable
 # from rhoai.platform import trustyai  # phase 2
 from rhoai.usecases.fraud_detection import assets
 from rhoai.utils import yaml_io
@@ -30,6 +32,26 @@ from rhoai.utils.logger import get_logger
 from rhoai.utils.progress import header_step, step, sub_step
 
 log = get_logger(__name__)
+_console = Console(stderr=False, highlight=False)
+
+
+def _warn_unreachable(exc: EndpointUnreachable) -> None:
+    """Print a concise, user-oriented message when an endpoint cannot be reached."""
+    _console.print("\n\u26a0  Unable to reach the inference endpoint.\n")
+    _console.print(f"  Endpoint:\n    {exc.infer_url}\n")
+    _console.print(
+        "  Possible causes:\n"
+        "    \u2022 Endpoint is not reachable from this machine.\n"
+        "    \u2022 Hostname cannot be resolved.\n"
+        "    \u2022 Route is not accessible.\n"
+    )
+    _console.print(
+        "  Please verify:\n"
+        "    \u2022 The endpoint is reachable from your workstation.\n"
+        "    \u2022 DNS resolution or /etc/hosts entries are correctly configured.\n"
+    )
+    _console.print(f"  Manual validation:\n    {exc.curl_cmd}\n")
+
 
 _NON_S3_SCHEMES = ("pvc://", "hf://", "oci://")
 
@@ -110,10 +132,14 @@ def _deploy_model(
             on_tick=s.tick,
         )
 
-    with step("Validating model inference"):
-        inference.verify_triton_inference(
-            name, namespace, name, _resolve_inference_request(model, repo_root)
-        )
+    with step("Validating model inference") as s:
+        try:
+            inference.verify_triton_inference(
+                name, namespace, name, _resolve_inference_request(model, repo_root)
+            )
+        except EndpointUnreachable as exc:
+            s.skip()
+            _warn_unreachable(exc)
 
 
 def deploy(config: dict[str, Any]) -> None:

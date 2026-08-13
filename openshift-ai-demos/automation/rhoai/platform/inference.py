@@ -1,8 +1,10 @@
 """KServe InferenceService and ServingRuntime capability."""
 
 import json
+import logging
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -140,6 +142,37 @@ def delete_serving_runtime(name: str, namespace: str) -> None:
     wait.wait_until_deleted("ServingRuntime", name, namespace)
 
 
+class EndpointUnreachable(RuntimeError):
+    """Raised when the inference endpoint cannot be reached after retries.
+
+    Carries the endpoint URL and the curl reproduction command so the caller
+    can present a structured, user-oriented message without knowing internals.
+    """
+
+    def __init__(self, infer_url: str, curl_cmd: str) -> None:
+        super().__init__(f"Inference endpoint unreachable: {infer_url}")
+        self.infer_url = infer_url
+        self.curl_cmd  = curl_cmd
+
+
+@contextmanager
+def _quiet_urllib3():
+    """Temporarily raise the urllib3 log level to ERROR.
+
+    urllib3 emits WARNING-level records for connection retries and name
+    resolution failures.  These are implementation noise when we already
+    handle the failure ourselves — suppress them for the duration of the
+    with-block and restore the original level afterwards.
+    """
+    logger = logging.getLogger("urllib3")
+    original = logger.level
+    logger.setLevel(logging.ERROR)
+    try:
+        yield
+    finally:
+        logger.setLevel(original)
+
+
 def verify_triton_inference(
     isvc_name: str,
     namespace: str,
@@ -155,6 +188,8 @@ def verify_triton_inference(
 
     One retry after a short delay is attempted on connection errors to absorb
     the brief propagation gap between IS Ready and the Route becoming reachable.
+    urllib3 connection-level warnings are suppressed during both attempts so that
+    internal retry noise does not appear in user-facing output.
 
     Args:
         isvc_name:      Kubernetes name of the InferenceService.
@@ -163,40 +198,35 @@ def verify_triton_inference(
         sample_request: Path to a JSON file containing the KServe v2 inference payload.
 
     Raises:
-        RuntimeError: If the inference request fails or the response is not valid.
+        EndpointUnreachable: When the endpoint cannot be reached after one retry.
+        RuntimeError:        If the inference request fails or the response is not valid.
     """
     base_url  = get_inference_url(isvc_name, namespace)
     infer_url = base_url + _TRITON_INFER_PATH.format(model_name=model_name)
     payload   = json.loads(sample_request.read_text())
+    curl_cmd  = (
+        f"curl -sk -X POST {infer_url}"
+        f" -H 'Content-Type: application/json'"
+        f" -d @{sample_request}"
+    )
 
     log.info("Running model smoke test")
     log.debug("Model:    %s", model_name)
     log.debug("Endpoint: %s", infer_url)
     log.debug("Request payload:\n%s", json.dumps(payload, indent=2))
-    log.debug(
-        "Reproduce manually:\n  curl -sk -X POST %s"
-        " -H 'Content-Type: application/json'"
-        " -d '%s'",
-        infer_url,
-        json.dumps(payload),
-    )
+    log.debug("Reproduce manually:\n  %s", curl_cmd)
 
-    try:
-        response, elapsed, status = _http_post(infer_url, payload)
-    except _ConnectionError as exc:
-        log.warning("Connection error — retrying in %ss", _RETRY_DELAY)
-        log.debug("Connection failure detail: %s", exc)
-        time.sleep(_RETRY_DELAY)
+    with _quiet_urllib3():
         try:
             response, elapsed, status = _http_post(infer_url, payload)
-        except _ConnectionError as exc2:
-            log.warning(
-                "Smoke test skipped — cannot reach '%s' from this host. "
-                "Run manually: curl -sk -X POST %s -H 'Content-Type: application/json' -d @%s",
-                infer_url, infer_url, sample_request,
-            )
-            log.debug("Connection failure detail: %s", exc2)
-            return
+        except _ConnectionError as exc:
+            log.debug("Connection attempt 1 failed: %s", exc)
+            time.sleep(_RETRY_DELAY)
+            try:
+                response, elapsed, status = _http_post(infer_url, payload)
+            except _ConnectionError as exc2:
+                log.debug("Connection attempt 2 failed: %s", exc2)
+                raise EndpointUnreachable(infer_url, curl_cmd) from exc2
 
     log.debug("Response status: %s  elapsed: %.2fs", status, elapsed)
     log.debug("Response body:\n%s", json.dumps(response, indent=2))
