@@ -203,26 +203,16 @@ pip install -e .
 
 ## 5. Configuration
 
-Configuration is assembled from three sources, merged in priority order:
+Configuration is assembled from two sources, merged in priority order
+(CLI flags are applied per-command after loading):
 
 ```
-1. RHOAI_ environment variables   (highest priority)
+1. CLI flags              (highest — this run only)
        ↓
-2. User YAML file  (--config flag or RHOAI_CONFIG env var)
+2. --config file          (user-supplied YAML)
        ↓
-3. Bundled defaults  (rhoai/config/defaults.yaml)
+3. defaults.yaml          (bundled fallback)
 ```
-
-### Environment variables
-
-| Variable | Config key | Description |
-|---|---|---|
-| `RHOAI_CLUSTER_URL` | `cluster.url` | API server URL (optional if `oc login` is current) |
-| `RHOAI_NAMESPACE` | `cluster.namespace` | Target namespace |
-| `RHOAI_KUBECONFIG` | `cluster.kubeconfig` | Path to kubeconfig (defaults to `~/.kube/config`) |
-| `RHOAI_REPO_ROOT` | `repo_root` | Absolute path to the `openshift-ai-demos` repository root |
-| `RHOAI_LOG_LEVEL` | `log_level` | `DEBUG`, `INFO`, `WARNING`, or `ERROR` |
-| `RHOAI_CONFIG` | — | Path to a user YAML config file |
 
 ### User configuration file
 
@@ -606,9 +596,7 @@ rhoai usecase deploy my-use-case
 Logging is configured once at startup by `utils/logger.py`. All modules obtain
 their logger with `get_logger(__name__)`.
 
-Log level is set by the `--log-level` CLI option (default: `INFO`), or by the
-`RHOAI_LOG_LEVEL` environment variable, or by the `log_level` key in the config
-file.
+Log level is set by the `--log-level` CLI option (default: `INFO`).
 
 ```bash
 # Verbose output during deployment

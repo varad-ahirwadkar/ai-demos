@@ -39,42 +39,54 @@ rhoai --help
 
 ## Configuration
 
-Every command accepts `--config`/`-c` at the subcommand level, pointing to a
-YAML file. Without it, the bundled defaults in
-[`rhoai/config/defaults.yaml`](rhoai/config/defaults.yaml) apply.
+### The normal workflow — use a config file
 
-Configuration is assembled from three sources, merged in priority order:
+Pass a YAML config file with `--config`/`-c` on any subcommand.
+Only override what differs from the bundled defaults — everything else is
+inherited from [`rhoai/config/defaults.yaml`](rhoai/config/defaults.yaml).
 
-```
-1. CLI flags                      (highest priority — this run only, never written to disk)
-       ↓
-2. --config file / RHOAI_ env vars
-       ↓
-3. rhoai/config/defaults.yaml     (bundled defaults)
+```bash
+rhoai usecase deploy fraud-detection --config config-fraud-detection.yaml
 ```
 
-### Environment variable overrides
+A minimal config file looks like this:
 
-| Variable | Config key | Description |
+```yaml
+repo_root: /path/to/openshift-ai-demos
+
+platform:
+  namespace: redhat-ods-applications   # where RHOAI operands run
+
+deployment:
+  namespace: my-workload-namespace
+```
+
+### How configuration is resolved
+
+Values are merged from three sources in priority order (highest → lowest):
+
+| Priority | Source | When to use |
 |---|---|---|
-| `RHOAI_KUBECONFIG` | `platform.kubeconfig` | Path to kubeconfig (defaults to `~/.kube/config`) |
-| `RHOAI_REPO_ROOT` | `repo_root` | Absolute path to the `openshift-ai-demos` repo root |
-| `RHOAI_LOG_LEVEL` | `log_level` | `DEBUG`, `INFO` |
-| `RHOAI_CONFIG` | — | Path to a config YAML file (replaces `--config`) |
+| 1 | CLI flags (e.g. `--channel`) | One-off overrides for a single run |
+| 2 | `--config` file | Per-cluster or per-environment settings |
+| 3 | `rhoai/config/defaults.yaml` | Bundled fallback — no action needed |
+
+> **Tip:** For kubeconfig, use the standard `KUBECONFIG` environment variable
+> or run `oc login` before invoking `rhoai`.
 
 ---
 
 ## CLI usage
 
-All commands accept `--config`/`-c` at the subcommand level to specify a
-config file. Log verbosity is set with `--log-level`/`-l` on the root
-command, **before** the subcommand.
+Log verbosity is set with `--log-level`/`-l` on the root command, **before**
+the subcommand. All other options are on the subcommand itself.
 
 ```bash
 rhoai --help
 rhoai platform --help
 rhoai usecase  --help
 ```
+
 ---
 
 ## `rhoai platform`

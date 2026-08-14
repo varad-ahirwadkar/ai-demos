@@ -167,6 +167,7 @@ class TestDeploySmoke:
         inference_mock     = MagicMock()
         ocp_resources_mock = MagicMock()
         prepare_mock       = MagicMock()
+        trustyai_mock      = MagicMock()
         # platform_needs_reconciliation returns False → fast-path, no bootstrap call.
         prepare_mock.platform_needs_reconciliation.return_value = False
 
@@ -174,12 +175,14 @@ class TestDeploySmoke:
         monkeypatch.setattr(deploy_mod, "inference",     inference_mock)
         monkeypatch.setattr(deploy_mod, "ocp_resources", ocp_resources_mock)
         monkeypatch.setattr(deploy_mod, "prepare",       prepare_mock)
+        monkeypatch.setattr(deploy_mod, "trustyai",      trustyai_mock)
 
         return {
             "storage":       storage_mock,
             "inference":     inference_mock,
             "ocp_resources": ocp_resources_mock,
             "prepare":       prepare_mock,
+            "trustyai":      trustyai_mock,
         }
 
     def _fresh_deploy_mod(self) -> Any:

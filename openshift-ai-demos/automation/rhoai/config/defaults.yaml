@@ -1,17 +1,15 @@
 # rhoai-automation default configuration
-# All values are overridden by the user config file or RHOAI_ environment variables.
-# See config/loader.py for override priority and environment variable mapping.
+# All values are overridden by a user config file (--config) or CLI flags.
+# See config/loader.py for the configuration priority order.
 
 log_level: INFO
 
 platform:
-  url: ""             # set via oc login before running, or RHOAI_PLATFORM_URL
   namespace: redhat-ods-applications   # namespace where RHOAI operands run
-  kubeconfig: ""      # defaults to ~/.kube/config when empty
 
 # Absolute path to the root of the openshift-ai-demos repository.
 # Used by platform/manifests.py and usecases/*/assets.py to resolve
-# manifest file paths. Set via RHOAI_REPO_ROOT or the user config file.
+# manifest file paths. Set via the user config file or --config.
 repo_root: ""
 
 operator:

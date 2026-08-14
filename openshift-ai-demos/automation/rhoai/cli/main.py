@@ -14,8 +14,6 @@ Log-level behaviour
                     output is shown.  Clean UX for day-to-day use.
   --log-level DEBUG All log.info / log.debug lines are printed alongside the
                     structured output.  Useful for developers and CI debugging.
-  --log-level WARNING / ERROR
-                    Only warnings and errors from the logger are shown.
 """
 
 import typer
@@ -41,8 +39,7 @@ def _callback(
         help=(
             "Logger verbosity. "
             "INFO (default): logger lines hidden, only structured output shown. "
-            "DEBUG: all log lines printed alongside structured output. "
-            "WARNING/ERROR: only warnings/errors from the logger."
+            "DEBUG: all log lines printed alongside structured output."
         ),
     ),
 ) -> None:

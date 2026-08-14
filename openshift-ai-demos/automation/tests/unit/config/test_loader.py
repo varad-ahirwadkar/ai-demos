@@ -41,33 +41,10 @@ class TestLoadConfig:
         config = load_config(minimal_config)
         assert config["operator"]["name"] == "rhods-operator"
 
-    def test_env_override_namespace(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("RHOAI_NAMESPACE", "env-namespace")
+    def test_no_path_returns_defaults_only(self) -> None:
         config = load_config()
-        assert config["platform"]["namespace"] == "env-namespace"
+        assert config["platform"]["namespace"] == "redhat-ods-applications"
 
-    def test_env_override_log_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("RHOAI_LOG_LEVEL", "DEBUG")
-        config = load_config()
-        assert config["log_level"] == "DEBUG"
-
-    def test_env_override_repo_root(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("RHOAI_REPO_ROOT", str(tmp_path))
-        config = load_config()
-        assert config["repo_root"] == str(tmp_path)
-
-    def test_rhoai_config_env_var(
-        self, monkeypatch: pytest.MonkeyPatch, minimal_config: Path
-    ) -> None:
-        monkeypatch.setenv("RHOAI_CONFIG", str(minimal_config))
-        config = load_config()
-        assert config["platform"]["namespace"] == "my-namespace"
-
-    def test_explicit_path_takes_priority_over_env(
-        self, monkeypatch: pytest.MonkeyPatch, minimal_config: Path, tmp_path: Path
-    ) -> None:
-        other = tmp_path / "other.yaml"
-        other.write_text("platform:\n  namespace: from-env-config\n")
-        monkeypatch.setenv("RHOAI_CONFIG", str(other))
-        config = load_config(minimal_config)
-        assert config["platform"]["namespace"] == "my-namespace"
+    def test_empty_config_file_returns_defaults(self, defaults_only_config: Path) -> None:
+        config = load_config(defaults_only_config)
+        assert config["operator"]["name"] == "rhods-operator"

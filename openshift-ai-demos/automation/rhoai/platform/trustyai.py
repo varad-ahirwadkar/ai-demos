@@ -52,14 +52,24 @@ def enable_user_workload_monitoring(manifest_path: Path) -> None:
     log.info("User Workload Monitoring enabled")
 
 
-def apply_rbac(manifest_path: Path, namespace: str) -> None:
+def apply_rbac(manifest_path: Path, namespace: str, service_account: str = "trustyai-user") -> None:
     """Apply the TrustyAI RBAC manifest (ServiceAccount + RoleBinding). Idempotent.
 
     Accepts a multi-document YAML file and applies each document individually.
+    The ``service_account`` name overrides the name embedded in the manifest so
+    the caller can drive it from config rather than relying on the hardcoded value.
     """
-    log.info("Applying TrustyAI RBAC resources")
+    log.info("Applying TrustyAI RBAC resources (service_account=%s)", service_account)
     log.debug("Manifest: %s", manifest_path.name)
     for doc in load_all(manifest_path):
+        kind = doc.get("kind", "")
+        if kind == "ServiceAccount":
+            doc.setdefault("metadata", {})["name"] = service_account
+        elif kind == "RoleBinding":
+            doc.setdefault("metadata", {})["name"] = f"{service_account}-view"
+            for subject in doc.get("subjects", []):
+                if subject.get("kind") == "ServiceAccount":
+                    subject["name"] = service_account
         resources.apply_dict(doc, namespace)
 
 
@@ -87,17 +97,39 @@ def create_logger_ca_bundle(namespace: str) -> None:
 
 
 def patch_inferenceservice_config(namespace: str) -> None:
-    """Remove opendatahub.io/managed from inferenceservice-config.
+    """Patch inferenceservice-config for TrustyAI payload logging.
 
-    Required for InferenceServices using RawDeployment mode so that
-    TrustyAI can inject its payload-logging sidecar without RHOAI
-    reverting the ConfigMap change.  Idempotent.
+    Applies two changes:
+      1. Sets opendatahub.io/managed=false so RHOAI stops reverting the ConfigMap.
+      2. Injects CA bundle settings into the logger JSON so the KServe payload
+         logger can verify TLS against the cluster CA bundle injected by
+         create_logger_ca_bundle().
+
+    Idempotent — reads the current logger value before merging so repeated
+    runs are safe.
     """
     log.info("Patching inferenceservice-config in '%s'", namespace)
+
+    # 1 — stop RHOAI from managing (reverting) this ConfigMap.
     resources.patch(
         "ConfigMap",
         _ISVC_CONFIG_CM,
         {"metadata": {"annotations": {"opendatahub.io/managed": "false"}}},
+        namespace=namespace,
+    )
+
+    # 2 — merge CA bundle settings into the logger JSON string.
+    cm: dict[str, Any] = resources.get("ConfigMap", _ISVC_CONFIG_CM, namespace)
+    logger_cfg: dict[str, Any] = json.loads(cm.get("data", {}).get("logger", "{}"))
+    logger_cfg.update({
+        "caBundle":     _LOGGER_CA_CM,
+        "caCertFile":   "service-ca.crt",
+        "tlsSkipVerify": False,
+    })
+    resources.patch(
+        "ConfigMap",
+        _ISVC_CONFIG_CM,
+        {"data": {"logger": json.dumps(logger_cfg, indent=2)}},
         namespace=namespace,
     )
 
@@ -119,16 +151,21 @@ def wait_until_ready(
     timeout: int = 300,
     on_tick: Callable[[float], Any] | None = None,
 ) -> None:
-    """Block until the TrustyAIService reaches Ready. Raises TimeoutError."""
+    """Block until the TrustyAI Deployment is available. Raises TimeoutError.
+
+    TrustyAIService does not set a conditions[type=Ready] entry, so polling
+    the CR itself never resolves.  The operator creates a same-named Deployment;
+    waiting for that Deployment to become available is the reliable signal.
+    """
     log.info("Waiting for TrustyAIService '%s'", name)
     log.debug("Timeout: %ss", timeout)
-    wait.wait_until_ready(_SERVICE_KIND, name, namespace, timeout=timeout, on_tick=on_tick)
+    wait.wait_until_ready("Deployment", name, namespace, timeout=timeout, on_tick=on_tick)
 
 
 def verify(name: str, namespace: str) -> None:
-    """Assert the TrustyAIService is Ready. Raises RuntimeError if not."""
+    """Assert the TrustyAI Deployment is available. Raises RuntimeError if not."""
     log.info("Verifying TrustyAIService '%s'", name)
-    if not resources.is_ready(_SERVICE_KIND, name, namespace):
+    if not resources.is_ready("Deployment", name, namespace):
         raise RuntimeError(
             f"TrustyAIService '{name}' is not ready in '{namespace}'."
         )

@@ -1,25 +1,17 @@
 """Deployment configuration loader.
 
-Loads the YAML config file, applies RHOAI_ environment variable overrides,
-and returns a plain dict. Pydantic can be added later if config validation
+Loads the YAML config file and returns a plain dict merged on top of
+the bundled defaults.  Pydantic can be added later if config validation
 becomes complex enough to justify it.
 
 Priority (highest → lowest):
-    1. RHOAI_ environment variables
-    2. User-supplied YAML file  (--config flag or RHOAI_CONFIG env var)
-    3. Bundled defaults         (config/defaults.yaml)
-
-Environment variable mapping:
-    RHOAI_PLATFORM_URL  → config["platform"]["url"]
-    RHOAI_NAMESPACE     → config["platform"]["namespace"]
-    RHOAI_KUBECONFIG    → config["platform"]["kubeconfig"]
-    RHOAI_REPO_ROOT     → config["repo_root"]
-    RHOAI_LOG_LEVEL     → config["log_level"]
+    1. CLI flags          (applied by each command after load_config returns)
+    2. User YAML file     (--config / path argument)
+    3. Bundled defaults   (config/defaults.yaml)
 
 Depends on: utils.yaml_io, utils.logger, stdlib
 """
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -37,48 +29,19 @@ def load_config(path: Path | None = None) -> dict[str, Any]:
     """Load, merge, and return the deployment configuration.
 
     Args:
-        path: Path to the user YAML config file. If None, falls back to
-              the RHOAI_CONFIG environment variable, then defaults only.
+        path: Path to the user YAML config file.  If None, only the
+              bundled defaults apply.
 
     Returns:
         Merged configuration as a plain dict.
     """
     config = load(_DEFAULTS)
 
-    user_path = path or _config_path_from_env()
-    if user_path:
-        log.debug("Loading config from %s", user_path)
-        config = deep_merge(config, load(user_path))
+    if path:
+        log.debug("Loading config from %s", path)
+        config = deep_merge(config, load(path))
 
-    return _apply_env_overrides(config)
-
-
-def _config_path_from_env() -> Path | None:
-    value = os.environ.get("RHOAI_CONFIG")
-    return Path(value) if value else None
-
-
-def _apply_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
-    """Overwrite config keys from RHOAI_ environment variables."""
-    mapping = {
-        "RHOAI_PLATFORM_URL": ["platform", "url"],
-        "RHOAI_NAMESPACE":    ["platform", "namespace"],
-        "RHOAI_KUBECONFIG":   ["platform", "kubeconfig"],
-        "RHOAI_REPO_ROOT":    ["repo_root"],
-        "RHOAI_LOG_LEVEL":    ["log_level"],
-    }
-    for env_var, key_path in mapping.items():
-        value = os.environ.get(env_var)
-        if value is not None:
-            _set_nested(config, key_path, value)
-            log.debug("Env override: %s", env_var)
     return config
-
-
-def _set_nested(d: dict[str, Any], keys: list[str], value: str) -> None:
-    for key in keys[:-1]:
-        d = d.setdefault(key, {})
-    d[keys[-1]] = value
 
 
 def save_defaults(updates: dict[str, Any]) -> None:
