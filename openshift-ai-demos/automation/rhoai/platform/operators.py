@@ -120,7 +120,7 @@ def verify(name: str, namespace: str) -> None:
     if phase != "Succeeded":
         raise RuntimeError(
             f"Operator '{resolved}' is not ready (phase={phase!r}). "
-            "Run 'rhoai platform deploy' to install it."
+            "Run 'rhoai platform init' to install it."
         )
     log.info("RHOAI operator is Succeeded")
 

@@ -66,6 +66,13 @@ def init_platform(config: dict[str, Any]) -> None:
     source           = config["operator"].get("source", "redhat-operators")
     source_namespace = config["operator"].get("source_namespace", "openshift-marketplace")
 
+    # Normalise bare semver to the full CSV name regardless of whether the
+    # version came from --version flag or the config file.
+    # Real CSV names: rhods-operator.3.4.0  (no 'v' prefix)
+    if csv_version and csv_version[0].isdigit():
+        csv_version = f"rhods-operator.{csv_version}"
+        config["operator"]["version"] = csv_version
+
     if not operators.is_installed(op_name, op_ns):
         # Pass all Subscription fields atomically so whatever is in config
         # (channel, source, version) all land in the same server-side apply.
@@ -76,7 +83,13 @@ def init_platform(config: dict[str, Any]) -> None:
             source_namespace=source_namespace,
         )
     else:
-        operators.wait_until_ready(op_name, op_ns, op_timeout)
+        # Operator already installed — confirm it is Succeeded and continue.
+        # No re-application of the Subscription (avoids accidental upgrades).
+        # Upgrade support will be added as a separate 'rhoai platform upgrade' command.
+        log.info(
+            "Operator already installed — skipping install (use 'rhoai platform upgrade' to change version)"
+        )
+        operators.verify(op_name, op_ns)
 
     # Always apply DSCI: idempotent, only initialisation settings.
     dsc.apply_dsci(manifests.get_dsci(repo_root))
@@ -205,34 +218,14 @@ def platform_needs_reconciliation(config: dict[str, Any]) -> bool:
     return False
 
 
-def bootstrap_platform(
-    config: dict[str, Any],
-    _needs_reconciliation: bool | None = None,
-) -> None:
+def bootstrap_platform(config: dict[str, Any]) -> None:
     """Full platform bootstrap: init_platform, then enable DSC components.
-
-    On an already-configured cluster this is a fast verification pass —
-    reconciliation is skipped when the platform is already in the desired state.
 
     Backs 'rhoai platform setup'. Two modes controlled by config["components"]:
     - Non-empty list → patch only those components to Managed.
     - Empty (default) → apply the full base DSC manifest as-is.
-
-    Args:
-        _needs_reconciliation: Pre-computed result of platform_needs_reconciliation().
-            Pass this when the caller has already called platform_needs_reconciliation()
-            to avoid a redundant second check. If None (default), the check runs here.
     """
     from rhoai.platform import dsc, manifests
-
-    needs_recon = (
-        _needs_reconciliation
-        if _needs_reconciliation is not None
-        else platform_needs_reconciliation(config)
-    )
-    if not needs_recon:
-        log.info("Platform already in desired state — skipping reconciliation")
-        return
 
     init_platform(config)
 
@@ -242,7 +235,6 @@ def bootstrap_platform(
     else:
         dsc.apply_dsc(manifests.get_dsc(config["repo_root"]))
         dsc.wait_until_ready(config["dsc"]["name"], config["timeouts"]["dsc_ready"])
-
 
 # Backward-compatible alias — prefer bootstrap_platform() in new code.
 deploy_platform = bootstrap_platform

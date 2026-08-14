@@ -300,7 +300,8 @@ class TestInitPlatform:
         prep_mod.init_platform(_base_config())
 
         operators_mock.install.assert_not_called()
-        operators_mock.wait_until_ready.assert_called_once()
+        operators_mock.wait_until_ready.assert_not_called()
+        operators_mock.verify.assert_called_once()
 
     def test_passes_version_to_install_when_set(
         self, monkeypatch: pytest.MonkeyPatch
@@ -583,10 +584,6 @@ class TestPlatformNeedsReconciliation:
 
 
 class TestBootstrapPlatform:
-    def _force_reconciliation(self, monkeypatch: pytest.MonkeyPatch, prep_mod: Any) -> None:
-        """Pass _needs_reconciliation=True so bootstrap proceeds without an internal check."""
-        # No need to patch platform_needs_reconciliation — pass the value directly.
-
     def test_applies_full_dsc_manifest_when_components_empty(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -602,7 +599,7 @@ class TestBootstrapPlatform:
         monkeypatch.setattr("rhoai.platform.manifests", manifests_mock)
 
         config = _base_config()  # no "components" key → defaults to empty
-        prep_mod.bootstrap_platform(config, _needs_reconciliation=True)
+        prep_mod.bootstrap_platform(config)
 
         init_mock.assert_called_once_with(config)
         dsc_mock.apply_dsc.assert_called_once()
@@ -626,44 +623,12 @@ class TestBootstrapPlatform:
 
         config = _base_config()
         config["components"] = ["kserve", "trustyai"]
-        prep_mod.bootstrap_platform(config, _needs_reconciliation=True)
+        prep_mod.bootstrap_platform(config)
 
         init_mock.assert_called_once_with(config)
         install_mock.assert_called_once_with(config, ["kserve", "trustyai"])
         # Full manifest must NOT be applied when components are explicit
         dsc_mock.apply_dsc.assert_not_called()
-
-    def test_skips_reconciliation_when_platform_already_ready(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Fast-path: when _needs_reconciliation=False, nothing is written."""
-        prep_mod = _fresh_prepare_module()
-
-        init_mock = MagicMock()
-        dsc_mock  = MagicMock()
-        monkeypatch.setattr(prep_mod, "init_platform", init_mock)
-        monkeypatch.setattr("rhoai.platform.dsc",      dsc_mock)
-
-        prep_mod.bootstrap_platform(_base_config(), _needs_reconciliation=False)
-
-        init_mock.assert_not_called()
-        dsc_mock.apply_dsc.assert_not_called()
-        dsc_mock.set_component_states.assert_not_called()
-        dsc_mock.wait_until_ready.assert_not_called()
-
-    def test_skips_reconciliation_via_internal_check(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """When no pre-computed value is passed, the internal check runs."""
-        prep_mod = _fresh_prepare_module()
-        monkeypatch.setattr(prep_mod, "platform_needs_reconciliation", lambda _: False)
-
-        init_mock = MagicMock()
-        monkeypatch.setattr(prep_mod, "init_platform", init_mock)
-
-        prep_mod.bootstrap_platform(_base_config())  # no _needs_reconciliation arg
-
-        init_mock.assert_not_called()
 
     def test_deploy_platform_alias_still_works(self) -> None:
         """Backward-compatible alias for any external callers."""
