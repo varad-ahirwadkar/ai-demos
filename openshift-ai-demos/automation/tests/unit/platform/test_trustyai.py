@@ -152,14 +152,30 @@ class TestCreateLoggerCaBundle:
 class TestPatchInferencserviceConfig:
     def test_calls_patch_with_correct_args(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_resources = MagicMock()
+        # get() must return a dict with a parseable logger JSON string so the
+        # second patch (CA bundle merge) can deserialise and re-serialise it.
+        mock_resources.get.return_value = {
+            "data": {"logger": '{"cpuLimit": "1"}'}
+        }
         monkeypatch.setattr("rhoai.platform.trustyai.resources", mock_resources)
         trustyai.patch_inferenceservice_config("test-ns")
-        mock_resources.patch.assert_called_once_with(
+        # First patch: annotation to stop RHOAI managing the ConfigMap.
+        first_call = mock_resources.patch.call_args_list[0]
+        assert first_call.args == (
             "ConfigMap",
             "inferenceservice-config",
             {"metadata": {"annotations": {"opendatahub.io/managed": "false"}}},
-            namespace="test-ns",
         )
+        assert first_call.kwargs == {"namespace": "test-ns"}
+        # Second patch: logger CA bundle keys merged in.
+        second_call = mock_resources.patch.call_args_list[1]
+        import json
+        logger_cfg = json.loads(second_call.args[2]["data"]["logger"])
+        assert logger_cfg["caBundle"]    == "kserve-logger-ca-bundle"
+        assert logger_cfg["caCertFile"]  == "service-ca.crt"
+        assert logger_cfg["tlsSkipVerify"] is False
+        # Original keys preserved.
+        assert logger_cfg["cpuLimit"] == "1"
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +204,7 @@ class TestWaitUntilReady:
         monkeypatch.setattr("rhoai.platform.trustyai.wait", mock_wait)
         trustyai.wait_until_ready("trustyai-service", "ns", timeout=120)
         mock_wait.wait_until_ready.assert_called_once_with(
-            "TrustyAIService", "trustyai-service", "ns", timeout=120, on_tick=None
+            "Deployment", "trustyai-service", "ns", timeout=120, on_tick=None
         )
 
 

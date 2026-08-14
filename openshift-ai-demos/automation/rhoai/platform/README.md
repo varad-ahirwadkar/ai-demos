@@ -73,8 +73,7 @@ All commands load configuration from (highest priority first):
 
 1. **CLI flags** — override everything for that invocation only, never written to disk
 2. **`--config` file** — user-supplied YAML merged on top of defaults
-3. **`RHOAI_` environment variables** — `RHOAI_NAMESPACE`, `RHOAI_CLUSTER_URL`, etc.
-4. **`config/defaults.yaml`** — bundled defaults
+3. **`config/defaults.yaml`** — bundled defaults
 
 Key defaults (`config/defaults.yaml`):
 

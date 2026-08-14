@@ -113,7 +113,7 @@ def process_template(
     # Step 1 — upload the Template into the platform namespace.
     # Use the namespace embedded in the template file itself so the upload
     # always targets the correct namespace even when platform_namespace has
-    # been overridden (e.g. via RHOAI_NAMESPACE) to the workload namespace.
+    # been overridden (e.g. via the --config file) to the workload namespace.
     template = load(path)
     template_name = template.get("metadata", {}).get("name", path.stem)
     upload_namespace = template.get("metadata", {}).get("namespace") or platform_namespace

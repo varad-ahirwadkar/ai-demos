@@ -20,7 +20,6 @@ storage:
 deployment:
   namespace: test-fraud
   trustyai_service_name: trustyai-service
-  trustyai_service_account: trustyai-user
 
   models:
     - name: demo-loan-nn-onnx-alpha

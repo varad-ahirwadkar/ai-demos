@@ -27,7 +27,7 @@ from rich.console import Console
 from rhoai.ocp import resources as ocp_resources
 from rhoai.platform import inference, manifests, prepare, storage
 from rhoai.platform.inference import EndpointUnreachable
-# from rhoai.platform import trustyai  # phase 2
+from rhoai.platform import trustyai
 from rhoai.usecases.fraud_detection import assets
 from rhoai.utils import yaml_io
 from rhoai.utils.logger import get_logger
@@ -64,6 +64,7 @@ class _ModelResult:
     """Outcome of a single model deployment."""
     name:               str
     model_uri:          str                        = ""
+    endpoint:           str                        = ""
     validation_skipped: bool                       = False
     unreachable:        EndpointUnreachable | None = field(default=None, repr=False)
 
@@ -128,7 +129,8 @@ def _deploy_model(
             on_tick=s.tick,
         )
 
-    result = _ModelResult(name=name, model_uri=model_uri)
+    endpoint = inference.get_inference_url(name, namespace)
+    result = _ModelResult(name=name, model_uri=model_uri, endpoint=endpoint)
     with step("Validating model inference") as s:
         try:
             inference.verify_triton_inference(
@@ -170,6 +172,7 @@ def _print_summary(
         source     = r.model_uri or "(from manifest)"
         _console.print(f"\u2714  {r.name}\n")
         _console.print(f"  Source      : {source}")
+        _console.print(f"  Endpoint    : {r.endpoint}")
         _console.print(f"  Status      : Ready")
         _console.print(f"  Validation  : {validation}\n")
 
@@ -202,8 +205,9 @@ def deploy(config: dict[str, Any]) -> None:
     platform_namespace = config["platform"]["namespace"]
     namespace          = dep_cfg.get("namespace") or platform_namespace
     models             = dep_cfg.get("models", [])
-    # phase 2: trustyai_name    = dep_cfg.get("trustyai_service_name", "trustyai-service")
-    # phase 2: trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
+    trustyai_name    = dep_cfg.get("trustyai_service_name",    "trustyai-service")
+    trustyai_sa      = dep_cfg.get("trustyai_service_account", "trustyai-user")
+    trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
 
     log.info("Deploying Fraud Detection")
 
@@ -249,6 +253,19 @@ def deploy(config: dict[str, Any]) -> None:
                 )
             )
 
+    # 6 — TrustyAI prerequisites + service (bias + data-drift monitoring)
+    with step("Deploying TrustyAI"):
+        trustyai.enable_user_workload_monitoring(manifests.get_trustyai_monitoring_config(repo_root))
+        trustyai.apply_rbac(manifests.get_trustyai_rbac(repo_root), namespace, trustyai_sa)
+        trustyai.create_logger_ca_bundle(namespace)
+        trustyai.patch_inferenceservice_config(platform_namespace)
+        trustyai.apply_trustyai_service(
+            assets.get_trustyai_service_manifest(repo_root), namespace
+        )
+
+    with step("Waiting for TrustyAI to become ready") as s:
+        trustyai.wait_until_ready(trustyai_name, namespace, trustyai_timeout, on_tick=s.tick)
+
     # 7 — Deployment summary.
     _print_summary(
         results,
@@ -256,17 +273,3 @@ def deploy(config: dict[str, Any]) -> None:
         namespace=namespace,
         config_file=config.get("_config_file", ""),
     )
-
-    # 6 — TrustyAI prerequisites + service (bias + data-drift monitoring)
-    # with step("Deploying TrustyAI"):
-    #     rbac_path = manifests.get_trustyai_rbac(repo_root)
-    #     trustyai.enable_user_workload_monitoring(manifests.get_trustyai_monitoring_config(repo_root))
-    #     trustyai.apply_rbac(rbac_path, namespace)
-    #     trustyai.create_logger_ca_bundle(namespace)
-    #     trustyai.patch_inferenceservice_config(platform_namespace)
-    #     trustyai.apply_trustyai_service(
-    #         assets.get_trustyai_service_manifest(repo_root), namespace
-    #     )
-
-    # with step("Waiting for TrustyAI to become ready") as s:
-    #     trustyai.wait_until_ready(trustyai_name, namespace, trustyai_timeout, on_tick=s.tick)
