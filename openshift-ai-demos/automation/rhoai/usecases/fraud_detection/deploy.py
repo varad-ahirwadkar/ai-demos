@@ -286,11 +286,23 @@ def _print_summary(
     namespace: str,
     config_file: str = "",
     trustyai_route: str = "",
+    mode: str = "deploy",
 ) -> None:
-    """Print the single end-of-deployment summary."""
+    """Print the end-of-command summary.
+
+    Args:
+        results:        Per-model outcomes collected during the run.
+        use_case:       Use case name (e.g. "fraud-detection").
+        namespace:      Workload namespace.
+        config_file:    Path to the --config file used, for the verify command hint.
+        trustyai_route: TrustyAI service URL; omitted from output when empty.
+        mode:           "deploy" — prints "Deployment complete." and a "Next / verify" hint.
+                        "verify" — prints "Verification complete." and no "Next" hint.
+    """
     verify_cmd = _verify_cmd(use_case, config_file)
 
-    _console.print("\nDeployment complete.\n")
+    heading = "Deployment complete." if mode == "deploy" else "Verification complete."
+    _console.print(f"\n{heading}\n")
     _console.print(f"  Use case  : {use_case}")
     _console.print(f"  Namespace : {namespace}\n")
 
@@ -310,7 +322,7 @@ def _print_summary(
         _console.print("TrustyAI\n")
         _console.print(f"  Endpoint    : {trustyai_route}\n")
 
-    # --- Follow-up actions (only when at least one model could not be validated) ---
+    # --- Follow-up actions (shown in both modes when validation was skipped) ---
     unvalidated = [r for r in results if r.validation_skipped]
     if unvalidated:
         _console.print("Follow-up actions\n")
@@ -328,8 +340,9 @@ def _print_summary(
                 f"    {verify_cmd}\n"
             )
 
-    # --- Next steps ---
-    _console.print(f"Next\n\n  {verify_cmd}\n")
+    # --- Next steps: deploy only ---
+    if mode == "deploy":
+        _console.print(f"Next\n\n  {verify_cmd}\n")
 
 
 def deploy(config: dict[str, Any]) -> None:
@@ -387,26 +400,31 @@ def deploy(config: dict[str, Any]) -> None:
                 )
             )
 
-    # 6 — TrustyAI prerequisites + service (bias + data-drift monitoring)
-    with step("Deploying TrustyAI"):
-        trustyai.enable_user_workload_monitoring(manifests.get_trustyai_monitoring_config(repo_root))
-        trustyai.apply_rbac(manifests.get_trustyai_rbac(repo_root), namespace, trustyai_sa)
-        trustyai.create_logger_ca_bundle(namespace)
-        trustyai.patch_inferenceservice_config(platform_namespace)
-        trustyai.apply_trustyai_service(
-            assets.get_trustyai_service_manifest(repo_root), namespace
-        )
+    # 6 — TrustyAI prerequisites + service (only when at least one model has
+    #     bias_monitoring configured; skipped entirely otherwise).
+    route = ""
+    token = ""
+    bias_models = [m for m in models if m.get("bias_monitoring")]
 
-    with step("Waiting for TrustyAI to become ready") as s:
-        trustyai.wait_until_ready(trustyai_name, namespace, trustyai_timeout, on_tick=s.tick)
+    if bias_models:
+        with step("Deploying TrustyAI"):
+            trustyai.enable_user_workload_monitoring(manifests.get_trustyai_monitoring_config(repo_root))
+            trustyai.apply_rbac(manifests.get_trustyai_rbac(repo_root), namespace, trustyai_sa)
+            trustyai.create_logger_ca_bundle(namespace)
+            trustyai.patch_inferenceservice_config(platform_namespace)
+            trustyai.apply_trustyai_service(
+                assets.get_trustyai_service_manifest(repo_root), namespace
+            )
 
-    # 7 — Bias monitoring configuration (per model, skipped if no bias_monitoring key).
-    route = trustyai.get_url(trustyai_name, namespace)
-    token = trustyai.get_bearer_token(trustyai_sa, namespace)
-    ingestion_timeout = config["timeouts"].get("ingestion_ready", 300)
+        with step("Waiting for TrustyAI to become ready") as s:
+            trustyai.wait_until_ready(trustyai_name, namespace, trustyai_timeout, on_tick=s.tick)
 
-    for model in models:
-        if model.get("bias_monitoring"):
+        # 7 — Bias monitoring configuration (per model).
+        route = trustyai.get_url(trustyai_name, namespace)
+        token = trustyai.get_bearer_token(trustyai_sa, namespace)
+        ingestion_timeout = config["timeouts"].get("ingestion_ready", 300)
+
+        for model in bias_models:
             with step(f"Configuring TrustyAI for '{model['name']}'") as s:
                 _configure_bias_monitoring(
                     model, route, token, namespace, repo_root, ingestion_timeout,

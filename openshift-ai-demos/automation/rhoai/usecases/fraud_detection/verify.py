@@ -62,14 +62,21 @@ def verify(config: dict[str, Any]) -> None:
 
     log.info("Verifying Fraud Detection in '%s'", namespace)
 
+    # Determine whether any model has bias monitoring configured.
+    # TrustyAI checks are skipped entirely when no model uses it.
+    bias_models = [m for m in models if m.get("bias_monitoring")]
+    route = ""
+    token = ""
+
     with step("Checking platform"):
         platform_verify.verify_platform(config)
 
-    with step(f"Checking TrustyAI '{trustyai_name}'"):
-        trustyai.verify(trustyai_name, namespace)
+    if bias_models:
+        with step(f"Checking TrustyAI '{trustyai_name}'"):
+            trustyai.verify(trustyai_name, namespace)
 
-    route = trustyai.get_url(trustyai_name, namespace)
-    token = trustyai.get_bearer_token(trustyai_sa, namespace)
+        route = trustyai.get_url(trustyai_name, namespace)
+        token = trustyai.get_bearer_token(trustyai_sa, namespace)
 
     results: list[_ModelResult] = []
     for model in models:
@@ -78,7 +85,12 @@ def verify(config: dict[str, Any]) -> None:
             with step(f"Checking InferenceService '{name}'"):
                 inference.verify(namespace, name=name)
 
-            result = _ModelResult(name=name)
+            # Populate source and endpoint from config + live cluster,
+            # matching exactly what deploy records so the summary is consistent.
+            model_uri = model.get("model_uri", "")
+            endpoint  = inference.get_inference_url(name, namespace)
+            result    = _ModelResult(name=name, model_uri=model_uri, endpoint=endpoint)
+
             with step("Validating model inference") as s:
                 try:
                     inference.verify_triton_inference(
@@ -103,4 +115,5 @@ def verify(config: dict[str, Any]) -> None:
         namespace=namespace,
         config_file=config.get("_config_file", ""),
         trustyai_route=route,
+        mode="verify",
     )

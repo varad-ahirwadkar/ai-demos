@@ -136,19 +136,21 @@ Models
 ✔  demo-loan-nn-onnx-alpha
 
   Source      : pvc://fraud-model-pvc/bias-monitoring/unbiased_model
+  Endpoint    : https://demo-loan-nn-onnx-alpha-test-fraud.apps.rdr-varad-421.ocp-rhoai.com
   Status      : Ready
   Validation  : Passed
 
 ✔  demo-loan-nn-onnx-beta
 
   Source      : pvc://fraud-model-pvc/bias-monitoring/biased_model
+  Endpoint    : https://demo-loan-nn-onnx-beta-test-fraud.apps.rdr-varad-421.ocp-rhoai.com
   Status      : Ready
   Validation  : Passed
 
 Next
 
   rhoai usecase verify fraud-detection \
-    -c openshift-ai-demos/automation/config-fraud-detection.yaml
+      -c openshift-ai-demos/automation/config-fraud-detection.yaml
 ```
 
 If the endpoint is unreachable from the machine running the CLI (for example, a local
