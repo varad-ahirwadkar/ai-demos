@@ -11,11 +11,12 @@ _TOKEN = "test-token"
 _MODEL = "fraud-detection"
 
 
-def _mock_response(json_data: object, status_code: int = 200) -> MagicMock:
+def _mock_response(json_data: object, status_code: int = 200, text: str = "") -> MagicMock:
     resp = MagicMock()
     resp.status_code = status_code
+    resp.ok           = status_code < 400
+    resp.text         = text
     resp.json.return_value = json_data
-    resp.raise_for_status.return_value = None
     return resp
 
 
@@ -193,3 +194,55 @@ class TestScheduleIdentity:
         assert body["modelId"] == _MODEL
         assert body["columnName"] == "gender"
         assert body["batchSize"] == 2000
+
+
+# ---------------------------------------------------------------------------
+# Error reporting (_raise_with_body via _post and _get)
+# ---------------------------------------------------------------------------
+
+class TestErrorReporting:
+    """Verify that non-2xx responses include the TrustyAI body in the message."""
+
+    def test_post_400_includes_body(self) -> None:
+        error_body = '{"error": "Unknown protected attribute: gender"}'
+        with patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_post.return_value = _mock_response({}, status_code=400, text=error_body)
+            with pytest.raises(RuntimeError, match="HTTP 400"):
+                trustyai_client.compute_spd(
+                    _ROUTE, _TOKEN, _MODEL,
+                    protected_attribute="gender", privileged_value=1.0,
+                    unprivileged_value=0.0, outcome_name="score",
+                    favorable_outcome=0.0,
+                )
+
+    def test_post_error_message_includes_trustyai_body(self) -> None:
+        error_body = "Unknown protected attribute: foobar"
+        with patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_post.return_value = _mock_response({}, status_code=400, text=error_body)
+            with pytest.raises(RuntimeError, match="foobar"):
+                trustyai_client.compute_spd(
+                    _ROUTE, _TOKEN, _MODEL,
+                    protected_attribute="foobar", privileged_value=1.0,
+                    unprivileged_value=0.0, outcome_name="score",
+                    favorable_outcome=0.0,
+                )
+
+    def test_get_400_includes_body(self) -> None:
+        error_body = "model not found"
+        with patch("rhoai.platform.trustyai_client.requests.get") as mock_get:
+            mock_get.return_value = _mock_response({}, status_code=404, text=error_body)
+            with pytest.raises(RuntimeError, match="HTTP 404"):
+                trustyai_client.get_model_info(_ROUTE, _TOKEN, _MODEL)
+
+    def test_get_error_message_includes_trustyai_body(self) -> None:
+        error_body = "service temporarily unavailable"
+        with patch("rhoai.platform.trustyai_client.requests.get") as mock_get:
+            mock_get.return_value = _mock_response({}, status_code=503, text=error_body)
+            with pytest.raises(RuntimeError, match="temporarily unavailable"):
+                trustyai_client.get_model_info(_ROUTE, _TOKEN, _MODEL)
+
+    def test_empty_body_shows_placeholder(self) -> None:
+        with patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_post.return_value = _mock_response({}, status_code=500, text="")
+            with pytest.raises(RuntimeError, match="<empty body>"):
+                trustyai_client.schedule_identity(_ROUTE, _TOKEN, _MODEL, column_name="x")

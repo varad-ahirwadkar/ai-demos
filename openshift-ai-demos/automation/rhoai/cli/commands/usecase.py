@@ -39,6 +39,7 @@ def deploy(
 
     if config_file:
         config["_config_file"] = str(config_file)
+    config["_use_case"] = name
 
     try:
         registry.get(name).deploy(config)
@@ -61,6 +62,7 @@ def verify(
 
     if config_file:
         config["_config_file"] = str(config_file)
+    config["_use_case"] = name
 
     try:
         registry.get(name).verify(config)
