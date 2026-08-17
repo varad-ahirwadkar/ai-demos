@@ -6,14 +6,23 @@ Pass --delete-platform to 'rhoai usecase cleanup' to also remove them.
 
 Each model has its own dedicated ServingRuntime (named via assets.serving_runtime_name).
 Both the InferenceService and its ServingRuntime are deleted per model.
+
+TrustyAI cleanup is conditional: only runs when at least one model has
+bias_monitoring configured (mirrors the deploy-time gate).
+Resources removed when TrustyAI was deployed:
+  - TrustyAIService CR
+  - RoleBinding  (<sa_name>-view)
+  - ServiceAccount (<sa_name>)
+  - kserve-logger-ca-bundle ConfigMap
 """
 
 from typing import Any
 
+from rhoai.ocp import resources as ocp_resources
 from rhoai.platform import inference, trustyai
+from rhoai.utils.progress import step
 from rhoai.usecases.fraud_detection import assets
 from rhoai.utils.logger import get_logger
-from rhoai.utils.progress import step
 
 log = get_logger(__name__)
 
@@ -28,11 +37,21 @@ def cleanup(config: dict[str, Any]) -> None:
 
     log.info("Cleaning up Fraud Detection in '%s'", namespace)
 
-    # Reverse deploy order: TrustyAI first, then model serving.
-    with step(f"Removing TrustyAI '{trustyai_name}'"):
-        trustyai.delete_trustyai_service(trustyai_name, namespace)
-        trustyai.delete_role_binding(f"{sa_name}-view", namespace)
-        trustyai.delete_service_account(sa_name, namespace)
+    platform_namespace = config["platform"]["namespace"]
+
+    # Reverse deploy order: TrustyAI first (if it was deployed), then model serving.
+    bias_models = [m for m in models if m.get("bias_monitoring")]
+    if bias_models:
+        with step(f"Removing TrustyAI '{trustyai_name}'"):
+            trustyai.delete_trustyai_service(trustyai_name, namespace)
+        with step("Reverting inferenceservice-config"):
+            trustyai.revert_inferenceservice_config(platform_namespace)
+        with step("Removing ConfigMap 'kserve-logger-ca-bundle'"):
+            ocp_resources.delete_manifest("ConfigMap", "kserve-logger-ca-bundle", namespace)
+        with step(f"Removing RoleBinding '{sa_name}-view'"):
+            trustyai.delete_role_binding(f"{sa_name}-view", namespace)
+        with step(f"Removing ServiceAccount '{sa_name}'"):
+            trustyai.delete_service_account(sa_name, namespace)
 
     for model in models:
         name         = model["name"]

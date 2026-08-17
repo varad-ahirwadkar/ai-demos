@@ -5,6 +5,8 @@ Does not call ocp/ directly — all cluster operations go through platform modul
 
 Deployment sequence:
     1-3. prepare.bootstrap_platform — validate cluster, operator, DSC/DSCI
+         Each phase is shown as a live sub-step so the user sees progress
+         during the bootstrap (which can take ~2 minutes on a cold cluster).
     4.   configure storage — S3 secret applied once if any model uses an S3 URI
     5.   for each model in deployment.models:
          a. Triton ServingRuntime (via Template)
@@ -34,7 +36,7 @@ from typing import Any
 
 from rich.console import Console
 from rhoai.ocp import resources as ocp_resources
-from rhoai.platform import inference, manifests, prepare, storage, trustyai, trustyai_client
+from rhoai.platform import dsc, inference, manifests, operators, prepare, storage, trustyai, trustyai_client
 from rhoai.platform.inference import EndpointUnreachable
 from rhoai.usecases.fraud_detection import assets
 from rhoai.utils import yaml_io
@@ -359,6 +361,8 @@ def deploy(config: dict[str, Any]) -> None:
     log.info("Deploying Fraud Detection")
 
     # 1–3 — platform bootstrap (cluster validation, operator, DSC/DSCI).
+    op_name       = config["operator"]["name"]
+    op_ns         = config["operator"]["namespace"]
     dsc_name      = config["dsc"]["name"]
     dsci_name     = config["dsc"]["dsci_name"]
     components    = config.get("components") or []
@@ -371,15 +375,45 @@ def deploy(config: dict[str, Any]) -> None:
     with header_step("Checking RHOAI platform", outcome="Platform ready"):
         needs_recon = prepare.platform_needs_reconciliation(config)
         if needs_recon:
-            prepare.bootstrap_platform(config, _needs_reconciliation=True)
-        with sub_step("Operator ready"):
-            pass
-        with sub_step(f"DSCI '{dsci_name}' ready"):
-            pass
-        with sub_step(f"DSC '{dsc_name}' ready"):
-            pass
-        with sub_step(f"Components enabled: {component_str}"):
-            pass
+            prepare.prepare_platform(config)
+            if not operators.is_installed(op_name, op_ns):
+                with step(f"Installing operator '{op_name}'") as s:
+                    operators.install(
+                        op_name, op_ns,
+                        config["operator"]["channel"],
+                        repo_root,
+                        config["timeouts"]["operator_ready"],
+                        version=config["operator"].get("version", ""),
+                        source=config["operator"].get("source", "redhat-operators"),
+                        source_namespace=config["operator"].get("source_namespace", "openshift-marketplace"),
+                    )
+            else:
+                with step(f"Waiting for operator '{op_name}'") as s:
+                    operators.wait_until_ready(op_name, op_ns, config["timeouts"]["operator_ready"])
+            with step(f"Deploying DSCI '{dsci_name}'") as s:
+                dsc.apply_dsci(manifests.get_dsci(repo_root))
+                dsc.wait_dsci_ready(dsci_name, config["timeouts"]["dsc_ready"])
+            if components:
+                with step(f"Deploying DSC '{dsc_name}'") as s:
+                    if not ocp_resources.exists("DataScienceCluster", dsc_name):
+                        dsc.apply_dsc(manifests.get_dsc(repo_root))
+                    dsc.set_component_states(dsc_name, {c: "Managed" for c in components})
+                    dsc.wait_until_ready(dsc_name, config["timeouts"]["dsc_ready"])
+            else:
+                with step(f"Deploying DSC '{dsc_name}'") as s:
+                    dsc.apply_dsc(manifests.get_dsc(repo_root))
+                    dsc.wait_until_ready(dsc_name, config["timeouts"]["dsc_ready"])
+            with sub_step(f"Components enabled: {component_str}"):
+                pass
+        else:
+            with sub_step(f"Operator '{op_name}' ready"):
+                pass
+            with sub_step(f"DSCI '{dsci_name}' ready"):
+                pass
+            with sub_step(f"DSC '{dsc_name}' ready"):
+                pass
+            with sub_step(f"Components enabled: {component_str}"):
+                pass
 
     # 4 — S3 credentials (applied once if any model uses an S3 URI).
     if any(

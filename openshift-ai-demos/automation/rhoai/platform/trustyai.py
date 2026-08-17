@@ -315,6 +315,41 @@ def get_bearer_token(service_account: str, namespace: str) -> str:
 # Cleanup
 # ---------------------------------------------------------------------------
 
+def revert_inferenceservice_config(namespace: str) -> None:
+    """Revert the inferenceservice-config patch applied by patch_inferenceservice_config.
+
+    Reversal order (opposite of apply):
+      1. Remove CA bundle keys from the logger JSON string.
+      2. Restore opendatahub.io/managed to "true" so RHOAI resumes managing
+         the ConfigMap.
+
+    Idempotent — safe to call even if the ConfigMap was never patched.
+    """
+    from kubernetes.dynamic.exceptions import NotFoundError
+    log.info("Reverting inferenceservice-config patch in '%s'", namespace)
+    try:
+        # 1 — remove CA bundle keys from the logger JSON.
+        cm: dict[str, Any] = resources.get("ConfigMap", _ISVC_CONFIG_CM, namespace)
+        logger_cfg: dict[str, Any] = json.loads(cm.get("data", {}).get("logger", "{}"))
+        for key in ("caBundle", "caCertFile", "tlsSkipVerify"):
+            logger_cfg.pop(key, None)
+        resources.patch(
+            "ConfigMap",
+            _ISVC_CONFIG_CM,
+            {"data": {"logger": json.dumps(logger_cfg, indent=2)}},
+            namespace=namespace,
+        )
+        # 2 — restore RHOAI management so it can reconcile the ConfigMap again.
+        resources.patch(
+            "ConfigMap",
+            _ISVC_CONFIG_CM,
+            {"metadata": {"annotations": {"opendatahub.io/managed": "true"}}},
+            namespace=namespace,
+        )
+    except NotFoundError:
+        log.debug("inferenceservice-config not found in '%s' — skipping revert", namespace)
+
+
 def delete_service_account(name: str, namespace: str) -> None:
     """Delete the TrustyAI ServiceAccount."""
     log.info("Deleting ServiceAccount '%s'", name)

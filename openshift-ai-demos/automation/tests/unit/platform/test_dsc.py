@@ -172,3 +172,46 @@ class TestWaitUntilReady:
         }
         assert condition_fn() is True
 
+
+
+class TestIsDscReady:
+    def test_true_when_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.status.return_value = {"phase": "Ready"}
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        assert dsc.is_dsc_ready("default-dsc") is True
+
+    def test_false_when_not_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.status.return_value = {"phase": "Progressing"}
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        assert dsc.is_dsc_ready("default-dsc") is False
+
+    def test_false_when_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from kubernetes.dynamic.exceptions import NotFoundError
+        mock_resources = MagicMock()
+        mock_resources.status.side_effect = NotFoundError(MagicMock())
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        assert dsc.is_dsc_ready("default-dsc") is False
+
+
+class TestIsDsciReady:
+    def test_true_when_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.status.return_value = {"phase": "Ready"}
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        assert dsc.is_dsci_ready("default-dsci") is True
+
+    def test_false_when_not_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.status.return_value = {"phase": "Progressing"}
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        assert dsc.is_dsci_ready("default-dsci") is False
+
+    def test_false_when_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """DSCI not yet created (fresh cluster) must return False, not raise 404."""
+        from kubernetes.dynamic.exceptions import NotFoundError
+        mock_resources = MagicMock()
+        mock_resources.status.side_effect = NotFoundError(MagicMock())
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        assert dsc.is_dsci_ready("default-dsci") is False

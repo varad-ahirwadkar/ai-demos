@@ -93,9 +93,10 @@ def cleanup(
     try:
         registry.get(name).cleanup(config)
         if delete_platform:
-            log.warning("Deleting platform resources (DSC, DSCI)")
-            dsc.delete_dsc(config["dsc"]["name"])
-            dsc.delete_dsci(config["dsc"]["dsci_name"])
+            from rhoai.utils.progress import step
+            with step("Removing DSC and DSCI"):
+                dsc.delete_dsc(config["dsc"]["name"])
+                dsc.delete_dsci(config["dsc"]["dsci_name"])
     except Exception as exc:  # noqa: BLE001
         _exit_with_error(exc)
 
