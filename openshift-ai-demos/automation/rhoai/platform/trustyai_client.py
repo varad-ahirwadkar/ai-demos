@@ -5,14 +5,15 @@ Every public function takes explicit ``route`` and ``token`` parameters —
 no session objects, no module-level state.
 
 Endpoint reference (validated against ta-svc-bias branch):
-    GET  /info                           → all models dict
-    POST /info/names                     → apply field name mapping
-    POST /metrics/group/fairness/spd     → one-shot SPD computation
+    GET  /info                               → all models dict
+    POST /info/names                         → apply field name mapping
+    POST /metrics/group/fairness/spd         → one-shot SPD computation
     POST /metrics/group/fairness/spd/request → scheduled SPD monitoring
-    POST /metrics/identity/request       → scheduled identity metric
+    POST /metrics/identity/request           → scheduled identity metric
 
-Data ingestion is handled automatically by the KServe payload-logger
-sidecar — there is no /data/upload endpoint.
+Data ingestion is handled by platform/inference.send_observations(), which
+posts KServe v2 requests directly to the model endpoint.  The KServe
+payload-logger sidecar forwards inputs + outputs to TrustyAI automatically.
 """
 
 from typing import Any
@@ -33,11 +34,25 @@ def _headers(token: str) -> dict[str, str]:
     }
 
 
+def _raise_with_body(response: "requests.Response") -> None:
+    """Raise RuntimeError with the HTTP status and TrustyAI response body included.
+
+    Called whenever TrustyAI returns a non-2xx response.  Including the body
+    means validation errors (e.g. unknown protected attribute) are readable
+    without requiring the user to reproduce the request manually.
+    """
+    body = response.text.strip() or "<empty body>"
+    raise RuntimeError(
+        f"TrustyAI request failed: HTTP {response.status_code} — {body}"
+    )
+
+
 def _post(route: str, token: str, path: str, body: dict[str, Any]) -> Any:
     url = f"{route.rstrip('/')}{path}"
     log.debug("POST %s", url)
     response = requests.post(url, json=body, headers=_headers(token), timeout=_TIMEOUT)
-    response.raise_for_status()
+    if not response.ok:
+        _raise_with_body(response)
     return response.json()
 
 
@@ -45,7 +60,8 @@ def _get(route: str, token: str, path: str) -> Any:
     url = f"{route.rstrip('/')}{path}"
     log.debug("GET %s", url)
     response = requests.get(url, headers=_headers(token), timeout=_TIMEOUT)
-    response.raise_for_status()
+    if not response.ok:
+        _raise_with_body(response)
     return response.json()
 
 
@@ -78,6 +94,30 @@ def get_model_info(route: str, token: str, model_id: str) -> dict[str, Any]:
             f"Available: {list(all_info.keys())}"
         )
     return all_info[model_id]
+
+
+def get_observation_count(route: str, token: str, model_id: str) -> int:
+    """Return the number of observations TrustyAI has ingested for a model.
+
+    Calls GET /info and reads ``info[model_id]["data"]["observations"]``.
+    Returns 0 if the model is not yet known to TrustyAI — does not raise
+    KeyError, so callers can poll safely before any data has arrived.
+
+    Args:
+        route:    TrustyAI service base URL.
+        token:    Bearer token for authentication.
+        model_id: The model identifier to look up.
+
+    Returns:
+        Number of observations ingested, or 0 if the model is not yet registered.
+
+    Raises:
+        requests.HTTPError: On a non-2xx response from /info.
+    """
+    log.debug("Fetching observation count for model '%s'", model_id)
+    all_info: dict[str, Any] = _get(route, token, "/info")
+    entry = all_info.get(model_id, {})
+    return entry.get("data", {}).get("observations", 0)
 
 
 def apply_name_mapping(

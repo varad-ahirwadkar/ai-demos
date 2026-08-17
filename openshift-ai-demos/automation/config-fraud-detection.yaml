@@ -19,13 +19,87 @@ storage:
 
 deployment:
   namespace: test-fraud
-  trustyai_service_name: trustyai-service
+  trustyai_service_name:    trustyai-service
+  trustyai_service_account: trustyai-user
 
   models:
     - name: demo-loan-nn-onnx-alpha
       model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
       inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
 
+      bias_monitoring:
+        # Observation files: directory (all *.json in lexical order) or explicit list.
+        # Each file is one KServe v2 inference request — see docs/bias-readme.md.
+        observations:
+          path: bias-monitoring/data/training/   # relative to repo_root
+
+        # Rename opaque internal column names to human-readable labels.
+        name_mapping:
+          inputs:
+            customer_data_input-0:  "Number of Children"
+            customer_data_input-1:  "Total Income"
+            customer_data_input-2:  "Number of Total Family Members"
+            customer_data_input-3:  "Is Male-Identifying?"
+            customer_data_input-4:  "Owns Car?"
+            customer_data_input-5:  "Owns Realty?"
+            customer_data_input-6:  "Is Partnered?"
+            customer_data_input-7:  "Is Employed?"
+            customer_data_input-8:  "Lives with Parents?"
+            customer_data_input-9:  "Age"
+            customer_data_input-10: "Length of Employment?"
+          outputs:
+            customer_data_output-0: "Will Default?"
+
+        # SPD fairness monitors: validated immediately before scheduling.
+        spd_monitors:
+          - protected_attribute:   "Is Male-Identifying?"
+            privileged_value:      1.0
+            unprivileged_value:    0.0
+            outcome_name:          "Will Default?"
+            favorable_outcome:     0.0
+            batch_size:            5000
+
+        # Identity monitors track column-average values over time.
+        identity_monitors:
+          - column_name: "Is Male-Identifying?"
+            batch_size:  250
+          - column_name: "Will Default?"
+            batch_size:  250
+
     - name: demo-loan-nn-onnx-beta
       model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
       inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
+
+      bias_monitoring:
+        observations:
+          path: bias-monitoring/data/training/
+
+        name_mapping:
+          inputs:
+            customer_data_input-0:  "Number of Children"
+            customer_data_input-1:  "Total Income"
+            customer_data_input-2:  "Number of Total Family Members"
+            customer_data_input-3:  "Is Male-Identifying?"
+            customer_data_input-4:  "Owns Car?"
+            customer_data_input-5:  "Owns Realty?"
+            customer_data_input-6:  "Is Partnered?"
+            customer_data_input-7:  "Is Employed?"
+            customer_data_input-8:  "Lives with Parents?"
+            customer_data_input-9:  "Age"
+            customer_data_input-10: "Length of Employment?"
+          outputs:
+            customer_data_output-0: "Will Default?"
+
+        spd_monitors:
+          - protected_attribute:   "Is Male-Identifying?"
+            privileged_value:      1.0
+            unprivileged_value:    0.0
+            outcome_name:          "Will Default?"
+            favorable_outcome:     0.0
+            batch_size:            5000
+
+        identity_monitors:
+          - column_name: "Is Male-Identifying?"
+            batch_size:  250
+          - column_name: "Will Default?"
+            batch_size:  250

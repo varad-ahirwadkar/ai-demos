@@ -1,13 +1,14 @@
 """TrustyAI platform capabilities.
 
-Organised into four sections:
+Organised into five sections:
 
     Prerequisites  — cluster and namespace setup before the TrustyAIService is deployed.
     Lifecycle      — TrustyAIService CR deploy, wait, verify, delete.
+    Ingestion      — wait for observation data to be ingested after sending.
     Discovery      — resolve the TrustyAI route URL and obtain a bearer token.
     Cleanup        — delete prerequisite resources in reverse order.
 
-Does not own model serving — that lives in platform/inference.py.
+Does not own model serving or observation sending — those live in platform/inference.py.
 Does not contain REST API calls — those live in platform/trustyai_client.py.
 """
 
@@ -177,6 +178,66 @@ def delete_trustyai_service(name: str, namespace: str) -> None:
     log.info("Deleting TrustyAIService '%s'", name)
     resources.delete_manifest(_SERVICE_KIND, name, namespace)
     wait.wait_until_deleted(_SERVICE_KIND, name, namespace)
+
+
+# ---------------------------------------------------------------------------
+# Ingestion
+# ---------------------------------------------------------------------------
+
+#: Fraction of expected observations that must be present before monitoring
+#: is considered ready.  Accounts for small numbers of requests that may be
+#: dropped or delayed by the KServe payload-logger sidecar under load.
+_INGESTION_THRESHOLD = 0.9
+
+
+def wait_for_ingestion(
+    route: str,
+    token: str,
+    model_id: str,
+    expected: int,
+    timeout: int = 300,
+    on_tick: Callable[[float], Any] | None = None,
+) -> None:
+    """Block until TrustyAI has ingested >= 90% of the expected observations.
+
+    The 90% threshold (``_INGESTION_THRESHOLD``) accounts for the small number
+    of requests that may be dropped or delayed by the KServe payload-logger
+    sidecar under load.
+
+    Uses ``ocp.wait.wait_until`` so timeout and ``on_tick`` behaviour are
+    consistent with all other wait functions in the framework.
+
+    Args:
+        route:    TrustyAI service base URL.
+        token:    Bearer token for authentication.
+        model_id: Model identifier to poll.
+        expected: Total rows returned by ``inference.send_observations()``.
+        timeout:  Maximum seconds to wait before raising ``TimeoutError``.
+        on_tick:  Optional progress callback invoked after each poll with
+                  elapsed seconds as the sole argument.
+
+    Raises:
+        TimeoutError: If the threshold is not reached within ``timeout`` seconds.
+    """
+    from rhoai.platform import trustyai_client  # local import — avoids circular dep
+
+    threshold = max(1, int(expected * _INGESTION_THRESHOLD))
+    log.info(
+        "Waiting for TrustyAI to ingest %d/%d observations for '%s'",
+        threshold, expected, model_id,
+    )
+
+    def _enough() -> bool:
+        count = trustyai_client.get_observation_count(route, token, model_id)
+        log.debug("TrustyAI observations for '%s': %d / %d", model_id, count, threshold)
+        return count >= threshold
+
+    wait.wait_until(
+        _enough,
+        description=f"TrustyAI ingestion for '{model_id}' ({threshold} observations)",
+        timeout=timeout,
+        on_tick=on_tick,
+    )
 
 
 # ---------------------------------------------------------------------------

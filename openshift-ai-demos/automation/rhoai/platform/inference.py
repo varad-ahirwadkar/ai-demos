@@ -128,6 +128,128 @@ def verify(namespace: str, name: str | None = None) -> None:
     log.info("All InferenceServices in '%s' are Ready", namespace)
 
 
+def send_observations(
+    model_name: str,
+    namespace: str,
+    observation_files: list[Path],
+) -> int:
+    """Send historical observation batches to a deployed model for TrustyAI ingestion.
+
+    Each file in observation_files must be a local JSON file containing one
+    complete KServe v2 inference request.  Expected structure::
+
+        {
+          "inputs": [{
+            "name":     "<tensor-name>",
+            "shape":    [N, F],   # N rows, F features
+            "datatype": "FP64",
+            "data":     [[...], ...]
+          }]
+        }
+
+    Files are validated locally before any network call is made.  Validation
+    checks that each file is valid JSON, contains a non-empty ``inputs`` list,
+    and that the first tensor has both ``shape`` and ``data`` fields with
+    ``shape[0] == len(data)``.
+
+    Each file is posted as a single HTTP call to the model's KServe v2
+    inference endpoint (``/v2/models/<model_name>/infer``).  The KServe
+    payload-logger sidecar intercepts each call and forwards inputs + outputs
+    to TrustyAI automatically — no direct TrustyAI API call is needed here.
+
+    Args:
+        model_name:         InferenceService name (also the Triton model name).
+        namespace:          Namespace where the model is deployed.
+        observation_files:  Ordered list of validated local KServe v2 JSON files.
+
+    Returns:
+        Total number of observation rows sent across all files.
+
+    Raises:
+        FileNotFoundError: If any path does not exist.
+        ValueError:        If any file fails structural validation.
+        RuntimeError:      If any HTTP POST fails (non-200 response).
+    """
+    if not observation_files:
+        raise ValueError("observation_files must not be empty")
+
+    # --- local validation pass (before touching the cluster) ---
+    total_rows = 0
+    for path in observation_files:
+        total_rows += _validate_observation_file(path)
+
+    # --- send each batch ---
+    base_url  = get_inference_url(model_name, namespace)
+    infer_url = base_url + _TRITON_INFER_PATH.format(model_name=model_name)
+
+    log.info(
+        "Sending %d observation rows across %d file(s) to '%s'",
+        total_rows, len(observation_files), model_name,
+    )
+    for path in observation_files:
+        payload = json.loads(path.read_text())
+        log.debug("POST %s  (%s)", infer_url, path.name)
+        with _quiet_urllib3():
+            _http_post(infer_url, payload)
+
+    log.info("Observations sent: %d rows", total_rows)
+    return total_rows
+
+
+def _validate_observation_file(path: Path) -> int:
+    """Validate a single KServe v2 observation file and return its row count.
+
+    Only the first tensor (``inputs[0]``) is inspected.  The row count comes
+    from ``inputs[0].shape[0]``, which is the batch dimension for a standard
+    single-input model.  Files with multiple tensors are posted in full; the
+    additional tensors are not validated here because TrustyAI's ingestion
+    threshold is computed against the row count of the first tensor only.
+
+    Args:
+        path: Local path to the JSON file.
+
+    Returns:
+        Number of rows (``inputs[0].shape[0]``).
+
+    Raises:
+        FileNotFoundError: If path does not exist.
+        ValueError:        On any structural problem, with a descriptive message.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Observation file not found: {path}")
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Observation file is not valid JSON: {path}") from exc
+
+    inputs = payload.get("inputs")
+    if not inputs or not isinstance(inputs, list):
+        raise ValueError(
+            f"Observation file '{path.name}' has no 'inputs' list. "
+            "This framework expects KServe v2 inference request payloads "
+            "({'inputs': [{'name': ..., 'shape': [N, ...], 'datatype': ..., 'data': [...]}]})."
+        )
+    first = inputs[0]
+    shape = first.get("shape")
+    data  = first.get("data")
+    if not shape or not isinstance(shape, list) or len(shape) < 1:
+        raise ValueError(
+            f"Observation file '{path.name}': inputs[0] missing valid 'shape'."
+        )
+    if data is None or not isinstance(data, list):
+        raise ValueError(
+            f"Observation file '{path.name}': inputs[0] missing 'data'."
+        )
+    declared_rows = shape[0]
+    actual_rows   = len(data)
+    if declared_rows != actual_rows:
+        raise ValueError(
+            f"Observation file '{path.name}': shape[0]={declared_rows} "
+            f"does not match len(data)={actual_rows}."
+        )
+    return declared_rows
+
+
 def delete_inference_service(name: str, namespace: str) -> None:
     """Delete an InferenceService and wait for removal."""
     log.info("Deleting InferenceService '%s'", name)

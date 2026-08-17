@@ -10,13 +10,22 @@ Deployment sequence:
          a. Triton ServingRuntime (via Template)
          b. InferenceService (deploy + wait until Ready)
          c. smoke test
-    6.   apply TrustyAI (phase 2)
-    7.   print deployment summary
+    6.   apply TrustyAI service + prerequisites
+    7.   for each model with bias_monitoring configured:
+         a. send observations → wait for ingestion
+         b. apply name mapping (optional)
+         c. validate + schedule SPD monitors (optional)
+         d. schedule identity monitors (optional)
+    8.   print deployment summary
 
 model_uri behaviour (per model entry in deployment.models):
     pvc://, hf://, oci:// — set storageUri, remove storage block + S3 annotation,
                             skip S3 secret (model is self-contained)
     any other string      — treat as S3 path; update storage.path, apply S3 secret
+
+bias_monitoring behaviour (per model entry in deployment.models):
+    absent / null         — model is deployed without any TrustyAI monitoring
+    present               — full monitoring workflow is executed after TrustyAI is ready
 """
 
 from dataclasses import dataclass, field
@@ -25,9 +34,8 @@ from typing import Any
 
 from rich.console import Console
 from rhoai.ocp import resources as ocp_resources
-from rhoai.platform import inference, manifests, prepare, storage
+from rhoai.platform import inference, manifests, prepare, storage, trustyai, trustyai_client
 from rhoai.platform.inference import EndpointUnreachable
-from rhoai.platform import trustyai
 from rhoai.usecases.fraud_detection import assets
 from rhoai.utils import yaml_io
 from rhoai.utils.logger import get_logger
@@ -145,6 +153,126 @@ def _deploy_model(
     return result
 
 
+def _resolve_observation_files(obs_cfg: dict[str, Any], repo_root: str) -> list[Path]:
+    """Resolve the list of observation file paths from the bias_monitoring.observations config.
+
+    Accepts two mutually exclusive forms:
+
+    ``path`` — a single file or a directory.  If a directory, all ``*.json``
+    files are returned in lexical filename order.  An empty directory raises
+    ``ValueError``.
+
+    ``files`` — an explicit ordered list of file paths (relative to repo_root).
+
+    ``path`` and ``files`` must not both be set.
+
+    Args:
+        obs_cfg:   The ``bias_monitoring.observations`` sub-dict from the model config.
+        repo_root: Absolute path to the repo root (used to resolve relative paths).
+
+    Returns:
+        Non-empty ordered list of absolute Path objects.
+
+    Raises:
+        ValueError: If the config is invalid (both keys set, neither key set,
+                    directory is empty).
+    """
+    has_path  = "path"  in obs_cfg
+    has_files = "files" in obs_cfg
+
+    if has_path and has_files:
+        raise ValueError(
+            "bias_monitoring.observations: 'path' and 'files' are mutually exclusive. "
+            "Use one or the other."
+        )
+    if not has_path and not has_files:
+        raise ValueError(
+            "bias_monitoring.observations: either 'path' or 'files' must be set."
+        )
+
+    if has_files:
+        paths = [Path(repo_root) / f for f in obs_cfg["files"]]
+        if not paths:
+            raise ValueError("bias_monitoring.observations.files must not be empty.")
+        return paths
+
+    # --- path form ---
+    resolved = Path(repo_root) / obs_cfg["path"]
+    if resolved.is_dir():
+        paths = sorted(resolved.glob("*.json"), key=lambda p: p.name)
+        if not paths:
+            raise ValueError(
+                f"Observation directory contains no *.json files: {resolved}"
+            )
+        return paths
+    return [resolved]
+
+
+def _configure_bias_monitoring(
+    model: dict[str, Any],
+    route: str,
+    token: str,
+    namespace: str,
+    repo_root: str,
+    ingestion_timeout: int,
+) -> None:
+    """Configure TrustyAI bias monitoring for a single model.
+
+    Reads ``model["bias_monitoring"]`` and returns immediately if absent or null.
+
+    Workflow:
+        1. Resolve and validate observation files locally.
+        2. Send observations to the model endpoint.
+        3. Wait until TrustyAI has ingested >= 90% of sent rows.
+        4. Apply feature/output name mapping (optional).
+        5. For each SPD monitor: validate via compute_spd, then schedule.
+        6. Schedule identity monitors.
+
+    Args:
+        model:             Model config dict (from deployment.models).
+        route:             TrustyAI service base URL.
+        token:             Bearer token for authentication.
+        namespace:         Namespace where the model is deployed.
+        repo_root:         Absolute path to the repo root.
+        ingestion_timeout: Maximum seconds to wait for TrustyAI ingestion.
+    """
+    cfg = model.get("bias_monitoring")
+    if not cfg:
+        return
+
+    model_id = model["name"]
+
+    # 1+2 — resolve files, validate locally, send to model endpoint.
+    obs_files = _resolve_observation_files(cfg["observations"], repo_root)
+    total_sent = inference.send_observations(model_id, namespace, obs_files)
+
+    # 3 — wait for TrustyAI to ingest the observations.
+    trustyai.wait_for_ingestion(route, token, model_id, expected=total_sent,
+                                timeout=ingestion_timeout)
+
+    # 4 — optional name mapping.
+    if nm := cfg.get("name_mapping"):
+        trustyai_client.apply_name_mapping(
+            route, token, model_id,
+            nm.get("inputs", {}),
+            nm.get("outputs", {}),
+        )
+
+    # 5 — SPD monitors: validate first, then schedule.
+    for monitor in cfg.get("spd_monitors", []):
+        kwargs = dict(monitor)
+        trustyai_client.compute_spd(route, token, model_id, **kwargs)
+        trustyai_client.schedule_spd(route, token, model_id, **kwargs)
+
+    # 6 — identity monitors.
+    for monitor in cfg.get("identity_monitors", []):
+        trustyai_client.schedule_identity(
+            route, token, model_id,
+            column_name=monitor["column_name"],
+            batch_size=monitor.get("batch_size", 5000),
+        )
+
+
 def _verify_cmd(use_case: str, config_file: str) -> str:
     """Return the copy-pasteable verify command, including -c if a config was used."""
     if config_file:
@@ -157,6 +285,7 @@ def _print_summary(
     use_case: str,
     namespace: str,
     config_file: str = "",
+    trustyai_route: str = "",
 ) -> None:
     """Print the single end-of-deployment summary."""
     verify_cmd = _verify_cmd(use_case, config_file)
@@ -175,6 +304,11 @@ def _print_summary(
         _console.print(f"  Endpoint    : {r.endpoint}")
         _console.print(f"  Status      : Ready")
         _console.print(f"  Validation  : {validation}\n")
+
+    # --- TrustyAI ---
+    if trustyai_route:
+        _console.print("TrustyAI\n")
+        _console.print(f"  Endpoint    : {trustyai_route}\n")
 
     # --- Follow-up actions (only when at least one model could not be validated) ---
     unvalidated = [r for r in results if r.validation_skipped]
@@ -266,10 +400,23 @@ def deploy(config: dict[str, Any]) -> None:
     with step("Waiting for TrustyAI to become ready") as s:
         trustyai.wait_until_ready(trustyai_name, namespace, trustyai_timeout, on_tick=s.tick)
 
-    # 7 — Deployment summary.
+    # 7 — Bias monitoring configuration (per model, skipped if no bias_monitoring key).
+    route = trustyai.get_url(trustyai_name, namespace)
+    token = trustyai.get_bearer_token(trustyai_sa, namespace)
+    ingestion_timeout = config["timeouts"].get("ingestion_ready", 300)
+
+    for model in models:
+        if model.get("bias_monitoring"):
+            with step(f"Configuring TrustyAI for '{model['name']}'") as s:
+                _configure_bias_monitoring(
+                    model, route, token, namespace, repo_root, ingestion_timeout,
+                )
+
+    # 8 — Deployment summary.
     _print_summary(
         results,
-        use_case="fraud-detection",
+        use_case=config.get("_use_case", "fraud-detection"),
         namespace=namespace,
         config_file=config.get("_config_file", ""),
+        trustyai_route=route,
     )

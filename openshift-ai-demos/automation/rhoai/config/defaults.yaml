@@ -33,8 +33,8 @@ storage:
 
 deployment:
   namespace: ""                             # workload namespace; falls back to platform.namespace when empty
-  trustyai_service_name: trustyai-service   # metadata.name in trustyai/service/trustyai-service.yaml
-  trustyai_service_account: trustyai-user   # ServiceAccount used to call the TrustyAI REST API
+  trustyai_service_name:    trustyai-service   # metadata.name in trustyai/service/trustyai-service.yaml
+  trustyai_service_account: trustyai-user      # ServiceAccount used to call the TrustyAI REST API
 
   # List of models to deploy. Each entry is an independent InferenceService.
   # For bias monitoring, supply two entries (e.g. baseline + candidate).
@@ -49,9 +49,33 @@ deployment:
       # Path to the KServe v2 JSON inference request used for smoke-testing.
       # Relative to repo_root; required for deployment validation and verify.
       inference_request: ""
+      # Optional: configure TrustyAI bias monitoring for this model.
+      # Omit or set to null to deploy without monitoring.
+      # bias_monitoring:
+      #   observations:
+      #     path: data/training/    # directory (*.json, lexical order) or single file
+      #     # files:                # OR explicit ordered list (mutually exclusive with path)
+      #     #   - data/training/0.json
+      #     #   - data/training/250.json
+      #   name_mapping:             # optional — rename opaque tensor columns
+      #     inputs:
+      #       input-0: "feature name"
+      #     outputs:
+      #       output-0: "outcome name"
+      #   spd_monitors:             # optional — Statistical Parity Difference
+      #     - protected_attribute:  "feature name"
+      #       privileged_value:     1.0
+      #       unprivileged_value:   0.0
+      #       outcome_name:         "outcome name"
+      #       favorable_outcome:    0.0
+      #       batch_size:           5000
+      #   identity_monitors:        # optional — track column averages over time
+      #     - column_name: "feature name"
+      #       batch_size:  250
 
 timeouts:
-  operator_ready: 300   # seconds
-  dsc_ready: 600
-  inference_ready: 120
-  trustyai_ready: 300
+  operator_ready:   300   # seconds
+  dsc_ready:        600
+  inference_ready:  120
+  trustyai_ready:   300
+  ingestion_ready:  300   # seconds to wait for TrustyAI to ingest observations
