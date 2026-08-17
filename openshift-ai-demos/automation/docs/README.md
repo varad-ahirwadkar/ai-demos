@@ -73,7 +73,7 @@ and waits for each step to be healthy before continuing.
 ```
  CLI  (rhoai/cli)
 ┌─────────────────────────────────────────────┐
-│  rhoai platform prepare / verify / analyze  │  User interface only. 
+│  rhoai platform init / setup / status / …   │  User interface only.
 │  rhoai usecase  deploy  / verify / cleanup  │  No business logic.
 └────────────────┬──────────────┬─────────────┘
                  │              │
@@ -90,7 +90,7 @@ and waits for each step to be healthy before continuing.
                  │
      ocp/        │
     ┌────────────▼────────────────────────────┐
-    │  resources.py   — Kubernetes API        │  Only layer that 
+    │  resources.py   — OpenShift API         │  Only layer that
     │  wait.py        — polling helpers       │  talks to the cluster.
     └────────────┬────────────────────────────┘
                  │
@@ -127,7 +127,7 @@ automation/
     │       └── usecase.py           rhoai usecase subcommands
     ├── config/
     │   ├── defaults.yaml            Bundled default configuration
-    │   └── loader.py                Config merge and env-var overrides
+    │   └── loader.py                Config merge logic (no env-var overrides)
     ├── ocp/
     │   ├── resources.py             All Kubernetes API calls
     │   └── wait.py                  Polling helpers (ready, deleted)
@@ -167,7 +167,7 @@ tests/
 | Package | Responsibility |
 |---|---|
 | `rhoai/cli` | Parse arguments, load config, delegate to platform or use cases. No business logic. |
-| `rhoai/config` | Load and merge YAML config with env-var overrides. |
+| `rhoai/config` | Load and deep-merge YAML config (defaults + user file). |
 | `rhoai/platform` | Reusable capabilities: operator install, DSC, model serving, TrustyAI, storage, verification. |
 | `rhoai/ocp` | The single integration point with the Kubernetes/OpenShift API. |
 | `rhoai/usecases` | Customer-facing solutions. Each use case owns its deploy/verify/cleanup sequence. |
@@ -186,24 +186,18 @@ tests/
 python3.12 -m venv .venv
 source .venv/bin/activate
 
-# 2. Install in editable mode (recommended for development)
-pip install -e ".[dev]"
+# 2. Install in editable mode
+pip install -e ".[dev]"   # include [dev] when running tests
 
 # 3. Verify the entry point is available
 rhoai --help
-```
-
-For production use (no dev dependencies):
-
-```bash
-pip install -e .
 ```
 
 ---
 
 ## 5. Configuration
 
-Configuration is assembled from two sources, merged in priority order
+Configuration is assembled from two sources, deep-merged in priority order
 (CLI flags are applied per-command after loading):
 
 ```
@@ -216,14 +210,15 @@ Configuration is assembled from two sources, merged in priority order
 
 ### User configuration file
 
-Create a YAML file with only the keys you want to override:
+Create a YAML file with only the keys you want to override.  Everything
+else is inherited from `rhoai/config/defaults.yaml`.
 
 ```yaml
 # my-cluster.yaml
 repo_root: /home/user/openshift-ai-demos
 
-cluster:
-  namespace: my-project
+platform:
+  namespace: redhat-ods-applications   # where RHOAI operands run
 
 storage:
   class_name: gp3-csi
@@ -237,36 +232,42 @@ rhoai usecase deploy fraud-detection --config my-cluster.yaml
 
 ### Default values
 
+Key defaults from `rhoai/config/defaults.yaml`:
+
 ```yaml
 log_level: INFO
 
-cluster:
+platform:
   namespace: redhat-ods-applications
 
 operator:
   name: rhods-operator
   namespace: redhat-ods-operator
   channel: stable
+  source: redhat-operators
+  source_namespace: openshift-marketplace
+
+components: []   # used by 'setup' — empty applies the base DSC manifest as-is
 
 dsc:
   name: default-dsc
   dsci_name: default-dsci
 
 storage:
-  class_name: ""          # empty = accept any available StorageClass
+  class_name: ""        # empty = accept any available RWO class
   s3_secret_name: s3-credentials
 
-fraud_detection:
-  inference_service_name: fraud-detection
-  serving_runtime_name: triton-ppc64le-runtime
-  trustyai_service_name: trustyai-service
+deployment:
+  namespace: ""                          # falls back to platform.namespace when empty
+  trustyai_service_name:    trustyai-service
+  trustyai_service_account: trustyai-user
 
 timeouts:
-  operator_ready: 300     # seconds
-  dsc_ready: 600
-  inference_ready: 600
-  trustyai_ready: 300
-  download_complete: 1800
+  operator_ready:  300   # seconds
+  dsc_ready:       600
+  inference_ready: 120
+  trustyai_ready:  300
+  ingestion_ready: 300
 ```
 
 ---
@@ -286,19 +287,25 @@ rhoai usecase  --help
 
 | Command | Description |
 |---|---|
-| `rhoai platform prepare` | Validate cluster prerequisites, install the RHOAI operator via OLM, and apply `DSCInitialization` + `DataScienceCluster`. Blocks until everything is Ready. |
-| `rhoai platform verify` | Check the health of the operator CSV, DSCI, and DSC. Prints a component summary and exits non-zero if any check fails. |
-| `rhoai platform analyze` | Display cluster info (OpenShift version, topology, worker node CPU/memory/GPU, storage classes) without modifying anything. |
+| `rhoai platform init` | Validate cluster prerequisites, install the RHOAI operator via OLM, and apply DSCInitialization. Blocks until everything is Ready. |
+| `rhoai platform enable` | Enable one or more DSC components (e.g. `kserve`, `trustyai`). |
+| `rhoai platform disable` | Disable one or more DSC components. |
+| `rhoai platform setup` | One-shot bootstrap: init + enable components listed in config. |
+| `rhoai platform status` | Check health of the operator CSV, DSCI, and DSC. Exits non-zero if any check fails. |
+| `rhoai platform inspect` | Display cluster info (OpenShift version, topology, worker node CPU/memory/GPU, storage classes) without modifying anything. |
+| `rhoai platform uninstall` | Remove all RHOAI platform resources. |
 
 ```bash
-# Prepare the platform
-rhoai platform prepare --config my-cluster.yaml
+# Bootstrap the platform in one shot
+rhoai platform setup --config my-cluster.yaml
 
-# Verify it is healthy
-rhoai platform verify
+# Or step by step
+rhoai platform init   --config my-cluster.yaml --channel stable-3.x
+rhoai platform enable kserve trustyai --config my-cluster.yaml
+rhoai platform status --config my-cluster.yaml
 
-# Inspect the cluster
-rhoai platform analyze
+# Inspect the cluster (read-only)
+rhoai platform inspect
 ```
 
 ### `rhoai usecase`
@@ -338,12 +345,12 @@ Cluster validation and platform bootstrap.
 
 | Function | Description |
 |---|---|
-| `prepare_platform(config)` | Run all pre-flight checks: login, RBAC, storage, namespace. |
-| `deploy_platform(config)` | Full bootstrap: `prepare_platform` → operator install/wait → DSC/DSCI apply and wait. Shared by the CLI and all use-case deploy functions. |
 | `validate_login()` | Confirm the cluster is reachable via the current kubeconfig. |
 | `validate_permissions(namespace)` | Confirm `create` access on `Subscriptions` in the operator namespace. |
 | `validate_storage(class_name)` | Confirm a named `StorageClass` exists, or that at least one exists when no name is given. |
 | `validate_namespace(namespace)` | Ensure the namespace exists, creating it if absent. |
+| `platform_needs_reconciliation(config)` | Return `True` if the platform state does not match the desired config. |
+| `bootstrap_platform(config)` | Full bootstrap: validate cluster → operator install/wait → DSC/DSCI apply and wait. Shared by the CLI and all use-case deploy functions. |
 | `get_cluster_info()` | Return OpenShift version, topology (SNO vs Multi-node), per-worker-node CPU/memory/GPU, and per-StorageClass PV usage. |
 
 ### `operators.py`
@@ -478,26 +485,33 @@ to `platform/manifests.py` — `assets.py` only resolves use-case-specific paths
 
 Orchestrates the full deployment in a documented, numbered sequence:
 
-1–3. Call `prepare.deploy_platform(config)` — validates the cluster, installs
-     the operator, and applies DSC/DSCI.
-4.   Apply S3 credentials.
-5.   Process the Triton `ServingRuntime` Template and apply the `InferenceService`.
-     Wait for the `InferenceService` to be `Ready`.
-6.   Apply TrustyAI monitoring config, patch `inferenceservice-config`, apply
-     the `TrustyAIService`, and wait for it to be `Ready`.
+1–3. Call `prepare.bootstrap_platform(config)` — validates the cluster,
+     installs the operator, and applies DSC/DSCI.
+4.   Apply S3 credentials (skipped for `pvc://`, `hf://`, `oci://` URIs).
+5.   For each model in `deployment.models`: apply Triton `ServingRuntime`
+     (via OpenShift Template), apply `InferenceService`, wait for `Ready`,
+     run smoke-test inference.
+6.   If any model has `bias_monitoring` configured: enable user-workload
+     monitoring, apply RBAC, apply `TrustyAIService`, wait for `Ready`.
+7.   For each model with `bias_monitoring`: send observations, wait for
+     ingestion, apply name mapping (optional), schedule SPD and identity
+     monitors (optional).
+8.   Print deployment summary.
 
 `deploy.py` calls `platform/` modules only — never `ocp/` directly.
 
 ### `verify.py`
 
-Runs platform checks (`verify_platform`) then use-case-specific checks:
-asserts the `InferenceService` and `TrustyAIService` are both `Ready`.
+Runs platform checks (`verify_platform`) then for each model:
+confirms `InferenceService` is `Ready`, runs live inference, and (when
+`bias_monitoring` is configured) checks TrustyAI observation count > 0.
 
 ### `cleanup.py`
 
-Deletes use-case resources in reverse deploy order: TrustyAI Service, then
-InferenceService, then ServingRuntime. Does not touch platform resources
-(DSC, DSCI) — that is the CLI's responsibility via `--delete-platform`.
+Deletes use-case resources in reverse deploy order: TrustyAI Service (if
+present), then each `InferenceService` and `ServingRuntime`. Does not touch
+platform resources (DSC, DSCI) — that is the CLI's responsibility via
+`--delete-platform`.
 
 ---
 
@@ -603,7 +617,7 @@ Log level is set by the `--log-level` CLI option (default: `INFO`).
 rhoai --log-level DEBUG usecase deploy fraud-detection
 
 # Suppress everything except errors
-rhoai --log-level ERROR platform verify
+rhoai --log-level ERROR platform status
 ```
 
 Log format:
@@ -722,8 +736,8 @@ requires only a new package under `rhoai/usecases/` and a single entry in
   `storage`, `verify`)
 - `fraud-detection` use case (end-to-end deploy, verify, cleanup)
 - CLI with `platform` and `usecase` command groups
-- Configuration system with YAML + environment variable overrides
-- 128-test suite (unit + integration), all passing
+- Configuration system with YAML deep-merge (defaults + user file)
+- 233-test suite (unit + integration), all passing
 
 ### Planned
 

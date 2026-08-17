@@ -42,7 +42,7 @@ Config keys for this use case live under `deployment:` in your YAML file.
 The most common overrides:
 ```yaml
 # config-fraud-detection.yaml
-repo_root: /path/to/ai-demos/openshift-ai-demos
+repo_root: /path/to/openshift-ai-demos
 
 operator:
   channel: stable-3.x
@@ -51,18 +51,17 @@ components:
   - dashboard
   - workbenches
   - kserve
-  - trustyai
 
 deployment:
   namespace: test-fraud
   models:
     - name: demo-loan-nn-onnx-alpha
       model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
-      inference_request: automation/rhoai/usecases/inputs/demo-loan.json
+      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
 
     - name: demo-loan-nn-onnx-beta
       model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
-      inference_request: automation/rhoai/usecases/inputs/demo-loan.json
+      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
 ```
 
 #### `models`
@@ -92,37 +91,33 @@ rhoai usecase deploy fraud-detection -c openshift-ai-demos/automation/config-fra
 ```
 
 Checks the RHOAI platform (bootstrapping it if needed), deploys the Triton
-`ServingRuntime` and `InferenceService`, applies TrustyAI monitoring, and
-validates that the model is serving inference requests.
+`ServingRuntime` and `InferenceService` for each configured model, then
+validates that each model is serving inference requests.
 
 **Sample output:**
 ```
-Deploying : fraud-detection
-Namespace : test-fraud
-Models    : 2
-
 Checking RHOAI platform...
 
   ✔  Operator ready
   ✔  DSCI 'default-dsci' ready
   ✔  DSC 'default-dsc' ready
-  ✔  Components enabled: Dashboard, Workbenches, KServe, TrustyAI
+  ✔  Components enabled: Dashboard, Workbenches, KServe
 
 ✔  Platform ready  (5s)
 
 Deploying 'demo-loan-nn-onnx-alpha'...
 
-✔  Configuring Triton ServingRuntime  (6s)
-✔  Deploying service 'demo-loan-nn-onnx-alpha'  (21s)
-✔  Validating model inference  (1s)
+  ✔  Configuring Triton ServingRuntime  (6s)
+  ✔  Deploying service 'demo-loan-nn-onnx-alpha'  (21s)
+  ✔  Validating model inference  (1s)
 
 ✔  'demo-loan-nn-onnx-alpha' ready  (30s)
 
 Deploying 'demo-loan-nn-onnx-beta'...
 
-✔  Configuring Triton ServingRuntime  (6s)
-✔  Deploying service 'demo-loan-nn-onnx-beta'  (10s)
-✔  Validating model inference  (1s)
+  ✔  Configuring Triton ServingRuntime  (6s)
+  ✔  Deploying service 'demo-loan-nn-onnx-beta'  (10s)
+  ✔  Validating model inference  (1s)
 
 ✔  'demo-loan-nn-onnx-beta' ready  (19s)
 
