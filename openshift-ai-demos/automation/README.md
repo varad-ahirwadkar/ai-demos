@@ -11,6 +11,34 @@ with a handful of commands instead of a manual, multi-step procedure.
 
 ---
 
+## Quick Start
+
+> **Prerequisite:** Python ≥ 3.12, `oc` CLI, and an active `oc login` session.
+
+```bash
+# 1. Install
+cd openshift-ai-demos/automation
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+
+# 2. Copy the example config and set repo_root to the absolute path of your
+#    openshift-ai-demos checkout — the ~ shortcut is not expanded.
+cp config-fraud-detection.yaml my-config.yaml
+#    Edit my-config.yaml:
+#      repo_root: /absolute/path/to/openshift-ai-demos
+
+# 3. Deploy, verify, and clean up
+rhoai usecase deploy  fraud-detection -c my-config.yaml
+rhoai usecase verify  fraud-detection -c my-config.yaml
+rhoai usecase cleanup fraud-detection -c my-config.yaml
+```
+
+For the full lifecycle including TrustyAI bias monitoring, use
+[`config-fraud-detection-trustyai.yaml`](config-fraud-detection-trustyai.yaml) instead.
+See [`rhoai/usecases/README.md`](rhoai/usecases/README.md) for the complete workflow.
+
+---
+
 ## Prerequisites
 
 | Requirement | Notes |
@@ -52,7 +80,7 @@ rhoai usecase deploy fraud-detection --config config-fraud-detection.yaml
 A minimal config file looks like this:
 
 ```yaml
-repo_root: /path/to/openshift-ai-demos
+repo_root: /absolute/path/to/openshift-ai-demos   # must be absolute — ~ is not expanded
 
 platform:
   namespace: redhat-ods-applications   # where RHOAI operands run
@@ -143,7 +171,7 @@ use case: **[`rhoai/usecases/README.md`](rhoai/usecases/README.md)**.
 ## Logging
 
 Commands run in quiet mode by default — only the structured summary output
-(the boxes and tables you see above) is printed.
+is printed.
 
 ```bash
 # Normal output — structured summary only
@@ -184,5 +212,118 @@ ruff check rhoai/                            # lint
 See [`docs/README.md`](docs/README.md) for test layout and
 conventions.
 
+---
+
+## Troubleshooting
+
+### `rhoai: command not found`
+
+**Cause:** The virtual environment is not activated or the package is not installed.
+
+**Fix:**
+```bash
+source openshift-ai-demos/automation/.venv/bin/activate
+pip install -e openshift-ai-demos/automation
+```
+
+---
+
+### `FileNotFoundError` or `No such file or directory` on a manifest path
+
+**Cause:** `repo_root` in the config file is wrong, relative, or uses a `~` shortcut.
+
+**Fix:** Set `repo_root` to the **absolute** path of the `openshift-ai-demos` directory.
+The `~` shortcut is not expanded — use the full path:
+
+```yaml
+# Wrong
+repo_root: ~/repos/openshift-ai-demos
+
+# Correct
+repo_root: /home/user/repos/openshift-ai-demos
+```
+
+---
+
+### OLM error: `ConstraintsNotSatisfiable`
+
+**Cause:** An invalid OLM channel name was passed to `rhoai platform init`.
+
+**Fix:** List valid channels, then retry with a channel from that list:
+
+```bash
+oc get packagemanifest rhods-operator \
+  -o jsonpath='{.status.channels[*].name}'
+
+rhoai platform init --channel stable-3.x   # use a channel from the list above
+```
+
+---
+
+### `InferenceService` stays `Unknown` after deploy
+
+**Cause:** The model storage URI is unreachable, the PVC does not exist, or the
+`kserve` DSC component is not enabled.
+
+**Fix:**
+```bash
+rhoai platform status                     # confirm kserve is listed under Components
+oc get pvc -n <namespace>                 # confirm the PVC exists and is Bound
+rhoai --log-level DEBUG usecase deploy fraud-detection -c my-config.yaml
+```
+
+---
+
+### TrustyAI pod stays `Pending`
+
+**Cause:** The `trustyai` component is not enabled in the DataScienceCluster, or
+no matching storage class is available.
+
+**Fix:**
+```bash
+rhoai platform enable trustyai            # enable the component
+rhoai platform status                     # confirm trustyai appears under Components
+oc get pvc -n <namespace>                 # confirm PVC bound
+```
+
+---
+
+### Inference endpoint returns `503` during `verify`
+
+**Cause:** The pod is not yet ready, or the cluster route is not reachable from
+this machine.
+
+**Fix:** Wait for the pod, then re-run verify. If the hostname does not resolve,
+add it to `/etc/hosts` as shown in the deploy output:
+
+```bash
+rhoai usecase verify fraud-detection -c my-config.yaml
+```
+
+---
+
+### Namespace stuck in `Terminating` after `uninstall`
+
+**Cause:** Stale finalizers prevent the namespace from completing deletion.
+
+**Fix:** `rhoai platform uninstall` handles this automatically. If the namespace
+was deleted by other means, run:
+
+```bash
+rhoai platform uninstall -y               # automated finalizer cleanup is built in
+```
+
+---
+
+### Any command fails with no obvious error message
+
+**Cause:** Default quiet mode suppresses log output.
+
+**Fix:** Re-run with `--log-level DEBUG` immediately after `rhoai`:
+
+```bash
+rhoai --log-level DEBUG usecase deploy fraud-detection -c my-config.yaml
+rhoai --log-level DEBUG platform status
+```
 ---
 

@@ -37,7 +37,7 @@ deployment:
         # Observation files: directory (all *.json in lexical order) or explicit list.
         # Each file is one KServe v2 inference request — see docs/bias-readme.md.
         observations:
-          path: automation/rhoai/usecases/fraud_detection/inputs/training/data # relative to repo_root
+          path: automation/rhoai/usecases/fraud_detection/inputs/training/csv # relative to repo_root
 
         # Rename opaque internal column names to human-readable labels.
         name_mapping:
@@ -78,7 +78,7 @@ deployment:
 
       bias_monitoring:
         observations:
-          path: automation/rhoai/usecases/fraud_detection/inputs/training/data
+          path: automation/rhoai/usecases/fraud_detection/inputs/training/csv
 
         name_mapping:
           inputs:

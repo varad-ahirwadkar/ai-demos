@@ -1,5 +1,7 @@
 """KServe InferenceService and ServingRuntime capability."""
 
+import csv
+import io
 import json
 import logging
 import time
@@ -162,11 +164,12 @@ def send_observations(
     model_name: str,
     namespace: str,
     observation_files: list[Path],
+    schema_source: Path | None = None,
 ) -> int:
     """Send historical observation batches to a deployed model for TrustyAI ingestion.
 
-    Each file in observation_files must be a local JSON file containing one
-    complete KServe v2 inference request.  Expected structure::
+    Each file in observation_files must be a local KServe v2 inference request
+    (JSON or CSV).  Expected JSON structure::
 
         {
           "inputs": [{
@@ -177,10 +180,14 @@ def send_observations(
           }]
         }
 
+    CSV files are converted to the above structure; JSON files are posted as-is.
+    Tensor metadata (``name`` and ``datatype``) is read from ``schema_source``
+    via ``_read_tensor_schema`` — pass the model's ``inference_request`` JSON
+    (overridden by ``csv_config`` values when present).
+
     Files are validated locally before any network call is made.  Validation
-    checks that each file is valid JSON, contains a non-empty ``inputs`` list,
-    and that the first tensor has both ``shape`` and ``data`` fields with
-    ``shape[0] == len(data)``.
+    checks that each file contains a non-empty ``inputs`` list and that
+    ``shape[0] == len(data)`` for the first tensor.
 
     Each file is posted as a single HTTP call to the model's KServe v2
     inference endpoint (``/v2/models/<model_name>/infer``).  The KServe
@@ -188,25 +195,32 @@ def send_observations(
     to TrustyAI automatically — no direct TrustyAI API call is needed here.
 
     Args:
-        model_name:         InferenceService name (also the Triton model name).
-        namespace:          Namespace where the model is deployed.
-        observation_files:  Ordered list of validated local KServe v2 JSON files.
+        model_name:        InferenceService name (also the Triton model name).
+        namespace:         Namespace where the model is deployed.
+        observation_files: Ordered list of local KServe v2 JSON or CSV files.
+        schema_source:     KServe v2 JSON file from which ``inputs[0].name``
+                           and ``inputs[0].datatype`` are read for CSV
+                           conversion.  Pass the model's ``inference_request``
+                           JSON.  ``None`` is safe when all files are JSON.
 
     Returns:
         Total number of observation rows sent across all files.
 
     Raises:
         FileNotFoundError: If any path does not exist.
-        ValueError:        If any file fails structural validation.
+        ValueError:        If any file fails structural validation, or if
+                           ``schema_source`` is missing required fields.
         RuntimeError:      If any HTTP POST fails (non-200 response).
     """
     if not observation_files:
         raise ValueError("observation_files must not be empty")
 
+    input_name, datatype = _read_tensor_schema(schema_source)
+
     # --- local validation pass (before touching the cluster) ---
     total_rows = 0
     for path in observation_files:
-        total_rows += _validate_observation_file(path)
+        total_rows += _validate_observation_file(path, input_name=input_name, datatype=datatype)
 
     # --- send each batch ---
     base_url  = get_inference_url(model_name, namespace)
@@ -217,7 +231,7 @@ def send_observations(
         total_rows, len(observation_files), model_name,
     )
     for path in observation_files:
-        payload = json.loads(path.read_text())
+        payload = _load_request_payload(path, input_name=input_name, datatype=datatype)
         log.debug("POST %s  (%s)", infer_url, path.name)
         with _quiet_urllib3():
             _http_post(infer_url, payload)
@@ -226,20 +240,195 @@ def send_observations(
     return total_rows
 
 
-def _validate_observation_file(path: Path) -> int:
-    """Validate a single KServe v2 observation file and return its row count.
+def _read_tensor_schema(schema_source: Path | None) -> tuple[str, str]:
+    """Read ``inputs[0].name`` and ``inputs[0].datatype`` from a KServe v2 JSON file.
 
-    Only the first tensor (``inputs[0]``) is inspected.  The row count comes
-    from ``inputs[0].shape[0]``, which is the batch dimension for a standard
-    single-input model.  Files with multiple tensors are posted in full; the
-    additional tensors are not validated here because TrustyAI's ingestion
-    threshold is computed against the row count of the first tensor only.
+    Used to resolve tensor metadata when converting CSV files.  The caller
+    passes the model's ``inference_request`` JSON as the canonical source;
+    when ``csv_config`` is present in the model config the caller pre-resolves
+    those values into a synthetic path or passes them directly — see
+    ``_resolve_tensor_schema`` in ``deploy.py``.
 
     Args:
-        path: Local path to the JSON file.
+        schema_source: Path to a KServe v2 JSON file whose ``inputs[0]``
+                       contains ``name`` and ``datatype``.  When ``None``,
+                       defaults ``("input", "FP64")`` are returned — only safe
+                       when all files are JSON.
 
     Returns:
-        Number of rows (``inputs[0].shape[0]``).
+        ``(input_name, datatype)`` tuple.
+
+    Raises:
+        FileNotFoundError: If ``schema_source`` is provided but does not exist.
+        ValueError:        If the file is not valid JSON, or ``inputs[0]`` is
+                           missing ``name`` or ``datatype``.
+    """
+    if schema_source is None:
+        return "input", "FP64"
+    if not schema_source.exists():
+        raise FileNotFoundError(f"Schema source not found: {schema_source}")
+    try:
+        doc = json.loads(schema_source.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Schema source is not valid JSON: {schema_source}") from exc
+    try:
+        first = doc["inputs"][0]
+        name     = first["name"]
+        datatype = first["datatype"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError(
+            f"Schema source '{schema_source.name}': inputs[0] must have "
+            "'name' and 'datatype' fields.  Expected a KServe v2 payload."
+        ) from exc
+    return name, datatype
+
+
+
+
+def _csv_to_kserve_payload(
+    path: Path,
+    input_name: str = "input",
+    datatype: str = "FP64",
+) -> dict:
+    """Convert a CSV file to a KServe v2 inference request payload.
+
+    Reads all rows, converts every value to ``float``, and wraps them in a
+    single-tensor KServe v2 envelope::
+
+        {
+          "inputs": [{
+            "name":     <input_name>,
+            "shape":    [N, F],
+            "datatype": <datatype>,
+            "data":     [[...], ...]
+          }]
+        }
+
+    The tensor ``name`` and ``datatype`` must match the model's expected input
+    signature.  They are resolved automatically from the model's
+    ``inference_request`` JSON via ``_read_tensor_schema``; ``csv_config`` in
+    the model config provides an optional explicit override.
+
+    A header row is detected automatically: if the first row cannot be
+    converted to float entirely, it is treated as a header and skipped.
+
+    Args:
+        path:       Path to the CSV file.
+        input_name: Name of the input tensor, resolved by the caller via
+                    ``_read_tensor_schema``.
+        datatype:   KServe v2 datatype string (e.g. ``"FP64"``, ``"FP32"``),
+                    resolved by the caller via ``_read_tensor_schema``.
+
+    Returns:
+        KServe v2 payload dict ready for JSON serialisation.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError:        If the file is empty, contains no data rows, or
+                           a value cannot be converted to float.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"CSV file not found: {path}")
+
+    text = path.read_text()
+    reader = csv.reader(io.StringIO(text))
+    rows: list[list[float]] = []
+    for line_no, raw_row in enumerate(reader, start=1):
+        if not raw_row:
+            continue
+        try:
+            row = [float(v) for v in raw_row]
+        except ValueError:
+            if line_no == 1:
+                # Non-numeric first row → treat as header, skip it.
+                log.debug("CSV '%s': skipping header row: %s", path.name, raw_row)
+                continue
+            raise ValueError(
+                f"CSV '{path.name}' row {line_no}: "
+                f"cannot convert to float: {raw_row!r}. "
+                "All data values must be numeric."
+            )
+        rows.append(row)
+
+    if not rows:
+        raise ValueError(f"CSV '{path.name}' contains no data rows.")
+
+    n_rows = len(rows)
+    n_cols = len(rows[0])
+    return {
+        "inputs": [{
+            "name":     input_name,
+            "shape":    [n_rows, n_cols],
+            "datatype": datatype,
+            "data":     rows,
+        }]
+    }
+
+
+def _load_request_payload(
+    path: Path,
+    input_name: str = "input",
+    datatype: str = "FP64",
+) -> dict:
+    """Load a KServe v2 inference request from a JSON or CSV file.
+
+    JSON files are loaded as-is.  CSV files are converted to a single-tensor
+    KServe v2 payload via ``_csv_to_kserve_payload`` using the supplied
+    ``input_name`` and ``datatype``.
+
+    Args:
+        path:       Path to a ``.json`` or ``.csv`` file.
+        input_name: Tensor input name passed to ``_csv_to_kserve_payload``.
+                    Ignored for JSON files.
+        datatype:   KServe v2 datatype string passed to ``_csv_to_kserve_payload``.
+                    Ignored for JSON files.
+
+    Returns:
+        KServe v2 payload dict.
+
+    Raises:
+        ValueError: If the file extension is not ``.json`` or ``.csv``.
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return _csv_to_kserve_payload(path, input_name=input_name, datatype=datatype)
+    if suffix == ".json":
+        try:
+            return json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Inference request file is not valid JSON: {path}") from exc
+    raise ValueError(
+        f"Unsupported inference request file type: '{path.name}'. "
+        "Expected a .json or .csv file."
+    )
+
+
+def _validate_observation_file(
+    path: Path,
+    input_name: str = "input",
+    datatype: str = "FP64",
+) -> int:
+    """Validate a single observation file (JSON or CSV) and return its row count.
+
+    Accepts:
+
+    * **JSON** — must be a KServe v2 inference request payload.  The row count
+      comes from ``inputs[0].shape[0]``.  Only the first tensor is inspected;
+      additional tensors are posted in full.
+    * **CSV** — converted to a KServe v2 payload via ``_csv_to_kserve_payload``
+      using ``input_name`` and ``datatype``.  The row count is the number of
+      data rows after an optional header.
+
+    Args:
+        path:       Local path to a ``.json`` or ``.csv`` file.
+        input_name: Tensor name passed to ``_csv_to_kserve_payload`` for CSV
+                    files.  Ignored for JSON files.
+        datatype:   KServe v2 datatype string passed to
+                    ``_csv_to_kserve_payload`` for CSV files.  Ignored for
+                    JSON files.
+
+    Returns:
+        Number of rows in the first (or only) input tensor.
 
     Raises:
         FileNotFoundError: If path does not exist.
@@ -247,16 +436,14 @@ def _validate_observation_file(path: Path) -> int:
     """
     if not path.exists():
         raise FileNotFoundError(f"Observation file not found: {path}")
-    try:
-        payload = json.loads(path.read_text())
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Observation file is not valid JSON: {path}") from exc
+
+    payload = _load_request_payload(path, input_name=input_name, datatype=datatype)
 
     inputs = payload.get("inputs")
     if not inputs or not isinstance(inputs, list):
         raise ValueError(
             f"Observation file '{path.name}' has no 'inputs' list. "
-            "This framework expects KServe v2 inference request payloads "
+            "Expected a KServe v2 payload "
             "({'inputs': [{'name': ..., 'shape': [N, ...], 'datatype': ..., 'data': [...]}]})."
         )
     first = inputs[0]
@@ -362,6 +549,7 @@ def verify_triton_inference(
     namespace: str,
     model_name: str,
     sample_request: Path,
+    schema_source: Path | None = None,
 ) -> None:
     """Smoke-test a Triton InferenceService by submitting a sample request.
 
@@ -375,19 +563,29 @@ def verify_triton_inference(
     urllib3 connection-level warnings are suppressed during both attempts so that
     internal retry noise does not appear in user-facing output.
 
+    When ``sample_request`` is a CSV file, tensor metadata is read from
+    ``schema_source`` via ``_read_tensor_schema``.  Pass the model's
+    ``inference_request`` JSON (overridden by ``csv_config`` when present).
+    JSON request files are posted as-is; ``schema_source`` is ignored for them.
+
     Args:
         isvc_name:      Kubernetes name of the InferenceService.
         namespace:      Namespace where the InferenceService lives.
         model_name:     Model name as registered in Triton (used in URL and response check).
-        sample_request: Path to a JSON file containing the KServe v2 inference payload.
+        sample_request: Path to a ``.json`` or ``.csv`` file containing the
+                        KServe v2 inference payload.
+        schema_source:  KServe v2 JSON file from which ``inputs[0].name`` and
+                        ``inputs[0].datatype`` are read for CSV conversion.
+                        ``None`` is safe for JSON request files.
 
     Raises:
         EndpointUnreachable: When the endpoint cannot be reached after one retry.
         RuntimeError:        If the inference request fails or the response is not valid.
     """
-    base_url  = get_inference_url(isvc_name, namespace)
-    infer_url = base_url + _TRITON_INFER_PATH.format(model_name=model_name)
-    payload   = json.loads(sample_request.read_text())
+    base_url   = get_inference_url(isvc_name, namespace)
+    infer_url  = base_url + _TRITON_INFER_PATH.format(model_name=model_name)
+    input_name, datatype = _read_tensor_schema(schema_source)
+    payload    = _load_request_payload(sample_request, input_name=input_name, datatype=datatype)
     curl_cmd  = (
         f"curl -sk -X POST {infer_url}"
         f" -H 'Content-Type: application/json'"

@@ -69,6 +69,53 @@ _COMPONENT_DISPLAY: dict[str, str] = {
 }
 
 
+def _resolve_schema_source(model: dict[str, Any], repo_root: str) -> Path | None:
+    """Return the schema source path for a model's CSV conversions.
+
+    Resolution order:
+
+    1. ``csv_config`` present in model config — write its ``input_name`` and
+       ``datatype`` into a temporary JSON file so ``_read_tensor_schema`` can
+       read them uniformly.  (Not used here — callers pass ``csv_config`` values
+       directly when overriding.)
+    2. ``inference_request`` is a ``.json`` — return it as the schema source.
+    3. No usable source — return ``None`` (safe when all files are JSON).
+
+    In practice this returns the resolved ``inference_request`` JSON path when
+    it exists, which covers the common case.  ``csv_config`` override is handled
+    directly by passing a pre-built ``Path`` from the caller when needed.
+
+    Args:
+        model:     Model config dict.
+        repo_root: Absolute repo root path.
+
+    Returns:
+        Absolute path to a KServe v2 JSON file, or ``None``.
+    """
+    # csv_config explicit override — build a temporary file on the fly so that
+    # _read_tensor_schema gets a Path as expected.
+    csv_cfg = model.get("csv_config")
+    if csv_cfg:
+        import tempfile, json as _json
+        tmp = Path(tempfile.mktemp(suffix=".json"))
+        tmp.write_text(_json.dumps({
+            "inputs": [{
+                "name":     csv_cfg.get("input_name", "input"),
+                "datatype": csv_cfg.get("datatype",   "FP64"),
+                "shape":    [1, 1],
+                "data":     [[0]],
+            }]
+        }))
+        return tmp
+
+    # Fall back to inference_request JSON.
+    req = model.get("inference_request", "")
+    if req and Path(req).suffix.lower() == ".json":
+        return Path(repo_root) / req
+
+    return None
+
+
 def _deploy_model(
     model: dict[str, Any],
     repo_root: str,
@@ -120,7 +167,8 @@ def _deploy_model(
     with step("Smoke-testing model endpoint") as s:
         try:
             inference.verify_triton_inference(
-                name, namespace, name, resolve_inference_request(model, repo_root)
+                name, namespace, name, resolve_inference_request(model, repo_root),
+                schema_source=_resolve_schema_source(model, repo_root),
             )
         except EndpointUnreachable as exc:
             s.skip()
@@ -137,8 +185,9 @@ def _resolve_observation_files(obs_cfg: dict[str, Any], repo_root: str) -> list[
     Accepts two mutually exclusive forms:
 
     ``path`` — a single file or a directory.  If a directory, all ``*.json``
-    files are returned in lexical filename order.  An empty directory raises
-    ``ValueError``.
+    and ``*.csv`` files are returned in lexical filename order (JSON and CSV
+    files may be mixed; each is converted to a KServe v2 payload at send time).
+    An empty directory raises ``ValueError``.
 
     ``files`` — an explicit ordered list of file paths (relative to repo_root).
 
@@ -153,7 +202,7 @@ def _resolve_observation_files(obs_cfg: dict[str, Any], repo_root: str) -> list[
 
     Raises:
         ValueError: If the config is invalid (both keys set, neither key set,
-                    directory is empty).
+                    directory is empty or contains no supported files).
     """
     has_path  = "path"  in obs_cfg
     has_files = "files" in obs_cfg
@@ -177,10 +226,13 @@ def _resolve_observation_files(obs_cfg: dict[str, Any], repo_root: str) -> list[
     # --- path form ---
     resolved = Path(repo_root) / obs_cfg["path"]
     if resolved.is_dir():
-        paths = sorted(resolved.glob("*.json"), key=lambda p: p.name)
+        paths = sorted(
+            [p for p in resolved.iterdir() if p.suffix.lower() in (".json", ".csv")],
+            key=lambda p: p.name,
+        )
         if not paths:
             raise ValueError(
-                f"Observation directory contains no *.json files: {resolved}"
+                f"Observation directory contains no .json or .csv files: {resolved}"
             )
         return paths
     return [resolved]
@@ -224,7 +276,10 @@ def _configure_bias_monitoring(
     # 1+2 — resolve files, validate locally, send to model endpoint.
     with step("Sending observations") as s:
         obs_files  = _resolve_observation_files(cfg["observations"], repo_root)
-        total_sent = inference.send_observations(model_id, namespace, obs_files)
+        total_sent = inference.send_observations(
+            model_id, namespace, obs_files,
+            schema_source=_resolve_schema_source(model, repo_root),
+        )
 
     # 3 — wait for TrustyAI to ingest the observations.
     with step(f"Waiting for ingestion ({total_sent} rows)") as s:

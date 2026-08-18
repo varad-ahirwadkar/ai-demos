@@ -10,7 +10,7 @@ from rhoai.platform import inference, trustyai, trustyai_client
 from rhoai.platform import verify as platform_verify
 from rhoai.platform.inference import EndpointUnreachable
 from rhoai.usecases.fraud_detection.assets import ModelResult, resolve_inference_request
-from rhoai.usecases.fraud_detection.deploy import print_summary
+from rhoai.usecases.fraud_detection.deploy import _resolve_schema_source, print_summary
 from rhoai.utils.logger import get_logger
 from rhoai.utils.progress import elapsed_timer, header_step, step
 
@@ -54,6 +54,7 @@ def verify(config: dict[str, Any]) -> None:
     namespace      = dep_cfg.get("namespace") or config["platform"]["namespace"]
     repo_root      = config["repo_root"]
     models         = dep_cfg.get("models", [])
+
     trustyai_name  = dep_cfg.get("trustyai_service_name",    "trustyai-service")
     trustyai_sa    = dep_cfg.get("trustyai_service_account", "trustyai-user")
 
@@ -101,7 +102,8 @@ def verify(config: dict[str, Any]) -> None:
                     try:
                         inference.verify_triton_inference(
                             name, namespace, name,
-                            resolve_inference_request(model, repo_root)
+                            resolve_inference_request(model, repo_root),
+                            schema_source=_resolve_schema_source(model, repo_root),
                         )
                     except EndpointUnreachable as exc:
                         s.skip()

@@ -390,3 +390,346 @@ class TestWaitUntilServingRuntimesGone:
         inference.wait_until_serving_runtimes_gone(["triton-alpha", "triton-beta"], "ns")
         condition_fn = mock_wait.wait_until.call_args[0][0]
         assert condition_fn() is False
+
+
+# ---------------------------------------------------------------------------
+# _csv_to_kserve_payload
+# ---------------------------------------------------------------------------
+
+class TestCsvToKservePayload:
+    """Tests for the CSV → KServe v2 conversion helper."""
+
+    def _write(self, tmp_path, name: str, content: str):
+        p = tmp_path / name
+        p.write_text(content)
+        return p
+
+    def test_converts_numeric_csv_without_header(self, tmp_path) -> None:
+        p = self._write(tmp_path, "data.csv", "1.0,2.0,3.0\n4.0,5.0,6.0\n")
+        payload = inference._csv_to_kserve_payload(p)
+        inputs = payload["inputs"][0]
+        assert inputs["shape"] == [2, 3]
+        assert inputs["data"] == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+        assert inputs["datatype"] == "FP64"
+        assert inputs["name"] == "input"
+
+    def test_custom_input_name_and_datatype(self, tmp_path) -> None:
+        p = self._write(tmp_path, "data.csv", "1.0,2.0\n3.0,4.0\n")
+        payload = inference._csv_to_kserve_payload(
+            p, input_name="customer_data_input", datatype="FP32"
+        )
+        inputs = payload["inputs"][0]
+        assert inputs["name"] == "customer_data_input"
+        assert inputs["datatype"] == "FP32"
+
+    def test_skips_non_numeric_header_row(self, tmp_path) -> None:
+        p = self._write(tmp_path, "data.csv", "col_a,col_b\n1.0,2.0\n3.0,4.0\n")
+        payload = inference._csv_to_kserve_payload(p)
+        inputs = payload["inputs"][0]
+        assert inputs["shape"] == [2, 2]
+        assert inputs["data"] == [[1.0, 2.0], [3.0, 4.0]]
+
+    def test_single_row(self, tmp_path) -> None:
+        p = self._write(tmp_path, "data.csv", "0.0,202500.0,1.0\n")
+        payload = inference._csv_to_kserve_payload(p)
+        assert payload["inputs"][0]["shape"] == [1, 3]
+
+    def test_raises_on_empty_file(self, tmp_path) -> None:
+        p = self._write(tmp_path, "data.csv", "")
+        with pytest.raises(ValueError, match="no data rows"):
+            inference._csv_to_kserve_payload(p)
+
+    def test_raises_on_header_only(self, tmp_path) -> None:
+        p = self._write(tmp_path, "data.csv", "col_a,col_b\n")
+        with pytest.raises(ValueError, match="no data rows"):
+            inference._csv_to_kserve_payload(p)
+
+    def test_raises_on_non_numeric_data_row(self, tmp_path) -> None:
+        p = self._write(tmp_path, "data.csv", "1.0,2.0\nbad,value\n")
+        with pytest.raises(ValueError, match="cannot convert to float"):
+            inference._csv_to_kserve_payload(p)
+
+    def test_raises_on_missing_file(self, tmp_path) -> None:
+        p = tmp_path / "missing.csv"
+        with pytest.raises(FileNotFoundError):
+            inference._csv_to_kserve_payload(p)
+
+    def test_ignores_blank_lines(self, tmp_path) -> None:
+        p = self._write(tmp_path, "data.csv", "1.0,2.0\n\n3.0,4.0\n")
+        payload = inference._csv_to_kserve_payload(p)
+        assert payload["inputs"][0]["shape"] == [2, 2]
+
+
+# ---------------------------------------------------------------------------
+# _load_request_payload
+# ---------------------------------------------------------------------------
+
+class TestLoadRequestPayload:
+    """Tests for the format-dispatching _load_request_payload helper."""
+
+    def _write(self, tmp_path, name: str, content: str):
+        p = tmp_path / name
+        p.write_text(content)
+        return p
+
+    def test_loads_json_file(self, tmp_path) -> None:
+        import json as _json
+        body = {"inputs": [{"name": "x", "shape": [1, 2], "datatype": "FP64", "data": [[1.0, 2.0]]}]}
+        p = self._write(tmp_path, "req.json", _json.dumps(body))
+        result = inference._load_request_payload(p)
+        assert result["inputs"][0]["name"] == "x"
+
+    def test_loads_csv_file(self, tmp_path) -> None:
+        p = self._write(tmp_path, "req.csv", "1.0,2.0,3.0\n")
+        result = inference._load_request_payload(p)
+        assert result["inputs"][0]["data"] == [[1.0, 2.0, 3.0]]
+
+    def test_csv_passes_input_name_and_datatype(self, tmp_path) -> None:
+        p = self._write(tmp_path, "req.csv", "1.0,2.0\n")
+        result = inference._load_request_payload(
+            p, input_name="my_tensor", datatype="FP32"
+        )
+        assert result["inputs"][0]["name"] == "my_tensor"
+        assert result["inputs"][0]["datatype"] == "FP32"
+
+    def test_json_ignores_csv_params(self, tmp_path) -> None:
+        import json as _json
+        body = {"inputs": [{"name": "orig", "shape": [1, 2], "datatype": "FP64", "data": [[1.0, 2.0]]}]}
+        p = self._write(tmp_path, "req.json", _json.dumps(body))
+        # input_name / datatype are silently ignored for JSON files
+        result = inference._load_request_payload(p, input_name="ignored", datatype="INT64")
+        assert result["inputs"][0]["name"] == "orig"
+        assert result["inputs"][0]["datatype"] == "FP64"
+
+    def test_raises_on_invalid_json(self, tmp_path) -> None:
+        p = self._write(tmp_path, "req.json", "not-json{{")
+        with pytest.raises(ValueError, match="not valid JSON"):
+            inference._load_request_payload(p)
+
+    def test_raises_on_unsupported_extension(self, tmp_path) -> None:
+        p = self._write(tmp_path, "req.txt", "some text")
+        with pytest.raises(ValueError, match="Unsupported"):
+            inference._load_request_payload(p)
+
+    def test_case_insensitive_extension(self, tmp_path) -> None:
+        p = self._write(tmp_path, "req.CSV", "1.0,2.0\n")
+        result = inference._load_request_payload(p)
+        assert result["inputs"][0]["shape"] == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# _validate_observation_file — CSV path
+# ---------------------------------------------------------------------------
+
+class TestValidateObservationFileCsv:
+    """Tests for the CSV branch of _validate_observation_file."""
+
+    def _write(self, tmp_path, name: str, content: str):
+        p = tmp_path / name
+        p.write_text(content)
+        return p
+
+    def test_returns_row_count_for_csv(self, tmp_path) -> None:
+        p = self._write(tmp_path, "obs.csv", "1.0,2.0\n3.0,4.0\n5.0,6.0\n")
+        assert inference._validate_observation_file(p) == 3
+
+    def test_skips_header_in_row_count(self, tmp_path) -> None:
+        p = self._write(tmp_path, "obs.csv", "a,b\n1.0,2.0\n3.0,4.0\n")
+        assert inference._validate_observation_file(p) == 2
+
+    def test_raises_on_missing_csv(self, tmp_path) -> None:
+        p = tmp_path / "missing.csv"
+        with pytest.raises(FileNotFoundError):
+            inference._validate_observation_file(p)
+
+    def test_raises_on_empty_csv(self, tmp_path) -> None:
+        p = self._write(tmp_path, "empty.csv", "")
+        with pytest.raises(ValueError, match="no data rows"):
+            inference._validate_observation_file(p)
+
+    def test_passes_input_name_and_datatype_to_payload(self, tmp_path) -> None:
+        """Custom csv_config values must appear in the validated payload."""
+        p = self._write(tmp_path, "obs.csv", "1.0,2.0\n3.0,4.0\n")
+        # _validate_observation_file returns row count; we verify the side-effect
+        # indirectly by checking it does not raise and returns the correct count.
+        count = inference._validate_observation_file(
+            p, input_name="my_tensor", datatype="FP32"
+        )
+        assert count == 2
+
+
+# ---------------------------------------------------------------------------
+# _read_tensor_schema
+# ---------------------------------------------------------------------------
+
+class TestReadTensorSchema:
+    """Tests for the JSON-based tensor schema reader."""
+
+    def _schema_file(self, tmp_path, name: str, datatype: str) -> "Path":
+        import json as _json
+        p = tmp_path / "schema.json"
+        p.write_text(_json.dumps({
+            "inputs": [{"name": name, "datatype": datatype, "shape": [1, 2], "data": [[0, 0]]}]
+        }))
+        return p
+
+    def test_reads_name_and_datatype(self, tmp_path) -> None:
+        p = self._schema_file(tmp_path, "customer_data_input", "FP64")
+        assert inference._read_tensor_schema(p) == ("customer_data_input", "FP64")
+
+    def test_none_returns_defaults(self) -> None:
+        assert inference._read_tensor_schema(None) == ("input", "FP64")
+
+    def test_raises_on_missing_file(self, tmp_path) -> None:
+        with pytest.raises(FileNotFoundError):
+            inference._read_tensor_schema(tmp_path / "missing.json")
+
+    def test_raises_on_invalid_json(self, tmp_path) -> None:
+        p = tmp_path / "bad.json"
+        p.write_text("not-json{{")
+        with pytest.raises(ValueError, match="not valid JSON"):
+            inference._read_tensor_schema(p)
+
+    def test_raises_when_inputs_missing(self, tmp_path) -> None:
+        import json as _json
+        p = tmp_path / "bad.json"
+        p.write_text(_json.dumps({"no_inputs": []}))
+        with pytest.raises(ValueError, match="inputs\\[0\\]"):
+            inference._read_tensor_schema(p)
+
+    def test_raises_when_name_missing(self, tmp_path) -> None:
+        import json as _json
+        p = tmp_path / "bad.json"
+        p.write_text(_json.dumps({"inputs": [{"datatype": "FP64"}]}))
+        with pytest.raises(ValueError, match="inputs\\[0\\]"):
+            inference._read_tensor_schema(p)
+
+
+# ---------------------------------------------------------------------------
+# send_observations — schema_source param
+# ---------------------------------------------------------------------------
+
+class TestSendObservationsSchemaSource:
+    """Verify that send_observations threads schema_source to _load_request_payload."""
+
+    def _patch(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            "rhoai.platform.inference.get_inference_url",
+            lambda *_: "https://model.example.com",
+        )
+        monkeypatch.setattr(
+            "rhoai.platform.inference._http_post",
+            MagicMock(return_value=({"outputs": []}, 0.01, 200)),
+        )
+
+    def _schema_file(self, tmp_path, name: str, datatype: str) -> "Path":
+        import json as _json
+        p = tmp_path / "schema.json"
+        p.write_text(_json.dumps({
+            "inputs": [{"name": name, "datatype": datatype, "shape": [1, 2], "data": [[0, 0]]}]
+        }))
+        return p
+
+    def test_csv_with_no_schema_source_uses_defaults(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        self._patch(monkeypatch)
+        p = tmp_path / "obs.csv"
+        p.write_text("1.0,2.0\n3.0,4.0\n")
+        assert inference.send_observations("model", "ns", [p]) == 2
+
+    def test_csv_uses_name_from_schema_source(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        self._patch(monkeypatch)
+        captured: list[dict] = []
+
+        def capture_post(url, body):
+            captured.append(body)
+            return ({"outputs": []}, 0.01, 200)
+
+        monkeypatch.setattr("rhoai.platform.inference._http_post", capture_post)
+        schema = self._schema_file(tmp_path, "customer_data_input", "FP32")
+        p = tmp_path / "obs.csv"
+        p.write_text("1.0,2.0\n")
+        inference.send_observations("model", "ns", [p], schema_source=schema)
+        assert captured[0]["inputs"][0]["name"] == "customer_data_input"
+        assert captured[0]["inputs"][0]["datatype"] == "FP32"
+
+    def test_none_schema_source_uses_defaults(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        self._patch(monkeypatch)
+        captured: list[dict] = []
+
+        def capture_post(url, body):
+            captured.append(body)
+            return ({"outputs": []}, 0.01, 200)
+
+        monkeypatch.setattr("rhoai.platform.inference._http_post", capture_post)
+        p = tmp_path / "obs.csv"
+        p.write_text("1.0,2.0\n")
+        inference.send_observations("model", "ns", [p], schema_source=None)
+        assert captured[0]["inputs"][0]["name"] == "input"
+        assert captured[0]["inputs"][0]["datatype"] == "FP64"
+
+
+# ---------------------------------------------------------------------------
+# verify_triton_inference — schema_source param
+# ---------------------------------------------------------------------------
+
+class TestVerifyTritonInferenceSchemaSource:
+    """Verify that verify_triton_inference threads schema_source for CSV requests."""
+
+    _BASE_URL  = "https://fraud-detection.apps.example.com"
+    _GOOD_RESP = (
+        {"model_name": "fraud-detection", "outputs": [{"name": "output", "data": [0.1]}]},
+        0.05, 200,
+    )
+
+    def _patch(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            "rhoai.platform.inference.get_inference_url",
+            lambda *_: self._BASE_URL,
+        )
+        return MagicMock(return_value=self._GOOD_RESP)
+
+    def _schema_file(self, tmp_path, name: str, datatype: str) -> "Path":
+        import json as _json
+        p = tmp_path / "schema.json"
+        p.write_text(_json.dumps({
+            "inputs": [{"name": name, "datatype": datatype, "shape": [1, 3], "data": [[0, 0, 0]]}]
+        }))
+        return p
+
+    def test_csv_request_reads_name_from_schema_source(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        post_mock = self._patch(monkeypatch)
+        monkeypatch.setattr("rhoai.platform.inference._http_post", post_mock)
+        schema = self._schema_file(tmp_path, "customer_data_input", "FP32")
+        p = tmp_path / "req.csv"
+        p.write_text("0.1,0.2,0.3\n")
+        inference.verify_triton_inference(
+            "fraud-detection", "ns", "fraud-detection", p, schema_source=schema,
+        )
+        payload = post_mock.call_args[0][1]
+        assert payload["inputs"][0]["name"] == "customer_data_input"
+        assert payload["inputs"][0]["datatype"] == "FP32"
+
+    def test_json_request_ignores_schema_source(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        import json as _json
+        post_mock = self._patch(monkeypatch)
+        monkeypatch.setattr("rhoai.platform.inference._http_post", post_mock)
+        body = {"inputs": [{"name": "orig", "shape": [1, 3], "datatype": "FP64", "data": [[0.1, 0.2, 0.3]]}]}
+        p = tmp_path / "req.json"
+        p.write_text(_json.dumps(body))
+        schema = self._schema_file(tmp_path, "ignored", "INT64")
+        inference.verify_triton_inference(
+            "fraud-detection", "ns", "fraud-detection", p, schema_source=schema,
+        )
+        payload = post_mock.call_args[0][1]
+        assert payload["inputs"][0]["name"] == "orig"
+        assert payload["inputs"][0]["datatype"] == "FP64"

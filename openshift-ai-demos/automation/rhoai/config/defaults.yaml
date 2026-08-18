@@ -46,9 +46,17 @@ deployment:
   models:
     - name: fraud-detection
       model_uri: pvc://fraud-model-pvc/models
-      # Path to the KServe v2 JSON inference request used for smoke-testing.
+      # Path to the KServe v2 inference request used for smoke-testing.
       # Relative to repo_root; required for deployment validation and verify.
+      # Accepts .json (KServe v2 payload) or .csv (auto-converted).
       inference_request: ""
+      # Optional: override the tensor name and datatype used when converting
+      # CSV files.  When absent, both are read automatically from the
+      # inference_request JSON (inputs[0].name / inputs[0].datatype).
+      # Only needed when the CSV tensor metadata differs from the JSON.
+      # csv_config:
+      #   input_name: customer_data_input   # tensor name expected by the model
+      #   datatype: FP64                    # KServe v2 datatype (FP64, FP32, INT64, …)
       # Optional: configure TrustyAI bias monitoring for this model.
       # Omit or set to null to deploy without monitoring.
       # bias_monitoring:
