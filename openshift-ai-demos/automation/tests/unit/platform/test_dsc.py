@@ -174,6 +174,58 @@ class TestWaitUntilReady:
 
 
 
+class TestWaitUntilNoDeployments:
+    def test_resolves_when_no_rhoai_deployments(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.list_resources.return_value = []
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        monkeypatch.setattr("rhoai.platform.dsc.wait", mock_wait)
+        dsc.wait_until_no_deployments("redhat-ods-applications", timeout=60)
+        mock_wait.wait_until.assert_called_once()
+
+    def test_condition_true_when_no_deployments(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.list_resources.return_value = []
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        monkeypatch.setattr("rhoai.platform.dsc.wait", mock_wait)
+        dsc.wait_until_no_deployments("redhat-ods-applications")
+        # Extract the lambda and call it to confirm it queries with the label selector.
+        condition_fn = mock_wait.wait_until.call_args[0][0]
+        assert condition_fn() is True
+        assert mock_resources.list_resources.call_args[0] == ("Deployment", "redhat-ods-applications")
+        assert mock_resources.list_resources.call_args[1]["label_selector"] == (
+            "app.kubernetes.io/part-of=rhods-operator"
+        )
+
+    def test_condition_false_when_deployments_remain(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.list_resources.return_value = [{"metadata": {"name": "kserve-controller"}}]
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.dsc.resources", mock_resources)
+        monkeypatch.setattr("rhoai.platform.dsc.wait", mock_wait)
+        dsc.wait_until_no_deployments("redhat-ods-applications")
+        condition_fn = mock_wait.wait_until.call_args[0][0]
+        assert condition_fn() is False
+
+    def test_passes_timeout_to_wait_until(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.dsc.resources", MagicMock())
+        monkeypatch.setattr("rhoai.platform.dsc.wait", mock_wait)
+        dsc.wait_until_no_deployments("redhat-ods-applications", timeout=120)
+        _, kwargs = mock_wait.wait_until.call_args
+        assert kwargs["timeout"] == 120
+
+    def test_description_names_namespace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.dsc.resources", MagicMock())
+        monkeypatch.setattr("rhoai.platform.dsc.wait", mock_wait)
+        dsc.wait_until_no_deployments("redhat-ods-applications")
+        description = mock_wait.wait_until.call_args[0][1]
+        assert "redhat-ods-applications" in description
+
+
 class TestIsDscReady:
     def test_true_when_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_resources = MagicMock()

@@ -69,3 +69,12 @@ def get_trustyai_service(repo_root: str | Path) -> Path:
         Path to trustyai/service/trustyai-service.yaml
     """
     return Path(repo_root) / "trustyai" / "service" / "trustyai-service.yaml"
+
+
+def get_trustyai_logger_ca_bundle(repo_root: str | Path) -> Path:
+    """Return the path to the kserve-logger-ca-bundle ConfigMap manifest.
+
+    Returns:
+        Path to trustyai/service/kserve-logger-ca-bundle.yaml
+    """
+    return Path(repo_root) / "trustyai" / "service" / "kserve-logger-ca-bundle.yaml"

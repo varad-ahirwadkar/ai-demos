@@ -1,13 +1,21 @@
-"""Asset path resolution for the Fraud Detection use case.
+"""Fraud Detection use-case assets.
 
-The only file that knows where fraud-detection manifests live on disk.
-Shared platform manifests are delegated to platform.manifests — only
-fraud-detection-specific paths are resolved here.
+Two responsibilities:
+
+    Path resolution  — the only file that knows where fraud-detection
+                       manifests live on disk.  Shared platform manifests
+                       are delegated to platform.manifests.
+
+    Use-case types   — data types and config helpers shared by deploy.py
+                       and verify.py so neither module depends on the other.
 """
 
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from rhoai.platform import manifests
+from rhoai.platform.inference import EndpointUnreachable
 
 
 def serving_runtime_name(model_name: str) -> str:
@@ -50,13 +58,30 @@ def get_model_manifest(repo_root: str | Path) -> Path:
     )
 
 
+# ---------------------------------------------------------------------------
+# Use-case types
+# ---------------------------------------------------------------------------
 
-def get_trustyai_service_manifest(repo_root: str | Path) -> Path:
-    """Return the path to the TrustyAIService CR manifest.
+@dataclass
+class ModelResult:
+    """Outcome of a single model deploy or verify operation."""
+    name:               str
+    model_uri:          str                        = ""
+    endpoint:           str                        = ""
+    validation_skipped: bool                       = False
+    unreachable:        EndpointUnreachable | None = field(default=None, repr=False)
 
-    Returns:
-        Path to trustyai/service/trustyai-service.yaml
+
+def resolve_inference_request(model: dict[str, Any], repo_root: str) -> Path:
+    """Return the absolute Path to this model's inference request file.
+
+    The path is specified as ``inference_request`` in the model config entry,
+    relative to ``repo_root``.  Raises ValueError when the field is absent or empty.
     """
-    return Path(repo_root) / "trustyai" / "service" / "trustyai-service.yaml"
-
-
+    rel = model.get("inference_request", "")
+    if not rel:
+        raise ValueError(
+            f"Model '{model.get('name', '?')}' has no inference_request configured. "
+            "Set inference_request: <path relative to repo_root> in the model entry."
+        )
+    return Path(repo_root) / rel

@@ -1,5 +1,6 @@
 """Unit tests for rhoai.platform.trustyai_client."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,13 +12,79 @@ _TOKEN = "test-token"
 _MODEL = "fraud-detection"
 
 
-def _mock_response(json_data: object, status_code: int = 200, text: str = "") -> MagicMock:
+def _mock_response(
+    json_data: object,
+    status_code: int = 200,
+    text: str = "",
+    content: bytes = b"{}",
+    content_type: str = "application/json",
+) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status_code
-    resp.ok           = status_code < 400
-    resp.text         = text
+    resp.ok          = status_code < 400
+    resp.text        = text
+    resp.content     = content
+    resp.headers     = {"Content-Type": content_type}
     resp.json.return_value = json_data
     return resp
+
+
+# ---------------------------------------------------------------------------
+# _get retry behaviour
+# ---------------------------------------------------------------------------
+
+class TestGetRetry:
+    """_get must retry when TrustyAI transiently returns an empty body."""
+
+    def test_retries_on_empty_body_then_succeeds(self) -> None:
+        """First call returns empty body; second returns JSON — must succeed."""
+        empty = _mock_response(None, content=b"")
+        ok    = _mock_response({_MODEL: {}})
+        with patch("rhoai.platform.trustyai_client.requests.get", side_effect=[empty, ok]), \
+             patch("rhoai.platform.trustyai_client.time.sleep"):
+            result = trustyai_client.get_model_info(_ROUTE, _TOKEN, _MODEL)
+        assert result == {}
+
+    def test_raises_after_all_retries_empty(self) -> None:
+        """All retries return empty body — must raise RuntimeError, not JSONDecodeError."""
+        empty = _mock_response(None, content=b"")
+        with patch("rhoai.platform.trustyai_client.requests.get", return_value=empty), \
+             patch("rhoai.platform.trustyai_client.time.sleep"):
+            with pytest.raises(RuntimeError, match="unparseable response"):
+                trustyai_client.get_model_info(_ROUTE, _TOKEN, _MODEL)
+
+    def test_retries_on_non_json_body_then_succeeds(self) -> None:
+        """First call returns a non-JSON body (e.g. proxy error page); second returns JSON."""
+        non_json = MagicMock()
+        non_json.status_code = 200
+        non_json.ok          = True
+        non_json.content     = b"<html>Bad Gateway</html>"
+        non_json.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+        ok = _mock_response({_MODEL: {}})
+        with patch("rhoai.platform.trustyai_client.requests.get", side_effect=[non_json, ok]), \
+             patch("rhoai.platform.trustyai_client.time.sleep"):
+            result = trustyai_client.get_model_info(_ROUTE, _TOKEN, _MODEL)
+        assert result == {}
+
+    def test_raises_after_all_retries_non_json(self) -> None:
+        """All retries return non-JSON body — must raise RuntimeError, not JSONDecodeError."""
+        non_json = MagicMock()
+        non_json.status_code = 200
+        non_json.ok          = True
+        non_json.content     = b"<html>Bad Gateway</html>"
+        non_json.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+        with patch("rhoai.platform.trustyai_client.requests.get", return_value=non_json), \
+             patch("rhoai.platform.trustyai_client.time.sleep"):
+            with pytest.raises(RuntimeError, match="unparseable response"):
+                trustyai_client.get_model_info(_ROUTE, _TOKEN, _MODEL)
+
+    def test_no_sleep_on_success(self) -> None:
+        """No sleep when the first call succeeds."""
+        ok = _mock_response({_MODEL: {}})
+        with patch("rhoai.platform.trustyai_client.requests.get", return_value=ok), \
+             patch("rhoai.platform.trustyai_client.time.sleep") as mock_sleep:
+            trustyai_client.get_model_info(_ROUTE, _TOKEN, _MODEL)
+        mock_sleep.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -57,9 +124,41 @@ class TestGetModelInfo:
 # apply_name_mapping
 # ---------------------------------------------------------------------------
 
+# /info response where nameMapping is absent — mapping not yet applied.
+# Confirmed live-cluster structure: dict KEY is the display name (== internal name
+# before any mapping), "name" value is the original internal name.
+_INFO_NOT_MAPPED = {
+    _MODEL: {
+        "data": {
+            "inputSchema":  {"items": {"input-0":  {"name": "input-0",  "type": "DOUBLE", "columnIndex": 0}}},
+            "outputSchema": {"items": {"output-0": {"name": "output-0", "type": "DOUBLE", "columnIndex": 0}}},
+        }
+    }
+}
+
+# /info response where mapping is already applied.
+# TrustyAI populates nameMapping only after a successful POST /info/names.
+_INFO_ALREADY_MAPPED = {
+    _MODEL: {
+        "data": {
+            "inputSchema": {
+                "items": {"age":   {"name": "input-0",  "type": "DOUBLE", "columnIndex": 0}},
+                "nameMapping": {"input-0": "age"},
+            },
+            "outputSchema": {
+                "items": {"score": {"name": "output-0", "type": "DOUBLE", "columnIndex": 0}},
+                "nameMapping": {"output-0": "score"},
+            },
+        }
+    }
+}
+
+
 class TestApplyNameMapping:
     def test_posts_to_info_names(self) -> None:
-        with patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+        with patch("rhoai.platform.trustyai_client.requests.get") as mock_get, \
+             patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_get.return_value  = _mock_response(_INFO_NOT_MAPPED)
             mock_post.return_value = _mock_response({})
             trustyai_client.apply_name_mapping(
                 _ROUTE, _TOKEN, _MODEL,
@@ -70,7 +169,9 @@ class TestApplyNameMapping:
         assert url.endswith("/info/names")
 
     def test_payload_shape(self) -> None:
-        with patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+        with patch("rhoai.platform.trustyai_client.requests.get") as mock_get, \
+             patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_get.return_value  = _mock_response(_INFO_NOT_MAPPED)
             mock_post.return_value = _mock_response({})
             trustyai_client.apply_name_mapping(
                 _ROUTE, _TOKEN, _MODEL,
@@ -81,6 +182,62 @@ class TestApplyNameMapping:
         assert body["modelId"] == _MODEL
         assert body["inputMapping"] == {"input-0": "age"}
         assert body["outputMapping"] == {"output-0": "score"}
+
+    def test_204_no_content_does_not_raise(self) -> None:
+        """TrustyAI /info/names returns 204 No Content — must not crash on empty body."""
+        with patch("rhoai.platform.trustyai_client.requests.get") as mock_get, \
+             patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_get.return_value  = _mock_response(_INFO_NOT_MAPPED)
+            mock_post.return_value = _mock_response(None, status_code=204, content=b"")
+            trustyai_client.apply_name_mapping(
+                _ROUTE, _TOKEN, _MODEL,
+                input_mapping={"input-0": "age"},
+                output_mapping={"output-0": "score"},
+            )
+
+    def test_200_non_json_body_does_not_raise(self) -> None:
+        """TrustyAI /info/names returns 200 with whitespace-only body — must not crash."""
+        with patch("rhoai.platform.trustyai_client.requests.get") as mock_get, \
+             patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_get.return_value  = _mock_response(_INFO_NOT_MAPPED)
+            mock_post.return_value = _mock_response(None, content=b" ", content_type="")
+            trustyai_client.apply_name_mapping(
+                _ROUTE, _TOKEN, _MODEL,
+                input_mapping={"input-0": "age"},
+                output_mapping={"output-0": "score"},
+            )
+
+    def test_200_json_content_type_but_unparseable_body_does_not_raise(self) -> None:
+        """TrustyAI /info/names returns 200 application/json but with a body that
+        cannot be parsed as JSON (observed on the second model when TrustyAI is
+        still writing state from the first mapping).  Must not crash."""
+        bad_json_resp = MagicMock()
+        bad_json_resp.status_code = 200
+        bad_json_resp.ok          = True
+        bad_json_resp.content     = b"Mapping applied"
+        bad_json_resp.headers     = {"Content-Type": "application/json"}
+        bad_json_resp.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+        with patch("rhoai.platform.trustyai_client.requests.get") as mock_get, \
+             patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_get.return_value  = _mock_response(_INFO_NOT_MAPPED)
+            mock_post.return_value = bad_json_resp
+            trustyai_client.apply_name_mapping(
+                _ROUTE, _TOKEN, _MODEL,
+                input_mapping={"input-0": "age"},
+                output_mapping={"output-0": "score"},
+            )
+
+    def test_skips_when_already_applied(self) -> None:
+        """Must not POST to /info/names when the mapping is already in place."""
+        with patch("rhoai.platform.trustyai_client.requests.get") as mock_get, \
+             patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_get.return_value = _mock_response(_INFO_ALREADY_MAPPED)
+            trustyai_client.apply_name_mapping(
+                _ROUTE, _TOKEN, _MODEL,
+                input_mapping={"input-0": "age"},
+                output_mapping={"output-0": "score"},
+            )
+        mock_post.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +296,19 @@ class TestComputeSpd:
 
 class TestScheduleSpd:
     def test_returns_request_id(self) -> None:
+        """Accepts both "requestId" (newer TrustyAI) and "id" (older TrustyAI)."""
+        with patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_post.return_value = _mock_response({"requestId": "req-abc"})
+            result = trustyai_client.schedule_spd(
+                _ROUTE, _TOKEN, _MODEL,
+                protected_attribute="gender", privileged_value=1.0,
+                unprivileged_value=0.0, outcome_name="fraud_score",
+                favorable_outcome=0.0,
+            )
+        assert result == "req-abc"
+
+    def test_returns_request_id_legacy_key(self) -> None:
+        """Falls back to "id" when "requestId" is absent."""
         with patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
             mock_post.return_value = _mock_response({"id": "req-abc"})
             result = trustyai_client.schedule_spd(
@@ -168,6 +338,16 @@ class TestScheduleSpd:
 
 class TestScheduleIdentity:
     def test_returns_request_id(self) -> None:
+        """Accepts both "requestId" (newer TrustyAI) and "id" (older TrustyAI)."""
+        with patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
+            mock_post.return_value = _mock_response({"requestId": "id-xyz"})
+            result = trustyai_client.schedule_identity(
+                _ROUTE, _TOKEN, _MODEL, column_name="gender"
+            )
+        assert result == "id-xyz"
+
+    def test_returns_request_id_legacy_key(self) -> None:
+        """Falls back to "id" when "requestId" is absent."""
         with patch("rhoai.platform.trustyai_client.requests.post") as mock_post:
             mock_post.return_value = _mock_response({"id": "id-xyz"})
             result = trustyai_client.schedule_identity(

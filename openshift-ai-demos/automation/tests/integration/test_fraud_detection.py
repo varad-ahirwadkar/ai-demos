@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from rhoai.config.loader import load_config
+from rhoai.platform import manifests
 from rhoai.usecases import registry
 from rhoai.usecases.fraud_detection import assets
 
@@ -100,7 +101,7 @@ class TestAssetPaths:
         )
 
     def test_trustyai_service_path(self, tmp_path: Path) -> None:
-        p = assets.get_trustyai_service_manifest(tmp_path)
+        p = manifests.get_trustyai_service(tmp_path)
         assert p == tmp_path / "trustyai" / "service" / "trustyai-service.yaml"
 
 
@@ -115,21 +116,21 @@ def _write_request(tmp_path: Path, rel: str = "requests/model.json") -> str:
 
 class TestResolveInferenceRequest:
     def test_returns_absolute_path(self, tmp_path: Path) -> None:
-        from rhoai.usecases.fraud_detection.deploy import _resolve_inference_request
+        from rhoai.usecases.fraud_detection.assets import resolve_inference_request
         rel = _write_request(tmp_path, "requests/fraud.json")
         model = {"name": "fraud-detection", "inference_request": rel}
-        result = _resolve_inference_request(model, str(tmp_path))
+        result = resolve_inference_request(model, str(tmp_path))
         assert result == tmp_path / rel
 
     def test_raises_when_missing(self, tmp_path: Path) -> None:
-        from rhoai.usecases.fraud_detection.deploy import _resolve_inference_request
+        from rhoai.usecases.fraud_detection.assets import resolve_inference_request
         with pytest.raises(ValueError, match="no inference_request configured"):
-            _resolve_inference_request({"name": "m"}, str(tmp_path))
+            resolve_inference_request({"name": "m"}, str(tmp_path))
 
     def test_raises_when_empty(self, tmp_path: Path) -> None:
-        from rhoai.usecases.fraud_detection.deploy import _resolve_inference_request
+        from rhoai.usecases.fraud_detection.assets import resolve_inference_request
         with pytest.raises(ValueError, match="no inference_request configured"):
-            _resolve_inference_request({"name": "m", "inference_request": ""}, str(tmp_path))
+            resolve_inference_request({"name": "m", "inference_request": ""}, str(tmp_path))
 
 
 class TestDeploySmoke:
@@ -391,7 +392,7 @@ class TestDeploySmoke:
         _write_manifest(tmp_path)
         deploy_mod = self._fresh_deploy_mod()
         mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
-        monkeypatch.setattr(deploy_mod, "_print_summary", MagicMock())
+        monkeypatch.setattr(deploy_mod, "print_summary", MagicMock())
 
         mocks["inference"].verify_triton_inference.side_effect = EndpointUnreachable(
             "https://model.example.com/v2/models/fraud-detection/infer",
@@ -410,16 +411,16 @@ class TestDeploySmoke:
     def test_deploy_summary_shows_skipped_when_unreachable(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """_print_summary receives a result with validation_skipped=True."""
+        """print_summary receives a result with validation_skipped=True."""
         from rhoai.platform.inference import EndpointUnreachable
-        from rhoai.usecases.fraud_detection.deploy import _ModelResult
+        from rhoai.usecases.fraud_detection.assets import ModelResult
 
         _write_manifest(tmp_path)
         deploy_mod = self._fresh_deploy_mod()
         mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
 
-        captured: list[_ModelResult] = []
-        monkeypatch.setattr(deploy_mod, "_print_summary", lambda r, **_: captured.extend(r))
+        captured: list[ModelResult] = []
+        monkeypatch.setattr(deploy_mod, "print_summary", lambda r, **_: captured.extend(r))
 
         mocks["inference"].verify_triton_inference.side_effect = EndpointUnreachable(
             "https://model.example.com/v2/models/fraud-detection/infer",
@@ -441,15 +442,15 @@ class TestDeploySmoke:
     def test_deploy_summary_shows_passed_when_reachable(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """_print_summary receives a result with validation_skipped=False on success."""
-        from rhoai.usecases.fraud_detection.deploy import _ModelResult
+        """print_summary receives a result with validation_skipped=False on success."""
+        from rhoai.usecases.fraud_detection.assets import ModelResult
 
         _write_manifest(tmp_path)
         deploy_mod = self._fresh_deploy_mod()
         mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
 
-        captured: list[_ModelResult] = []
-        monkeypatch.setattr(deploy_mod, "_print_summary", lambda r, **_: captured.extend(r))
+        captured: list[ModelResult] = []
+        monkeypatch.setattr(deploy_mod, "print_summary", lambda r, **_: captured.extend(r))
 
         req = _write_request(tmp_path)
         config = self._make_config(tmp_path, models=[
@@ -483,13 +484,14 @@ class TestVerifyCmd:
     ) -> None:
         """When config_file is set, every printed command includes -c <path>."""
         from unittest.mock import call, patch
-        from rhoai.usecases.fraud_detection.deploy import _ModelResult, _print_summary
+        from rhoai.usecases.fraud_detection.assets import ModelResult
+        from rhoai.usecases.fraud_detection.deploy import print_summary
 
         printed: list[str] = []
         with patch("rhoai.usecases.fraud_detection.deploy._console") as mock_console:
             mock_console.print.side_effect = lambda s, *a, **kw: printed.append(str(s))
-            _print_summary(
-                [_ModelResult(name="m", validation_skipped=False)],
+            print_summary(
+                [ModelResult(name="m", validation_skipped=False)],
                 use_case="fraud-detection",
                 namespace="test-ns",
                 config_file="path/to/config.yaml",

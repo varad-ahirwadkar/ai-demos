@@ -118,31 +118,29 @@ class TestApplyRbac:
 
 
 # ---------------------------------------------------------------------------
-# create_logger_ca_bundle
+# apply_logger_ca_bundle
 # ---------------------------------------------------------------------------
 
-class TestCreateLoggerCaBundle:
-    def test_creates_configmap_with_inject_annotation(
-        self, monkeypatch: pytest.MonkeyPatch
+class TestApplyLoggerCaBundle:
+    def test_delegates_to_apply_manifest(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         mock_resources = MagicMock()
         monkeypatch.setattr("rhoai.platform.trustyai.resources", mock_resources)
-        trustyai.create_logger_ca_bundle("test-ns")
-        body = mock_resources.apply_dict.call_args[0][0]
-        assert body["metadata"]["name"] == "kserve-logger-ca-bundle"
-        assert body["metadata"]["namespace"] == "test-ns"
-        annotation = body["metadata"]["annotations"]["service.beta.openshift.io/inject-cabundle"]
-        assert annotation == "true"
-        assert body["data"] == {}
+        path = tmp_path / "kserve-logger-ca-bundle.yaml"
+        path.write_text("kind: ConfigMap\n")
+        trustyai.apply_logger_ca_bundle(path, "test-ns")
+        mock_resources.apply_manifest.assert_called_once_with(path, "test-ns")
 
-    def test_passes_namespace_to_apply_dict(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_passes_namespace_to_apply_manifest(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         mock_resources = MagicMock()
         monkeypatch.setattr("rhoai.platform.trustyai.resources", mock_resources)
-        trustyai.create_logger_ca_bundle("my-ns")
-        ns_arg = mock_resources.apply_dict.call_args[0][1]
-        assert ns_arg == "my-ns"
+        path = tmp_path / "kserve-logger-ca-bundle.yaml"
+        path.write_text("kind: ConfigMap\n")
+        trustyai.apply_logger_ca_bundle(path, "my-ns")
+        assert mock_resources.apply_manifest.call_args[0][1] == "my-ns"
 
 
 # ---------------------------------------------------------------------------
@@ -249,14 +247,31 @@ class TestDeleteTrustyAIService:
             "TrustyAIService", "trustyai-service", "ns"
         )
 
-    def test_waits_for_deletion(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_waits_for_cr_deletion(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_wait = MagicMock()
         monkeypatch.setattr("rhoai.platform.trustyai.resources", MagicMock())
         monkeypatch.setattr("rhoai.platform.trustyai.wait", mock_wait)
         trustyai.delete_trustyai_service("trustyai-service", "ns")
-        mock_wait.wait_until_deleted.assert_called_once_with(
+        mock_wait.wait_until_deleted.assert_any_call(
             "TrustyAIService", "trustyai-service", "ns"
         )
+
+    def test_waits_for_deployment_deletion(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.trustyai.resources", MagicMock())
+        monkeypatch.setattr("rhoai.platform.trustyai.wait", mock_wait)
+        trustyai.delete_trustyai_service("trustyai-service", "ns")
+        mock_wait.wait_until_deleted.assert_any_call(
+            "Deployment", "trustyai-service", "ns"
+        )
+
+    def test_waits_for_cr_before_deployment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.trustyai.resources", MagicMock())
+        monkeypatch.setattr("rhoai.platform.trustyai.wait", mock_wait)
+        trustyai.delete_trustyai_service("trustyai-service", "ns")
+        calls = [c.args[0] for c in mock_wait.wait_until_deleted.call_args_list]
+        assert calls == ["TrustyAIService", "Deployment"]
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +344,14 @@ class TestGetBearerToken:
 # ---------------------------------------------------------------------------
 
 class TestCleanup:
+    def test_delete_logger_ca_bundle(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        monkeypatch.setattr("rhoai.platform.trustyai.resources", mock_resources)
+        trustyai.delete_logger_ca_bundle("ns")
+        mock_resources.delete_manifest.assert_called_once_with(
+            "ConfigMap", "kserve-logger-ca-bundle", "ns"
+        )
+
     def test_delete_service_account(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_resources = MagicMock()
         monkeypatch.setattr("rhoai.platform.trustyai.resources", mock_resources)

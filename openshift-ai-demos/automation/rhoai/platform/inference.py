@@ -24,12 +24,6 @@ _RETRY_DELAY     = 3     # seconds to wait before one connection-error retry
 _POOL_CONNECTIONS = 1
 
 
-def apply_serving_runtime(manifest_path: Path, namespace: str) -> None:
-    """Apply a ServingRuntime manifest. Idempotent."""
-    log.info("Applying ServingRuntime from %s", manifest_path.name)
-    resources.apply_manifest(manifest_path, namespace)
-
-
 def apply_serving_runtime_from_template(
     template_path: Path,
     platform_namespace: str,
@@ -62,12 +56,6 @@ def apply_serving_runtime_from_template(
     )
 
 
-def apply_inference_service(manifest_path: Path, namespace: str) -> None:
-    """Apply an InferenceService manifest. Does not block — call wait_until_ready() after."""
-    log.info("Applying InferenceService from %s", manifest_path.name)
-    resources.apply_manifest(manifest_path, namespace)
-
-
 def wait_until_ready(
     name: str,
     namespace: str,
@@ -78,6 +66,48 @@ def wait_until_ready(
     log.info("Waiting for InferenceService '%s'", name)
     log.debug("Timeout: %ss", timeout)
     wait.wait_until_ready("InferenceService", name, namespace, timeout=timeout, on_tick=on_tick)
+
+
+def wait_until_all_ready(
+    namespace: str,
+    timeout: int = 300,
+    on_tick: Callable[[float], Any] | None = None,
+) -> None:
+    """Block until every InferenceService in *namespace* is Ready.
+
+    Used after ``patch_inferenceservice_config`` triggers a predictor pod
+    rollout (KServe recycles pods to inject the updated logger configuration
+    and the payload-logger sidecar).  The rolled-out pods end up with three
+    containers; this function ensures they are all running and Ready before
+    observations are sent.
+
+    Args:
+        namespace: Namespace to check.
+        timeout:   Maximum seconds to wait before raising ``TimeoutError``.
+        on_tick:   Optional progress callback invoked after each poll with
+                   elapsed seconds as the sole argument.
+
+    Raises:
+        TimeoutError: If any InferenceService is not Ready within ``timeout``.
+    """
+    log.info("Waiting for all InferenceServices in '%s' to become Ready", namespace)
+    log.debug("Timeout: %ss", timeout)
+
+    def _all_ready() -> bool:
+        isvcs = resources.list_resources("InferenceService", namespace)
+        if not isvcs:
+            return False
+        return all(
+            resources.is_ready("InferenceService", isvc["metadata"]["name"], namespace)
+            for isvc in isvcs
+        )
+
+    wait.wait_until(
+        _all_ready,
+        description=f"all InferenceServices ready in '{namespace}'",
+        timeout=timeout,
+        on_tick=on_tick,
+    )
 
 
 def get_inference_url(name: str, namespace: str) -> str:
@@ -251,17 +281,49 @@ def _validate_observation_file(path: Path) -> int:
 
 
 def delete_inference_service(name: str, namespace: str) -> None:
-    """Delete an InferenceService and wait for removal."""
+    """Send the delete request for an InferenceService. Does not wait."""
     log.info("Deleting InferenceService '%s'", name)
     resources.delete_manifest("InferenceService", name, namespace)
-    wait.wait_until_deleted("InferenceService", name, namespace)
 
 
 def delete_serving_runtime(name: str, namespace: str) -> None:
-    """Delete a ServingRuntime and wait for removal."""
+    """Send the delete request for a ServingRuntime. Does not wait."""
     log.info("Deleting ServingRuntime '%s'", name)
     resources.delete_manifest("ServingRuntime", name, namespace)
-    wait.wait_until_deleted("ServingRuntime", name, namespace)
+
+
+def wait_until_inference_services_gone(names: list[str], namespace: str, timeout: int = 120) -> None:
+    """Block until every named InferenceService no longer exists.
+
+    All deletes should be issued before calling this so the removals run
+    concurrently and the wait covers all of them in a single poll loop.
+
+    Raises:
+        TimeoutError: If any InferenceService is still present after timeout.
+    """
+    log.info("Waiting for InferenceService(s) to be removed: %s", names)
+    wait.wait_until(
+        lambda: all(not resources.exists("InferenceService", n, namespace) for n in names),
+        f"InferenceServices gone in '{namespace}'",
+        timeout=timeout,
+    )
+
+
+def wait_until_serving_runtimes_gone(names: list[str], namespace: str, timeout: int = 120) -> None:
+    """Block until every named ServingRuntime no longer exists.
+
+    All deletes should be issued before calling this so the removals run
+    concurrently and the wait covers all of them in a single poll loop.
+
+    Raises:
+        TimeoutError: If any ServingRuntime is still present after timeout.
+    """
+    log.info("Waiting for ServingRuntime(s) to be removed: %s", names)
+    wait.wait_until(
+        lambda: all(not resources.exists("ServingRuntime", n, namespace) for n in names),
+        f"ServingRuntimes gone in '{namespace}'",
+        timeout=timeout,
+    )
 
 
 class EndpointUnreachable(RuntimeError):

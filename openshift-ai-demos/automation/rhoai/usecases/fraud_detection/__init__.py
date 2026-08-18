@@ -2,8 +2,7 @@
 
 Deploys a complete fraud detection solution on RHOAI:
     - KServe model serving
-    - TrustAI monitoring
-    - Prometheus alerts
+    - TrustyAI monitoring
 
 Public interface (consumed by usecases/registry.py):
     deploy(config)

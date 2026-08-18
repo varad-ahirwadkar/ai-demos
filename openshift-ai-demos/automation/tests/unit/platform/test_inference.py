@@ -286,3 +286,107 @@ class TestHttpPost:
         self._patch_pool(monkeypatch, 200, b"not-json{{")
         with pytest.raises(RuntimeError, match="not valid JSON"):
             inference._http_post("https://host/infer", {})
+
+
+# ---------------------------------------------------------------------------
+# delete_inference_service / delete_serving_runtime
+# ---------------------------------------------------------------------------
+
+class TestDeleteInferenceService:
+    def test_deletes_resource(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.resources", mock_resources)
+        inference.delete_inference_service("fraud-detection", "ns")
+        mock_resources.delete_manifest.assert_called_once_with(
+            "InferenceService", "fraud-detection", "ns"
+        )
+
+    def test_does_not_wait(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.wait", mock_wait)
+        inference.delete_inference_service("fraud-detection", "ns")
+        mock_wait.wait_until_deleted.assert_not_called()
+        mock_wait.wait_until.assert_not_called()
+
+
+class TestDeleteServingRuntime:
+    def test_deletes_resource(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.resources", mock_resources)
+        inference.delete_serving_runtime("triton-fraud-detection", "ns")
+        mock_resources.delete_manifest.assert_called_once_with(
+            "ServingRuntime", "triton-fraud-detection", "ns"
+        )
+
+    def test_does_not_wait(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.wait", mock_wait)
+        inference.delete_serving_runtime("triton-fraud-detection", "ns")
+        mock_wait.wait_until_deleted.assert_not_called()
+        mock_wait.wait_until.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# wait_until_inference_services_gone / wait_until_serving_runtimes_gone
+# ---------------------------------------------------------------------------
+
+class TestWaitUntilInferenceServicesGone:
+    def test_calls_wait_until(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.wait", mock_wait)
+        inference.wait_until_inference_services_gone(["alpha", "beta"], "ns")
+        mock_wait.wait_until.assert_called_once()
+
+    def test_condition_true_when_all_gone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.exists.return_value = False
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.resources", mock_resources)
+        monkeypatch.setattr("rhoai.platform.inference.wait", mock_wait)
+        inference.wait_until_inference_services_gone(["alpha", "beta"], "ns")
+        condition_fn = mock_wait.wait_until.call_args[0][0]
+        assert condition_fn() is True
+
+    def test_condition_false_when_one_remains(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.exists.side_effect = lambda kind, name, ns: name == "alpha"
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.resources", mock_resources)
+        monkeypatch.setattr("rhoai.platform.inference.wait", mock_wait)
+        inference.wait_until_inference_services_gone(["alpha", "beta"], "ns")
+        condition_fn = mock_wait.wait_until.call_args[0][0]
+        assert condition_fn() is False
+
+    def test_passes_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.wait", mock_wait)
+        inference.wait_until_inference_services_gone(["alpha"], "ns", timeout=60)
+        assert mock_wait.wait_until.call_args[1]["timeout"] == 60
+
+
+class TestWaitUntilServingRuntimesGone:
+    def test_calls_wait_until(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.wait", mock_wait)
+        inference.wait_until_serving_runtimes_gone(["triton-alpha"], "ns")
+        mock_wait.wait_until.assert_called_once()
+
+    def test_condition_true_when_all_gone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.exists.return_value = False
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.resources", mock_resources)
+        monkeypatch.setattr("rhoai.platform.inference.wait", mock_wait)
+        inference.wait_until_serving_runtimes_gone(["triton-alpha", "triton-beta"], "ns")
+        condition_fn = mock_wait.wait_until.call_args[0][0]
+        assert condition_fn() is True
+
+    def test_condition_false_when_one_remains(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mock_resources = MagicMock()
+        mock_resources.exists.side_effect = lambda kind, name, ns: name == "triton-alpha"
+        mock_wait = MagicMock()
+        monkeypatch.setattr("rhoai.platform.inference.resources", mock_resources)
+        monkeypatch.setattr("rhoai.platform.inference.wait", mock_wait)
+        inference.wait_until_serving_runtimes_gone(["triton-alpha", "triton-beta"], "ns")
+        condition_fn = mock_wait.wait_until.call_args[0][0]
+        assert condition_fn() is False

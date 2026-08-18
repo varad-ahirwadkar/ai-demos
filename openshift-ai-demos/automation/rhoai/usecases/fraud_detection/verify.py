@@ -9,13 +9,10 @@ from typing import Any
 from rhoai.platform import inference, trustyai, trustyai_client
 from rhoai.platform import verify as platform_verify
 from rhoai.platform.inference import EndpointUnreachable
-from rhoai.usecases.fraud_detection.deploy import (
-    _ModelResult,
-    _print_summary,
-    _resolve_inference_request,
-)
+from rhoai.usecases.fraud_detection.assets import ModelResult, resolve_inference_request
+from rhoai.usecases.fraud_detection.deploy import print_summary
 from rhoai.utils.logger import get_logger
-from rhoai.utils.progress import header_step, step
+from rhoai.utils.progress import elapsed_timer, header_step, step
 
 log = get_logger(__name__)
 
@@ -68,52 +65,62 @@ def verify(config: dict[str, Any]) -> None:
     route = ""
     token = ""
 
-    with step("Checking platform"):
-        platform_verify.verify_platform(config)
+    with elapsed_timer() as timer:
+        with step("Checking RHOAI platform"):
+            check_results = platform_verify.verify_platform(config)
+            failed = [r for r in check_results if not r.passed]
+            if failed:
+                lines = "\n".join(f"  {r.name}: {r.message}" for r in failed)
+                raise RuntimeError(f"Platform checks failed:\n{lines}")
 
-    if bias_models:
-        with step(f"Checking TrustyAI '{trustyai_name}'"):
-            trustyai.verify(trustyai_name, namespace)
+        if bias_models:
+            with step("Checking TrustyAI"):
+                log.debug("TrustyAI service name: %s", trustyai_name)
+                trustyai.verify(trustyai_name, namespace)
 
-        route = trustyai.get_url(trustyai_name, namespace)
-        token = trustyai.get_bearer_token(trustyai_sa, namespace)
+            route = trustyai.get_url(trustyai_name, namespace)
+            token = trustyai.get_bearer_token(trustyai_sa, namespace)
 
-    results: list[_ModelResult] = []
-    for model in models:
-        name = model["name"]
-        with header_step(f"Verifying '{name}'", outcome=f"'{name}' healthy"):
-            with step(f"Checking InferenceService '{name}'"):
-                inference.verify(namespace, name=name)
+        results: list[ModelResult] = []
+        n_models = len(models)
+        for idx, model in enumerate(models, start=1):
+            name    = model["name"]
+            counter = f" ({idx}/{n_models})" if n_models > 1 else ""
+            with header_step(f"Verifying '{name}'{counter}", outcome=f"'{name}' healthy"):
+                with step("Checking inference service"):
+                    log.debug("InferenceService: %s", name)
+                    inference.verify(namespace, name=name)
 
-            # Populate source and endpoint from config + live cluster,
-            # matching exactly what deploy records so the summary is consistent.
-            model_uri = model.get("model_uri", "")
-            endpoint  = inference.get_inference_url(name, namespace)
-            result    = _ModelResult(name=name, model_uri=model_uri, endpoint=endpoint)
+                # Populate source and endpoint from config + live cluster,
+                # matching exactly what deploy records so the summary is consistent.
+                model_uri = model.get("model_uri", "")
+                endpoint  = inference.get_inference_url(name, namespace)
+                result    = ModelResult(name=name, model_uri=model_uri, endpoint=endpoint)
 
-            with step("Validating model inference") as s:
-                try:
-                    inference.verify_triton_inference(
-                        name, namespace, name,
-                        _resolve_inference_request(model, repo_root)
-                    )
-                except EndpointUnreachable as exc:
-                    s.skip()
-                    result.validation_skipped = True
-                    result.unreachable        = exc
-                    log.debug("Endpoint unreachable for '%s': %s", name, exc)
+                with step("Checking model inference") as s:
+                    try:
+                        inference.verify_triton_inference(
+                            name, namespace, name,
+                            resolve_inference_request(model, repo_root)
+                        )
+                    except EndpointUnreachable as exc:
+                        s.skip()
+                        result.validation_skipped = True
+                        result.unreachable        = exc
+                        log.debug("Endpoint unreachable for '%s': %s", name, exc)
 
-            if model.get("bias_monitoring"):
-                with step("Checking TrustyAI observations"):
-                    _verify_bias_monitoring(model, route, token)
+                if model.get("bias_monitoring"):
+                    with step("Checking TrustyAI observations"):
+                        _verify_bias_monitoring(model, route, token)
 
-            results.append(result)
+                results.append(result)
 
-    _print_summary(
+    print_summary(
         results,
         use_case=config.get("_use_case", "fraud-detection"),
         namespace=namespace,
         config_file=config.get("_config_file", ""),
         trustyai_route=route,
         mode="verify",
+        total=timer.formatted,
     )

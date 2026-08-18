@@ -96,6 +96,33 @@ def delete_dsc(name: str) -> None:
     wait.wait_until_deleted("DataScienceCluster", name)
 
 
+# Label applied by the RHOAI operator to every component Deployment it manages.
+_RHOAI_PART_OF_LABEL = "app.kubernetes.io/part-of=rhods-operator"
+
+
+def wait_until_no_deployments(namespace: str, timeout: int = 300) -> None:
+    """Block until all RHOAI-managed Deployments in *namespace* are gone.
+
+    Polls only Deployments labelled ``app.kubernetes.io/part-of=rhods-operator``
+    so that unrelated Deployments in the same namespace do not cause a false
+    block.  Called after deleting the DSC to confirm the operator has fully torn
+    down kserve, trustyai, dashboard, and other component pods before the
+    DSCInitialization is deleted.
+
+    Args:
+        namespace: The platform namespace (default: redhat-ods-applications).
+        timeout:   Maximum seconds to wait before raising TimeoutError.
+    """
+    log.info("Waiting for RHOAI component Deployments to terminate in '%s'", namespace)
+    wait.wait_until(
+        lambda: len(resources.list_resources(
+            "Deployment", namespace, label_selector=_RHOAI_PART_OF_LABEL
+        )) == 0,
+        f"RHOAI component Deployments removed from '{namespace}'",
+        timeout=timeout,
+    )
+
+
 def delete_dsci(name: str) -> None:
     """Delete the DSCInitialization and wait for removal."""
     log.info("Deleting DSCInitialization '%s'", name)

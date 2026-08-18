@@ -74,27 +74,19 @@ def apply_rbac(manifest_path: Path, namespace: str, service_account: str = "trus
         resources.apply_dict(doc, namespace)
 
 
-def create_logger_ca_bundle(namespace: str) -> None:
-    """Create the kserve-logger-ca-bundle ConfigMap.
+def apply_logger_ca_bundle(manifest_path: Path, namespace: str) -> None:
+    """Apply the kserve-logger-ca-bundle ConfigMap manifest. Idempotent.
 
     The annotation service.beta.openshift.io/inject-cabundle instructs
     the OpenShift service CA operator to populate the ConfigMap with the
     cluster CA bundle automatically after creation.
 
     Required before TrustyAI's payload logger can trust cluster-internal
-    TLS endpoints.  Idempotent.
+    TLS endpoints.
     """
-    log.info("Creating kserve-logger-ca-bundle ConfigMap in '%s'", namespace)
-    resources.apply_dict({
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": {
-            "name": _LOGGER_CA_CM,
-            "namespace": namespace,
-            "annotations": {"service.beta.openshift.io/inject-cabundle": "true"},
-        },
-        "data": {},
-    }, namespace)
+    log.info("Applying kserve-logger-ca-bundle ConfigMap in '%s'", namespace)
+    log.debug("Manifest: %s", manifest_path.name)
+    resources.apply_manifest(manifest_path, namespace)
 
 
 def patch_inferenceservice_config(namespace: str) -> None:
@@ -174,10 +166,20 @@ def verify(name: str, namespace: str) -> None:
 
 
 def delete_trustyai_service(name: str, namespace: str) -> None:
-    """Delete the TrustyAIService CR and wait for removal."""
+    """Delete the TrustyAIService CR and wait for full pod teardown.
+
+    Waits in two stages:
+      1. The TrustyAIService CR itself disappears (operator has processed the delete).
+      2. The Deployment the operator created also disappears (pods have terminated).
+
+    Stage 2 is required because the operator deletes the CR first and tears down
+    the Deployment asynchronously.  Without it, --delete-platform can attempt to
+    remove the DSC while TrustyAI pods are still running.
+    """
     log.info("Deleting TrustyAIService '%s'", name)
     resources.delete_manifest(_SERVICE_KIND, name, namespace)
     wait.wait_until_deleted(_SERVICE_KIND, name, namespace)
+    wait.wait_until_deleted("Deployment", name, namespace)
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +350,12 @@ def revert_inferenceservice_config(namespace: str) -> None:
         )
     except NotFoundError:
         log.debug("inferenceservice-config not found in '%s' — skipping revert", namespace)
+
+
+def delete_logger_ca_bundle(namespace: str) -> None:
+    """Delete the kserve-logger-ca-bundle ConfigMap."""
+    log.info("Deleting kserve-logger-ca-bundle ConfigMap in '%s'", namespace)
+    resources.delete_manifest("ConfigMap", _LOGGER_CA_CM, namespace)
 
 
 def delete_service_account(name: str, namespace: str) -> None:

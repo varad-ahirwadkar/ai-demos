@@ -31,11 +31,9 @@ def deploy(
     config    = load_config(config_file)
     dep_cfg   = config.get("deployment", {})
     namespace = dep_cfg.get("namespace") or config["platform"]["namespace"]
-    models    = dep_cfg.get("models", [])
 
-    typer.echo(f"\nDeploying : {name}")
-    typer.echo(f"Namespace : {namespace}")
-    typer.echo(f"Models    : {len(models)}\n")
+    typer.echo(f"\nDeploying  : {name}")
+    typer.echo(f"Namespace  : {namespace}\n")
 
     if config_file:
         config["_config_file"] = str(config_file)
@@ -57,8 +55,8 @@ def verify(
     dep_cfg   = config.get("deployment", {})
     namespace = dep_cfg.get("namespace") or config["platform"]["namespace"]
 
-    typer.echo(f"\nVerifying : {name}")
-    typer.echo(f"Namespace : {namespace}\n")
+    typer.echo(f"\nVerifying  : {name}")
+    typer.echo(f"Namespace  : {namespace}\n")
 
     if config_file:
         config["_config_file"] = str(config_file)
@@ -87,20 +85,24 @@ def cleanup(
     dep_cfg   = config.get("deployment", {})
     namespace = dep_cfg.get("namespace") or config["platform"]["namespace"]
 
-    typer.echo(f"\nRemoving  : {name}")
-    typer.echo(f"Namespace : {namespace}\n")
+    typer.echo(f"\nRemoving   : {name}")
+    typer.echo(f"Namespace  : {namespace}\n")
 
     try:
         registry.get(name).cleanup(config)
         if delete_platform:
-            from rhoai.utils.progress import step
-            with step("Removing DSC and DSCI"):
-                dsc.delete_dsc(config["dsc"]["name"])
-                dsc.delete_dsci(config["dsc"]["dsci_name"])
+            from rhoai.utils.progress import header_step, step
+            platform_namespace = config["platform"]["namespace"]
+            dsc_timeout        = config["timeouts"].get("dsc_ready", 600)
+            with header_step("Removing platform resources", outcome="Platform resources removed"):
+                with step("Removing DSC"):
+                    dsc.delete_dsc(config["dsc"]["name"])
+                with step("Waiting for component pods to terminate") as s:
+                    dsc.wait_until_no_deployments(platform_namespace, timeout=dsc_timeout)
+                with step("Removing DSCI"):
+                    dsc.delete_dsci(config["dsc"]["dsci_name"])
     except Exception as exc:  # noqa: BLE001
         _exit_with_error(exc)
-
-    typer.echo(f"\n✔  {name}  removed.")
 
 
 @app.command(name="list")

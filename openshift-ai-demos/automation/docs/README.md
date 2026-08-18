@@ -387,9 +387,7 @@ KServe `InferenceService` and `ServingRuntime` management.
 
 | Function | Description |
 |---|---|
-| `apply_serving_runtime(path, namespace)` | Apply a `ServingRuntime` manifest directly. |
 | `apply_serving_runtime_from_template(path, namespace)` | Process an OpenShift Template (`oc process`) and apply the resulting `ServingRuntime`. |
-| `apply_inference_service(path, namespace)` | Apply an `InferenceService` manifest. |
 | `wait_until_ready(name, namespace, timeout)` | Block until the `InferenceService` is `Ready`. |
 | `verify(namespace, name=None)` | Assert one specific (or all) `InferenceService`(s) in the namespace are `Ready`. |
 | `get_inference_url(name, namespace)` | Return the public inference URL from `.status.url` or the OpenShift `Route`. |
@@ -557,7 +555,13 @@ log = get_logger(__name__)
 def deploy(config):
     prepare.deploy_platform(config)
     storage.apply_s3_secret(...)
-    inference.apply_inference_service(assets.get_model_manifest(config["repo_root"]), ...)
+    inference.apply_serving_runtime_from_template(
+        assets.get_serving_runtime_template(config["repo_root"]),
+        config["platform"]["namespace"],
+        config["deployment"]["namespace"],
+        model_name="my-model",
+        runtime_name="my-model-runtime",
+    )
     inference.wait_until_ready(...)
 ```
 

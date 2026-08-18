@@ -7,7 +7,7 @@
 #   rhoai usecase deploy fraud-detection --config config-fraud-detection-trustyai.yaml
 
 # Absolute path to the root of the openshift-ai-demos repository.
-repo_root: /path/to/openshift-ai-demos
+repo_root: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos
 
 operator:
   channel: stable-3.5
@@ -37,7 +37,7 @@ deployment:
         # Observation files: directory (all *.json in lexical order) or explicit list.
         # Each file is one KServe v2 inference request — see docs/bias-readme.md.
         observations:
-          path: bias-monitoring/data/training/   # relative to repo_root
+          path: automation/rhoai/usecases/fraud_detection/inputs/training/data # relative to repo_root
 
         # Rename opaque internal column names to human-readable labels.
         name_mapping:
@@ -54,7 +54,7 @@ deployment:
             customer_data_input-9:  "Age"
             customer_data_input-10: "Length of Employment?"
           outputs:
-            customer_data_output-0: "Will Default?"
+            predict: "Will Default?"
 
         # SPD fairness monitors: validated immediately before scheduling.
         spd_monitors:
@@ -78,7 +78,7 @@ deployment:
 
       bias_monitoring:
         observations:
-          path: bias-monitoring/data/training/
+          path: automation/rhoai/usecases/fraud_detection/inputs/training/data
 
         name_mapping:
           inputs:
@@ -94,7 +94,7 @@ deployment:
             customer_data_input-9:  "Age"
             customer_data_input-10: "Length of Employment?"
           outputs:
-            customer_data_output-0: "Will Default?"
+            predict: "Will Default?"
 
         spd_monitors:
           - protected_attribute:   "Is Male-Identifying?"
