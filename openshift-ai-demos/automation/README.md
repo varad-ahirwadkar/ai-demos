@@ -17,15 +17,13 @@ with a handful of commands instead of a manual, multi-step procedure.
 
 ```bash
 # 1. Install
-cd openshift-ai-demos/automation
+git clone https://github.com/IBM/ai-demos.git && cd ai-demos
+git checkout rhoai-automation
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e openshift-ai-demos/automation
 
-# 2. Copy the example config and set repo_root to the absolute path of your
-#    openshift-ai-demos checkout — the ~ shortcut is not expanded.
-cp config-fraud-detection.yaml my-config.yaml
-#    Edit my-config.yaml:
-#      repo_root: /absolute/path/to/openshift-ai-demos
+# 2. Copy the example config and update my-config.yaml
+cp openshift-ai-demos/automation/config-fraud-detection.yaml my-config.yaml
 
 # 3. Deploy, verify, and clean up
 rhoai usecase deploy  fraud-detection -c my-config.yaml
