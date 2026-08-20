@@ -1,81 +1,35 @@
 # rhoai platform — CLI Reference
 
 The `rhoai platform` command group manages the full lifecycle of a Red Hat OpenShift AI
-(RHOAI) installation: operator install,  DSCInitialization, component management,
+(RHOAI) installation: operator install, DSCInitialization, component management,
 status reporting, and clean uninstall.
 
----
-
-## Prerequisites
-
-- `oc` CLI installed and logged in (`oc login <cluster-url>`)
-- Cluster-admin permissions
-- Python environment with the automation package installed (`pip install -e .` from the
-  `automation/` directory)
-
----
-
-## Command overview
-
-| Command | Purpose |
-|---|---|
-| `rhoai platform init` | Install operator + initialise DSCI |
-| `rhoai platform enable` | Enable one or more DSC components |
-| `rhoai platform disable` | Disable one or more DSC components |
-| `rhoai platform setup` | One-shot bootstrap (init + components from config) |
-| `rhoai platform uninstall` | Remove all RHOAI platform resources (cluster-clean) |
-| `rhoai platform status` | Report RHOAI platform health |
-| `rhoai platform inspect` | Display cluster info (read-only) |
+Prerequisites and installation: see the [top-level README](../../README.md#prerequisites).
 
 ---
 
 ## Output verbosity
 
-Every command runs in **quiet mode by default** — only the structured summary output is
-printed. The logger is suppressed at `INFO` level so internal `log.info(...)` calls
-never appear on screen during normal use.
-
-To see the full log stream (useful when debugging failures), pass `--log-level DEBUG`
-**before** the subcommand:
+Commands run in quiet mode by default. Pass `--log-level DEBUG` **before** the
+subcommand to see the full log stream:
 
 ```bash
 # Normal output — structured summary only
 rhoai platform init --channel stable-3.x
 
-# Debug output — full log stream + structured summary
+# Full log stream — useful when debugging failures
 rhoai --log-level DEBUG platform init --channel stable-3.x
-
-# Debug works with every subcommand
-rhoai --log-level DEBUG platform enable kserve
-rhoai --log-level DEBUG platform status
-rhoai --log-level DEBUG platform uninstall -y
 ```
 
-> **Flag position matters:** `--log-level` is a global flag on the top-level `rhoai`
-> command, not on the subcommand. It must come _before_ `platform`.
+> **Flag position matters:** `--log-level` must come _before_ `platform`, not after it.
 
-**How the logger works internally:**
-
-| Level | Root logger | Handler threshold | Effect |
-|---|---|---|---|
-| `INFO` (default) | `DEBUG` (accepts everything) | `WARNING` | `log.info()` / `log.debug()` calls are silently dropped — only `typer.echo` output is shown |
-| `DEBUG` | `DEBUG` | `DEBUG` | Full log stream visible — every `log.debug()` / `log.info()` line is printed |
-
-> The handler threshold is set to `WARNING` **only** when the level is exactly `INFO`
-> (`numeric == logging.INFO`). This ensures that selecting `DEBUG` (which is numerically
-> lower than `INFO`) correctly enables the full log stream rather than silencing it.
+See [README.md §Logging](../../README.md#logging) for details.
 
 ---
 
 ## Configuration
 
-All commands load configuration from (highest priority first):
-
-1. **CLI flags** — override everything for that invocation only, never written to disk
-2. **`--config` file** — user-supplied YAML merged on top of defaults
-3. **`config/defaults.yaml`** — bundled defaults
-
-Key defaults (`config/defaults.yaml`):
+Key defaults (full list in [`rhoai/config/defaults.yaml`](../config/defaults.yaml)):
 
 ```yaml
 operator:
@@ -85,18 +39,18 @@ operator:
   source: redhat-operators
   source_namespace: openshift-marketplace
 
-cluster:
+platform:
   namespace: redhat-ods-applications
 
 dsc:
   name: default-dsc
   dsci_name: default-dsci
 
-components: []   # used by 'setup' — empty = apply dsc.yaml as-is, which is present in shared folder
+components: []   # used by 'setup' — empty = apply dsc.yaml as-is
 ```
 
-Pass `--config /path/to/my-config.yaml` to any command to override defaults without
-modifying the bundled file.
+Pass `--config /path/to/my-config.yaml` to any command to override defaults. See
+[README.md §Configuration](../../README.md#configuration) for how values are merged.
 
 ---
 
@@ -108,13 +62,12 @@ the DSCInitialization (DSCI). Does **not** enable any DSC components — run
 
 **Sequence:**
 1. Validate cluster login
-2. Validate RBAC permissions (SelfSubjectAccessReview)
-3. Validate / confirm storage classes
-4. Create operator namespace (`redhat-ods-operator`) if absent
-5. Create workload namespace (`redhat-ods-applications`) if absent
-6. Apply OperatorGroup + Subscription → wait for CSV `Succeeded`
-7. Approve InstallPlan automatically if `--version` pin was requested (Manual approval)
-8. Apply DSCI manifest → wait for `Ready`
+2. Validate / confirm storage classes
+3. Create operator namespace (`redhat-ods-operator`) if absent
+4. Create workload namespace (`redhat-ods-applications`) if absent
+5. Apply OperatorGroup + Subscription → wait for CSV `Succeeded`
+6. Approve InstallPlan automatically if `--version` pin was requested (Manual approval)
+7. Apply DSCI manifest → wait for `Ready`
 
 ### Flags
 
@@ -172,11 +125,10 @@ oc get packagemanifest rhods-operator \
 
 | Channel | Description |
 |---|---|
-| `stable` | Latest 2.x release (long-term support line) |
-| `stable-3.x` | Latest 3.x release (floating, auto-upgrades within 3.x) |
-| `stable-3.4` | Pinned to the 3.4 minor line |
-| `stable-3.3` | Pinned to the 3.3 minor line |
-| `fast-3.x` | Latest 3.x fast lane (promoted ahead of stable) |
+| `stable` | Latest stable release (long-term support line) |
+| `stable-<N>.x` | Floating latest within major version `N` (e.g. `stable-3.x`) |
+| `stable-<N>.<M>` | Pinned to a specific minor line (e.g. `stable-3.5`) |
+| `fast-<N>.x` | Fast lane for major version `N`, promoted ahead of stable |
 | `beta` | Pre-GA builds — **see note below** |
 | `alpha` | Alpha builds |
 
@@ -217,8 +169,8 @@ rhoai platform init --config /path/to/my-config.yaml --channel stable-3.x
 > The steps below describe what the CLI will handle end-to-end once implemented.
 > For now, perform these steps manually before running `rhoai platform init`.
 
-Installing a pre-GA build (e.g. RHOAI 3.5 EA) requires three cluster-side
-prerequisites that are not yet automated:
+Installing a pre-GA build requires three cluster-side prerequisites that are not yet
+automated:
 
 #### 1. Pull secret for `quay.io/rhoai`
 
@@ -387,6 +339,15 @@ rhoai platform disable ray kueue trainingoperator
 
 Full one-shot bootstrap — runs `init` followed by enabling DSC components.
 
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--channel` | `stable` | OLM channel. Overrides `operator.channel` in config. |
+| `--version` | _(none)_ | Pin to a specific CSV. Accepts bare semver or full CSV name. |
+| `--source` | `redhat-operators` | CatalogSource name. |
+| `--config`, `-c` | _(none)_ | Path to a config YAML file. |
+
 **Two modes:**
 
 | Mode | When | Behaviour |
@@ -439,13 +400,6 @@ The same [already-installed operator](#already-installed-operator) logic from `i
 applies here — `setup` will never reinstall the operator if the CSV is already
 `Succeeded`.
 
-### Dashboard URL
-
-`setup` calls `_print_platform_summary()` at the end, which includes the RHOAI
-dashboard URL when the `dashboard` component is `Managed`. The URL is resolved the
-same way as in `enable` — `ConsoleLink/rhodslink` first, `Route/rhods-dashboard`
-as fallback.
-
 ---
 
 ## `rhoai platform uninstall`
@@ -459,7 +413,7 @@ services across the reinstall.
 
 **Deletion sequence:**
 1. DataScienceCluster — operator deprovisions components gracefully first, then waits
-   up to 120 s for component pods to drain
+   for component pods to drain (timeout configurable via `timeouts.dsc_ready`)
 2. DSCInitialization
 3. ClusterServiceVersion (CSV), Subscription, OperatorGroup, InstallPlans
 4. Cluster-wide sweep of any stale rhods/rhoai/odh CSVs
@@ -538,7 +492,7 @@ rhoai platform status
 
 ```
 RHOAI Platform
-  Operator              rhods-operator.3.4.2        ✔  Succeeded
+  Operator              rhods-operator.<version>    ✔  Succeeded
   Initialization        default-dsci                ✔  Ready
   DataScienceCluster    default-dsc                 ✔  Ready
 
@@ -574,19 +528,18 @@ rhoai platform inspect
 
 ```
 ⚙  Cluster
-  OpenShift    4.16.3
+  OpenShift    <version>
   Topology     Multi-node  (6 nodes: 3 master, 3 workers)
 
 ⛶  Worker Nodes
-  NAME                                              CPU         MEMORY
-  ip-10-0-110-158.us-west-1.compute.internal        4 cores     15 GiB
-  ip-10-0-21-28.us-west-1.compute.internal          4 cores     15 GiB
-  ip-10-0-65-202.us-west-1.compute.internal         4 cores     15 GiB
+  NAME              CPU         MEMORY
+  <node-1>          4 cores     15 GiB
+  <node-2>          4 cores     15 GiB
+  <node-3>          4 cores     15 GiB
 
 💾  Storage Classes
-  NAME                                      BOUND
-  gp2-csi                                   0 GiB
-  gp3-csi                                   40 GiB
+  NAME          BOUND
+  <sc-name>     40 GiB
 ```
 
 ---

@@ -1,0 +1,184 @@
+{
+  "inputs": [
+    {
+      "name": "transaction_amount",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[23497.0]]
+    },
+    {
+      "name": "log_amount",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[10.0646]]
+    },
+    {
+      "name": "hour_of_day",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[1.0]]
+    },
+    {
+      "name": "day_of_week",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[2.0]]
+    },
+    {
+      "name": "is_weekend",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.0]]
+    },
+    {
+      "name": "is_late_night",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[1.0]]
+    },
+    {
+      "name": "is_early_morning",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.0]]
+    },
+    {
+      "name": "user_mean_amount",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[12000.0]]
+    },
+    {
+      "name": "user_std_amount",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[4500.0]]
+    },
+    {
+      "name": "user_max_amount",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[25000.0]]
+    },
+    {
+      "name": "user_txn_count",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[45.0]]
+    },
+    {
+      "name": "amount_vs_mean",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[1.958]]
+    },
+    {
+      "name": "amount_zscore",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[2.55]]
+    },
+    {
+      "name": "geo_lat",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[13.0283557347]]
+    },
+    {
+      "name": "geo_lon",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[77.5846194608]]
+    },
+    {
+      "name": "geo_dist_city",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.06]]
+    },
+    {
+      "name": "user_geo_lat_std",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.02]]
+    },
+    {
+      "name": "user_geo_lon_std",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.03]]
+    },
+    {
+      "name": "risk_score",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.31]]
+    },
+    {
+      "name": "label_confidence",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.31]]
+    },
+    {
+      "name": "remote_access_detected_bin",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.0]]
+    },
+    {
+      "name": "User_prior_complaint_flag_bin",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.0]]
+    },
+    {
+      "name": "new_beneficiary_flag_bin",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.0]]
+    },
+    {
+      "name": "beneficiary_in_watchlist_bin",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[0.0]]
+    },
+    {
+      "name": "high_risk_channel",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[1.0]]
+    },
+    {
+      "name": "user_account_age_days_bin",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[3.0]]
+    },
+    {
+      "name": "device_binding_age_days_bin",
+      "shape": [1, 1],
+      "datatype": "FP32",
+      "data": [[2.0]]
+    },
+    {
+      "name": "transaction_type",
+      "shape": [1, 1],
+      "datatype": "BYTES",
+      "data": [["PAY"]]
+    },
+    {
+      "name": "initiation_channel",
+      "shape": [1, 1],
+      "datatype": "BYTES",
+      "data": [["VPA"]]
+    },
+    {
+      "name": "Bank_Name",
+      "shape": [1, 1],
+      "datatype": "BYTES",
+      "data": [["SBI"]]
+    }
+  ]
+}

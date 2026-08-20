@@ -14,6 +14,8 @@ with a handful of commands instead of a manual, multi-step procedure.
 ## Quick Start
 
 > **Prerequisite:** Python ≥ 3.12, `oc` CLI, and an active `oc login` session.
+> The fraud-detection use case also requires model files on a PVC —
+> see [rhoai/usecases/README.md → Prerequisites](rhoai/usecases/README.md#prerequisites) before running step 3.
 
 ```bash
 # 1. Install
@@ -42,9 +44,12 @@ See [`rhoai/usecases/README.md`](rhoai/usecases/README.md) for the complete work
 | Requirement | Notes |
 |---|---|
 | Python ≥ 3.12 | `python3 --version` |
-| `oc` CLI | Must be logged in to the target cluster (`oc login <cluster-url>`) |
+| `oc` CLI | Must be logged in (`oc login <cluster-url>`). Use a version compatible with your cluster. |
 | OpenShift cluster | OCP 4.20+, ppc64le or x86_64 |
-| Cluster-admin permissions | Required to install the RHOAI operator |
+| Cluster-admin permissions | Required to install the RHOAI operator and to write to `openshift-monitoring` (TrustyAI only) |
+| StorageClass | At least one `ReadWriteOnce` StorageClass must exist — `oc get storageclass` |
+| Internet access | Cluster nodes must be able to pull from `quay.io/powercloud` (Triton serving runtime). Air-gapped clusters require a mirrored image. |
+| Compute (per model) | Each model deployment requests 2 CPU and 8 GiB on a worker node — confirm with `rhoai platform inspect` |
 
 ---
 
@@ -75,16 +80,25 @@ inherited from [`rhoai/config/defaults.yaml`](rhoai/config/defaults.yaml).
 rhoai usecase deploy fraud-detection --config config-fraud-detection.yaml
 ```
 
-A minimal config file looks like this:
+`repo_root` is the only key with no usable default — every other key inherits a
+working value from `rhoai/config/defaults.yaml`. A config file that only sets
+`repo_root` is sufficient to run any command:
 
 ```yaml
-repo_root: /absolute/path/to/openshift-ai-demos   # must be absolute — ~ is not expanded
+# Absolute path to the openshift-ai-demos directory inside the cloned repo.
+# e.g. if you cloned to /home/me/ai-demos → /home/me/ai-demos/openshift-ai-demos
+# ~ is not expanded — use the full path.
+repo_root: /home/me/ai-demos/openshift-ai-demos
+```
 
-platform:
-  namespace: redhat-ods-applications   # where RHOAI operands run
+Add keys only for values you actually need to change from the defaults. Common overrides:
+
+```yaml
+operator:
+  channel: stable-3.x     # default: stable
 
 deployment:
-  namespace: my-workload-namespace
+  namespace: test-fraud    # default: falls back to platform.namespace
 ```
 
 ### How configuration is resolved
@@ -179,36 +193,33 @@ rhoai platform init --channel stable-3.x
 rhoai --log-level DEBUG platform init --channel stable-3.x
 ```
 
-`--log-level` accepts `DEBUG`, `INFO`, and must come
+`--log-level` accepts `DEBUG` or `INFO` and must come
 immediately after `rhoai`, before the subcommand.
 
 ---
 
 ## Timeout defaults
 
-| Operation | Default |
-|---|---|
-| Operator ready | 300s |
-| DSC ready | 600s |
-| InferenceService ready | 120s |
-| TrustyAI ready | 300s |
+| Operation | Config key | Default |
+|---|---|---|
+| Operator ready | `timeouts.operator_ready` | 300s |
+| DSC ready | `timeouts.dsc_ready` | 600s |
+| InferenceService ready | `timeouts.inference_ready` | 120s |
+| TrustyAI ready | `timeouts.trustyai_ready` | 300s |
+| InferenceService stabilise (after TrustyAI logger rollout) | `timeouts.isvc_stabilize` | 300s |
+| TrustyAI observation ingestion | `timeouts.ingestion_ready` | 300s |
 
-Override under the `timeouts:` key in your config file.
+Override any of these under the `timeouts:` key in your config file:
+
+```yaml
+timeouts:
+  ingestion_ready: 600   # increase on slow clusters
+```
 
 ## Testing
 
-The test suite requires no live cluster — all Kubernetes API calls are
-mocked.
-
-```bash
-pytest                                       # full suite
-pytest -v                                    # verbose
-pytest tests/unit/platform/test_prepare.py   # a single file
-ruff check rhoai/                            # lint
-```
-
-See [`docs/README.md`](docs/README.md) for test layout and
-conventions.
+See [`docs/README.md §12`](docs/README.md#12-testing) for test layout, conventions,
+and lint commands.
 
 ---
 
@@ -292,9 +303,16 @@ oc get pvc -n <namespace>                 # confirm PVC bound
 this machine.
 
 **Fix:** Wait for the pod, then re-run verify. If the hostname does not resolve,
-add it to `/etc/hosts` as shown in the deploy output:
+find the ingress IP and add it to `/etc/hosts`:
 
 ```bash
+# Find the cluster ingress IP
+oc get svc router-default -n openshift-ingress \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+
+# Add to /etc/hosts (use the hostname from the deploy output)
+echo "<ingress-ip>  <model-hostname>.apps.<cluster>" | sudo tee -a /etc/hosts
+
 rhoai usecase verify fraud-detection -c my-config.yaml
 ```
 

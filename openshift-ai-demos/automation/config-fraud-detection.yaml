@@ -7,7 +7,9 @@
 #   rhoai platform setup --config config-fraud-detection.yaml
 #   rhoai usecase deploy fraud-detection --config config-fraud-detection.yaml
 
-# Absolute path to the root of the openshift-ai-demos repository.
+# Absolute path to the openshift-ai-demos directory inside the cloned repo.
+# Example: if you cloned to /home/me/ai-demos, set this to /home/me/ai-demos/openshift-ai-demos
+# Note: ~ is not expanded — use the full path.
 repo_root: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos
 
 operator:
@@ -26,10 +28,14 @@ deployment:
   namespace: test-fraud
 
   models:
+    # - name: upi-fraud-detection
+    #   model_uri: pvc://fraud-model-pvc/upi-fraud-detection
+    #   inference_request: automation/rhoai/usecases/fraud_detection/inputs/upi-fraud-detection.json
+
     - name: demo-loan-nn-onnx-alpha
       model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
       inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
 
-    - name: demo-loan-nn-onnx-beta
-      model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
-      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
+    # - name: demo-loan-nn-onnx-beta
+    #   model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
+    #   inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json

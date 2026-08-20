@@ -4,13 +4,6 @@ A **use case** is a self-contained, customer-facing solution built on top of
 the [platform layer](../platform/README.md) — each one owns a `deploy` /
 `verify` / `cleanup` sequence and is invoked through `rhoai usecase`.
 
-```bash
-rhoai usecase list
-rhoai usecase deploy  <name> [-c CONFIG]
-rhoai usecase verify  <name> [-c CONFIG]
-rhoai usecase cleanup <name> [-c CONFIG] [--delete-platform]
-```
-
 `deploy` checks whether the RHOAI platform is already in the desired state
 and bootstraps it if needed — running it against a completely fresh cluster
 is expected to work end to end.
@@ -23,19 +16,16 @@ For the internal structure of a use case package (`assets.py` / `deploy.py`
 
 ## Workflow
 
-Every use case follows the same lifecycle. Steps 3–4 apply only when
-TrustyAI bias monitoring is configured.
+Every use case follows the same three-step lifecycle:
 
-| Step | Command / Action | Required |
-|---|---|---|
-| 1. Deploy | `rhoai usecase deploy <name> -c config.yaml` | ✔ |
-| 2. Verify | `rhoai usecase verify <name> -c config.yaml` | ✔ |
-| 3. Observe TrustyAI metrics | OpenShift Console → Observe → Metrics → `trustyai_spd` | TrustyAI only |
-| 4. Clean up | `rhoai usecase cleanup <name> -c config.yaml` | ✔ |
+| Step | Command |
+|---|---|
+| 1. Deploy | `rhoai usecase deploy <name> -c config.yaml` |
+| 2. Verify | `rhoai usecase verify <name> -c config.yaml` |
+| 3. Clean up | `rhoai usecase cleanup <name> -c config.yaml` |
 
-**Observations** (training data sent to TrustyAI for baseline fairness) are
-sent automatically during `deploy` when `bias_monitoring.observations` is
-configured — no separate script is needed.
+Optional features such as TrustyAI bias monitoring extend the behavior of
+each step through configuration — they do not introduce a separate workflow.
 
 ---
 
@@ -49,15 +39,17 @@ configured — no separate script is needed.
 
 ## Fraud Detection
 
-Deploys a fraud-detection model on the Triton serving runtime, with a
-KServe `InferenceService` in front of it.
+Deploys one or more fraud-detection models on the Triton serving runtime, with a
+KServe `InferenceService` in front of each one.
 
 Two ready-to-use config files are provided:
 
 | Config file | When to use |
 |---|---|
 | [`config-fraud-detection.yaml`](../../config-fraud-detection.yaml) | Model serving only — no TrustyAI |
-| [`config-fraud-detection-trustyai.yaml`](../../config-fraud-detection-trustyai.yaml) | Model serving **+** TrustyAI bias monitoring |
+| [`config-fraud-detection-trustyai.yaml`](../../config-fraud-detection-trustyai.yaml) | Model serving **+** TrustyAI bias monitoring (biased and unbiased models side by side) |
+
+---
 
 ### Configuration
 
@@ -79,13 +71,9 @@ components:
 deployment:
   namespace: test-fraud
   models:
-    - name: demo-loan-nn-onnx-alpha
-      model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
-      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
-
-    - name: demo-loan-nn-onnx-beta
-      model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
-      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
+    - name: upi-fraud-detection
+      model_uri: pvc://fraud-model-pvc/upi-fraud-detection
+      inference_request: automation/rhoai/usecases/fraud_detection/inputs/upi-fraud-detection.json
 ```
 
 #### `models`
@@ -97,10 +85,11 @@ Each entry under `deployment.models` defines one independent model deployment:
 | `name` | ✔ | Kubernetes resource name for the `InferenceService` and `ServingRuntime` |
 | `model_uri` | ✔ | Where the model is loaded from (see formats below) |
 | `inference_request` | ✔ | Path to a KServe v2 JSON payload used for post-deploy validation, relative to `repo_root` |
-| `bias_monitoring` | | TrustyAI bias monitoring config — see [TrustyAI section](#fraud-detection--trustyai-bias-monitoring) |
+| `bias_monitoring` | | TrustyAI bias monitoring config — see [`bias_monitoring`](#bias_monitoring) below |
 
-Multiple entries deploy multiple models in sequence, each with its own `ServingRuntime` and `InferenceService`.
-This is used for bias monitoring workflows where a baseline and a candidate model run side by side.
+Multiple entries deploy multiple models in sequence, each with its own `ServingRuntime`
+and `InferenceService`. Use this when running biased and unbiased models side by side
+for a comparative fairness demonstration.
 
 #### `model_uri` formats
 
@@ -114,213 +103,20 @@ Currently supported:
 > [`rhoai/config/defaults.yaml`](../config/defaults.yaml) but are not yet
 > validated end-to-end. Use `pvc://` for all current deployments.
 
----
+#### `bias_monitoring`
 
-### Deploy
+`bias_monitoring` is an optional block on each model entry. When present on any
+model, the deploy sequence is extended to set up TrustyAI for that model.
 
-```bash
-rhoai usecase deploy fraud-detection -c /absolute/path/to/config-fraud-detection.yaml
-```
+To enable bias monitoring:
 
-Checks the RHOAI platform (bootstrapping it if needed), deploys the Triton
-`ServingRuntime` and `InferenceService` for each configured model, then
-validates that each model is serving inference requests.
+- Add `trustyai` to the `components` list.
+- Add a `bias_monitoring` block to each model you want monitored.
+- Set `trustyai_service_name` and `trustyai_service_account` at the `deployment:`
+  level (see [TrustyAI service settings](#trustyai-service-settings) below).
 
-**Sample output:**
-```
-Checking RHOAI platform...
-
-  ✔  Operator ready
-  ✔  DSCI 'default-dsci' ready
-  ✔  DSC 'default-dsc' ready
-  ✔  Components enabled: Dashboard, Workbenches, KServe
-
-✔  Platform ready  (5s)
-
-Deploying 'demo-loan-nn-onnx-alpha'...
-
-  ✔  Configuring Triton ServingRuntime  (6s)
-  ✔  Deploying service 'demo-loan-nn-onnx-alpha'  (21s)
-  ✔  Validating model inference  (1s)
-
-✔  'demo-loan-nn-onnx-alpha' ready  (30s)
-
-Deploying 'demo-loan-nn-onnx-beta'...
-
-  ✔  Configuring Triton ServingRuntime  (6s)
-  ✔  Deploying service 'demo-loan-nn-onnx-beta'  (10s)
-  ✔  Validating model inference  (1s)
-
-✔  'demo-loan-nn-onnx-beta' ready  (19s)
-
-Deployment complete.  Total: 1m 2s
-
-  Use case   : fraud-detection
-  Namespace  : test-fraud
-
-Models
-
-✔  demo-loan-nn-onnx-alpha
-
-  Source      : pvc://fraud-model-pvc/bias-monitoring/unbiased_model
-  Endpoint    : https://demo-loan-nn-onnx-alpha-test-fraud.apps.<cluster>
-  Status      : Ready
-  Validation  : Passed
-
-✔  demo-loan-nn-onnx-beta
-
-  Source      : pvc://fraud-model-pvc/bias-monitoring/biased_model
-  Endpoint    : https://demo-loan-nn-onnx-beta-test-fraud.apps.<cluster>
-  Status      : Ready
-  Validation  : Passed
-
-Next
-
-  rhoai usecase verify fraud-detection \
-      -c /absolute/path/to/config-fraud-detection.yaml
-```
-
-If the endpoint is unreachable from the machine running the CLI (for example, a local
-workstation that cannot resolve the cluster's `.apps` route), inference validation is
-marked **Unavailable** and the deployment is still considered successful.
-The `Follow-up actions` section lists the affected models and the exact command to rerun
-once the endpoint is reachable:
-
-```
-Follow-up actions
-
-⚠  demo-loan-nn-onnx-alpha
-
-  Endpoint:
-    https://demo-loan-nn-onnx-alpha-test-fraud.apps.<cluster>/v2/models/demo-loan-nn-onnx-alpha/infer
-
-  Model inference could not be validated because the endpoint
-  was not reachable from this machine.
-
-  Verify the cluster route is reachable from your workstation.
-
-  If hostname resolution fails, check your DNS or /etc/hosts configuration.
-
-  Then rerun:
-
-    rhoai usecase verify fraud-detection \
-      -c /absolute/path/to/config-fraud-detection.yaml
-
-Next
-
-  rhoai usecase verify fraud-detection \
-    -c /absolute/path/to/config-fraud-detection.yaml
-```
-
----
-
-### Verify
-
-```bash
-rhoai usecase verify fraud-detection -c /absolute/path/to/config-fraud-detection.yaml
-```
-
-Checks the platform, confirms each `InferenceService` is Ready, and runs a live inference
-request for each configured model using its `inference_request` payload.
-
-**Sample output:**
-```
-Verifying 'demo-loan-nn-onnx-alpha' (1/2)...
-
-  ✔  Checking inference service  (1s)
-  ✔  Checking model inference  (1s)
-
-✔  'demo-loan-nn-onnx-alpha' healthy  (2s)
-
-Verifying 'demo-loan-nn-onnx-beta' (2/2)...
-
-  ✔  Checking inference service  (1s)
-  ✔  Checking model inference  (1s)
-
-✔  'demo-loan-nn-onnx-beta' healthy  (2s)
-
-Verification complete.  Total: 7s
-
-  Use case   : fraud-detection
-  Namespace  : test-fraud
-
-Models
-
-✔  demo-loan-nn-onnx-alpha
-
-  Endpoint    : https://demo-loan-nn-onnx-alpha-test-fraud.apps.<cluster>
-  Validation  : Passed
-
-✔  demo-loan-nn-onnx-beta
-
-  Endpoint    : https://demo-loan-nn-onnx-beta-test-fraud.apps.<cluster>
-  Validation  : Passed
-
-Next steps
-
-  Test a model endpoint
-
-    # demo-loan-nn-onnx-alpha
-    curl -sk -X POST https://demo-loan-nn-onnx-alpha-test-fraud.apps.<cluster>/v2/models/demo-loan-nn-onnx-alpha/infer \
-      -H 'Content-Type: application/json' \
-      -d @<path-to-request.json>
-```
-
----
-
-### Cleanup
-
-```bash
-# Remove use-case resources only
-rhoai usecase cleanup fraud-detection -c /absolute/path/to/config-fraud-detection.yaml
-
-# Remove use-case resources AND platform (DSC + DSCI)
-rhoai usecase cleanup fraud-detection -c /absolute/path/to/config-fraud-detection.yaml --delete-platform
-```
-
-Removes the `InferenceService` and `ServingRuntime` for each model in reverse deploy order.
-Pass `--delete-platform` to also remove the DataScienceCluster and DSCInitialization.
-
-**Sample output:**
-```
-Removing model serving...
-
-  ✔  Removing inference service 'demo-loan-nn-onnx-alpha'  (1s)
-  ✔  Removing inference service 'demo-loan-nn-onnx-beta'  (1s)
-  ✔  Waiting for inference service pods to terminate  (18s)
-  ✔  Removing serving runtime 'demo-loan-nn-onnx-alpha-runtime'  (1s)
-  ✔  Removing serving runtime 'demo-loan-nn-onnx-beta-runtime'  (1s)
-  ✔  Waiting for serving runtime pods to terminate  (5s)
-
-✔  Model serving removed  (26s)
-
-Cleanup complete.  Total: 26s
-
-  Use case   : fraud-detection
-  Namespace  : test-fraud
-
-Removed
-
-  ✔  demo-loan-nn-onnx-alpha
-  ✔  demo-loan-nn-onnx-beta
-```
-
----
-
-## Fraud Detection + TrustyAI Bias Monitoring
-
-TrustyAI monitors deployed models for fairness metrics (Statistical Parity
-Difference) and tracks column-average values over time (identity metrics).
-The framework automates the full setup: TrustyAI Service deployment,
-observation ingestion, name mapping, and metric scheduling.
-
-Use [`config-fraud-detection-trustyai.yaml`](../../config-fraud-detection-trustyai.yaml)
-to enable this workflow. It extends the base config with:
-
-- `trustyai` added to the `components` list
-- A `bias_monitoring` block for each model
-
-### Configuration
+One TrustyAI service is shared across all models in the namespace; `bias_monitoring`
+configuration is per model.
 
 ```yaml
 # config-fraud-detection-trustyai.yaml (excerpt)
@@ -375,13 +171,207 @@ deployment:
 See [`config-fraud-detection-trustyai.yaml`](../../config-fraud-detection-trustyai.yaml)
 for the complete example with both models fully configured.
 
-### Deploy with TrustyAI
+**`observations`** — path relative to `repo_root`. A directory loads all `*.json`
+files in lexical order; an explicit list of file paths is also accepted. Each file
+must be a KServe v2 inference request. Observations (training data) are sent
+automatically during `deploy` — no separate script is needed.
 
-```bash
-rhoai usecase deploy fraud-detection -c /absolute/path/to/config-fraud-detection-trustyai.yaml
+**`name_mapping`** — renames opaque tensor column names to human-readable labels
+before monitors are scheduled, so that `spd_monitors` and `identity_monitors` can
+reference the readable names.
+
+**`spd_monitors`** — each entry schedules a recurring Statistical Parity Difference
+computation for one protected attribute.
+
+**`identity_monitors`** — each entry tracks the column-average value of one named
+column over time.
+
+#### TrustyAI service settings
+
+These keys live at `deployment:` level (not per-model) because one TrustyAI service
+is shared across all models in the namespace:
+
+| Key | Default | Description |
+|---|---|---|
+| `trustyai_service_name` | `trustyai-service` | Name of the `TrustyAIService` resource |
+| `trustyai_service_account` | `trustyai-user` | ServiceAccount created for TrustyAI RBAC |
+
+```yaml
+deployment:
+  namespace: test-fraud
+  trustyai_service_name:    trustyai-service
+  trustyai_service_account: trustyai-user
 ```
 
-The deploy sequence is extended when any model has `bias_monitoring` configured:
+---
+
+### Prerequisites
+
+**Compute:** Each model deployment requests 2 CPU and 8 GiB of memory on a worker
+node. Confirm available capacity before deploying:
+
+```bash
+rhoai platform inspect   # shows worker node CPU and memory
+```
+
+**Model files on a PVC:** The model files must be present on a PersistentVolumeClaim
+(PVC) in the workload namespace **before** running `deploy`. The CLI does not create
+or populate the PVC.
+
+The `model_uri` field in your config determines the PVC name and the path inside it.
+For `pvc://<claim>/<path>`, KServe mounts the PVC at `/mnt/models` and Triton loads
+the model at `<path>` within it. That directory must follow Triton's model repository
+layout:
+
+```
+<claim> (PVC root)
+└── <path>/           ← the path segment from model_uri
+    ├── config.pbtxt  ← Triton model configuration
+    └── 1/
+        └── model.onnx
+```
+
+**Example** — for `model_uri: pvc://fraud-model-pvc/upi-fraud-detection`:
+
+```bash
+# 1. Create the PVC in the workload namespace
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fraud-model-pvc
+  namespace: test-fraud
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+EOF
+
+# 2. Attach a temporary pod to the PVC
+oc run model-loader -n test-fraud --restart=Never \
+  --image=registry.access.redhat.com/ubi9/python-312:latest \
+  --overrides='{
+    "spec":{
+      "containers":[{"name":"model-loader",
+        "image":"registry.access.redhat.com/ubi9/python-312:latest",
+        "command":["sleep","3600"],
+        "volumeMounts":[{"mountPath":"/mnt/models","name":"models"}]}],
+      "volumes":[{"name":"models","persistentVolumeClaim":{"claimName":"fraud-model-pvc"}}]
+    }}'
+
+oc wait --for=condition=Ready pod/model-loader -n test-fraud --timeout=120s
+
+# 3. Create the directory structure and copy the model files
+oc exec model-loader -n test-fraud -- mkdir -p /mnt/models/upi-fraud-detection/1
+oc cp config.pbtxt    test-fraud/model-loader:/mnt/models/upi-fraud-detection/config.pbtxt
+oc cp model.onnx      test-fraud/model-loader:/mnt/models/upi-fraud-detection/1/model.onnx
+
+# 4. Remove the loader pod
+oc delete pod model-loader -n test-fraud
+```
+
+> The PVC name, path, and namespace must match what is in your config file.
+> Run `oc get pvc -n test-fraud` and confirm `STATUS = Bound` before deploying.
+
+**TrustyAI — additional permission required:** when `bias_monitoring` is configured
+on any model, the deploy sequence writes to the `openshift-monitoring` namespace.
+This requires cluster-admin or a role with write access to that namespace. The same
+cluster-admin permission used to install the operator is sufficient.
+
+---
+
+### Deploy
+
+```bash
+rhoai usecase deploy fraud-detection -c /absolute/path/to/config-fraud-detection.yaml
+```
+
+Checks the RHOAI platform (bootstrapping it if needed), deploys the Triton
+`ServingRuntime` and `InferenceService` for each configured model, then
+validates that each model is serving inference requests.
+
+**Sample output:**
+```
+Deploying  : fraud-detection
+Namespace  : test-fraud
+
+
+Checking RHOAI platform...
+
+  ✔  Operator ready
+  ✔  DSCInitialization ready
+  ✔  DataScienceCluster ready
+  ✔  Components enabled: Dashboard, Workbenches, KServe
+
+✔  Platform ready  (3s)
+
+Deploying 'upi-fraud-detection'...
+
+✔  Ensuring serving runtime  (6s)
+✔  Ensuring inference service  (0s)
+✔  Smoke-testing model endpoint  (1s)
+
+✔  'upi-fraud-detection' ready  (8s)
+
+Deployment complete.  Total: 12s
+
+  Use case   : fraud-detection
+  Namespace  : test-fraud
+
+Models
+
+✔  upi-fraud-detection
+  Endpoint    : https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com
+  Validation  : Passed
+
+Next steps
+
+  Test a model endpoint
+
+    # upi-fraud-detection
+    curl -sk -X POST https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com/v2/models/upi-fraud-detection/infer \
+      -H 'Content-Type: application/json' \
+      -d @<path-to-request.json>
+
+```
+
+If the endpoint is unreachable from the machine running the CLI (for example, a local
+workstation that cannot resolve the cluster's `.apps` route), inference validation is
+marked **Unavailable** and the deployment is still considered successful.
+The `Follow-up actions` section lists the affected models and the exact command to rerun
+once the endpoint is reachable:
+
+```
+Follow-up actions
+
+⚠  upi-fraud-detection
+
+  Endpoint:
+    https://upi-fraud-detection-test-fraud.apps.<cluster>/v2/models/upi-fraud-detection/infer
+
+  Model inference could not be validated because the endpoint
+  was not reachable from this machine.
+
+  Verify the cluster route is reachable from your workstation.
+
+  If hostname resolution fails, check your DNS or /etc/hosts configuration.
+
+  Then rerun:
+
+    rhoai usecase verify fraud-detection \
+      -c /absolute/path/to/config-fraud-detection.yaml
+
+Next
+
+  rhoai usecase verify fraud-detection \
+    -c /absolute/path/to/config-fraud-detection.yaml
+```
+
+#### With TrustyAI
+
+When any model has `bias_monitoring` configured, the deploy sequence is extended
+after all models are running:
 
 1. Platform bootstrap (same as the base deploy, with `trustyai` in the components list)
 2. Deploy each model (`ServingRuntime` + `InferenceService`)
@@ -394,17 +384,72 @@ The deploy sequence is extended when any model has `bias_monitoring` configured:
 Observations are sent automatically from the files on disk — no separate manual
 script step is needed.
 
-### Verify with TrustyAI
+```bash
+rhoai usecase deploy fraud-detection -c /absolute/path/to/config-fraud-detection-trustyai.yaml
+```
+
+---
+
+### Verify
+
+```bash
+rhoai usecase verify fraud-detection -c /absolute/path/to/config-fraud-detection.yaml
+```
+
+Checks the platform, confirms each `InferenceService` is Ready, and runs a live inference
+request for each configured model using its `inference_request` payload.
+
+**Sample output:**
+```
+Verifying  : fraud-detection
+Namespace  : test-fraud
+
+✔  Checking RHOAI platform  (2s)
+
+Verifying 'upi-fraud-detection'...
+
+✔  Checking inference service  (0s)
+✔  Checking model inference  (1s)
+
+✔  'upi-fraud-detection' healthy  (1s)
+
+Verification complete.  Total: 4s
+
+  Use case   : fraud-detection
+  Namespace  : test-fraud
+
+Models
+
+✔  upi-fraud-detection
+  Endpoint    : https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com
+  Validation  : Passed
+
+Next steps
+
+  Test a model endpoint
+
+    # upi-fraud-detection
+    curl -sk -X POST https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com/v2/models/upi-fraud-detection/infer \
+      -H 'Content-Type: application/json' \
+      -d @<path-to-request.json>
+```
+
+#### With TrustyAI
 
 ```bash
 rhoai usecase verify fraud-detection -c /absolute/path/to/config-fraud-detection-trustyai.yaml
 ```
 
-In addition to the standard model checks, verify also confirms that TrustyAI
+In addition to the standard model checks, `verify` also confirms that TrustyAI
 has observations recorded (count > 0) for each model that has `bias_monitoring`
 configured.
 
+---
+
 ### Observe fairness metrics
+
+> **TrustyAI only** — this section applies when `bias_monitoring` is configured
+> and `rhoai usecase deploy` has completed successfully.
 
 After deploy completes, the **Next steps** block of the summary prints direct
 links to the OpenShift console metrics browser:
@@ -426,31 +471,57 @@ Next steps
       trustyai_identity  — identity metrics
 ```
 
-For background on what SPD values mean and how to interpret fairness results,
-see [`docs/bias-readme.md`](../../docs/bias-readme.md).
+---
 
-### Cleanup with TrustyAI
+### Cleanup
+
+```bash
+# Remove use-case resources only
+rhoai usecase cleanup fraud-detection -c /absolute/path/to/config-fraud-detection.yaml
+
+# Remove use-case resources AND platform (DSC + DSCI)
+rhoai usecase cleanup fraud-detection -c /absolute/path/to/config-fraud-detection.yaml --delete-platform
+```
+
+Removes the `InferenceService` and `ServingRuntime` for each model in reverse deploy order.
+Pass `--delete-platform` to also remove the DataScienceCluster and DSCInitialization.
+
+**Sample output:**
+```
+
+Removing   : fraud-detection
+Namespace  : test-fraud
+
+
+Removing model serving...
+
+✔  Removing inference service 'upi-fraud-detection'  (1s)
+✔  Waiting for inference service pods to terminate  (0s)
+✔  Removing serving runtime 'triton-upi-fraud-detection'  (0s)
+✔  Waiting for serving runtime pods to terminate  (0s)
+
+✔  Model serving removed  (1s)
+
+Cleanup complete.  Total: 1s
+
+  Use case   : fraud-detection
+  Namespace  : test-fraud
+
+Removed
+
+  ✔  upi-fraud-detection
+```
+
+#### With TrustyAI
 
 ```bash
 rhoai usecase cleanup fraud-detection -c /absolute/path/to/config-fraud-detection-trustyai.yaml
 ```
 
-When TrustyAI was deployed, cleanup removes it in a dedicated phase after the
-models are gone:
+When TrustyAI was deployed, cleanup adds a dedicated removal phase after the models
+are gone:
 
-**Sample output:**
 ```
-Removing model serving...
-
-  ✔  Removing inference service 'demo-loan-nn-onnx-alpha'  (1s)
-  ✔  Removing inference service 'demo-loan-nn-onnx-beta'  (1s)
-  ✔  Waiting for inference service pods to terminate  (18s)
-  ✔  Removing serving runtime 'demo-loan-nn-onnx-alpha-runtime'  (1s)
-  ✔  Removing serving runtime 'demo-loan-nn-onnx-beta-runtime'  (1s)
-  ✔  Waiting for serving runtime pods to terminate  (5s)
-
-✔  Model serving removed  (26s)
-
 Removing TrustyAI...
 
   ✔  Removing TrustyAI service  (8s)
@@ -460,27 +531,13 @@ Removing TrustyAI...
 
 ✔  TrustyAI removed  (11s)
 
-Cleanup complete.  Total: 37s
+Cleanup complete.
 
   Use case   : fraud-detection
   Namespace  : test-fraud
 
 Removed
 
-  ✔  demo-loan-nn-onnx-alpha
-  ✔  demo-loan-nn-onnx-beta
+  ✔  <model(s)>
   ✔  TrustyAI
 ```
-
----
-
-## Logging
-
-Same as every other command — quiet by default, full trace with
-`--log-level DEBUG` before the subcommand:
-
-```bash
-rhoai --log-level DEBUG usecase deploy fraud-detection -c /absolute/path/to/config-fraud-detection.yaml
-```
-
-See the [top-level README](../../README.md#logging) for details.

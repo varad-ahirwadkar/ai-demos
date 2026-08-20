@@ -7,7 +7,7 @@
 #   rhoai usecase deploy fraud-detection --config config-fraud-detection-trustyai.yaml
 
 # Absolute path to the root of the openshift-ai-demos repository.
-repo_root: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos
+repo_root: /path/to/ai-demos/openshift-ai-demos
 
 operator:
   channel: stable-3.5
