@@ -9,8 +9,8 @@ from typing import Any
 from rhoai.platform import inference, trustyai, trustyai_client
 from rhoai.platform import verify as platform_verify
 from rhoai.platform.inference import EndpointUnreachable
-from rhoai.usecases.fraud_detection.assets import ModelResult, resolve_inference_request
-from rhoai.usecases.fraud_detection.deploy import _resolve_schema_source, print_summary
+from rhoai.usecases.fraud_detection.assets import ModelResult, render_curl_command_file
+from rhoai.usecases.fraud_detection.deploy import _resolve_request_artifacts, print_summary
 from rhoai.utils.logger import get_logger
 from rhoai.utils.progress import elapsed_timer, header_step, step
 
@@ -99,12 +99,21 @@ def verify(config: dict[str, Any]) -> None:
                 result    = ModelResult(name=name, model_uri=model_uri, endpoint=endpoint)
 
                 with step("Checking model inference") as s:
+                    request_path, schema_source, payload, _ = _resolve_request_artifacts(model, repo_root)
+                    result.request_path    = request_path
+                    result.inference_input = payload
+                    result.curl_cmd = render_curl_command_file(
+                        endpoint.rstrip("/") + inference._TRITON_INFER_PATH.format(model_name=name),
+                        request_path,
+                    )
                     try:
-                        inference.verify_triton_inference(
+                        payload, response, _ = inference.verify_triton_inference(
                             name, namespace, name,
-                            resolve_inference_request(model, repo_root),
-                            schema_source=_resolve_schema_source(model, repo_root),
+                            request_path,
+                            schema_source=schema_source,
                         )
+                        result.inference_input  = payload
+                        result.inference_output = response
                     except EndpointUnreachable as exc:
                         s.skip()
                         result.validation_skipped = True

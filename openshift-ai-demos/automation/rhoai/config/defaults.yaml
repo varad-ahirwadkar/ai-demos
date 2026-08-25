@@ -88,3 +88,4 @@ timeouts:
   trustyai_ready:   300
   isvc_stabilize:   300   # seconds to wait for ISVC pods to re-stabilise after the logger sidecar rollout
   ingestion_ready:  300   # seconds to wait for TrustyAI to ingest observations
+  staging_ready:    120   # seconds to wait for the model staging Pod to reach Running

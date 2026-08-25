@@ -7,6 +7,12 @@ Pass --delete-platform to 'rhoai usecase cleanup' to also remove them.
 Each model has its own dedicated ServingRuntime (named via assets.serving_runtime_name).
 Both the InferenceService and its ServingRuntime are deleted per model.
 
+Staged-model cleanup: when a model was deployed with model_path/config_path the
+framework created a staging Pod and a PVC on its behalf.  Both are deleted here
+using the same name-derivation logic as deploy.py:
+  - Pod: pvc-stage-<pvc-name>   (from storage._STAGING_POD_PREFIX)
+  - PVC: model.pvc_name or "<model-name>-pvc"
+
 TrustyAI cleanup is conditional: only runs when at least one model has
 bias_monitoring configured (mirrors the deploy-time gate).
 Resources removed when TrustyAI was deployed:
@@ -21,6 +27,8 @@ pods is confirmed gone before the next layer is torn down:
 
   Phase 1 — issue all ISVC deletes, wait for all ISVC pods gone,
              issue all SR deletes, wait for all SR pods gone.
+  Phase 1b — delete staging Pods then staged PVCs (Pod deleted first so the
+             volume is released before the PVC delete is issued).
   Phase 2 — delete TrustyAI CR, wait for CR gone, wait for Deployment gone,
              then revert config and remove RBAC (no pods — instant).
   Phase 3 — (CLI) delete DSC, wait for component pods gone, delete DSCI.
@@ -29,7 +37,7 @@ pods is confirmed gone before the next layer is torn down:
 from rich.console import Console
 from typing import Any
 
-from rhoai.platform import inference, trustyai
+from rhoai.platform import inference, storage, trustyai
 from rhoai.utils.progress import elapsed_timer, header_step, step
 from rhoai.usecases.fraud_detection import assets
 from rhoai.utils.logger import get_logger
@@ -42,17 +50,19 @@ def _print_cleanup_summary(
     use_case: str,
     namespace: str,
     model_names: list[str],
+    staged_pvc_names: list[str],
     trustyai_removed: bool,
     total: str = "",
 ) -> None:
     """Print the structured cleanup summary.
 
     Args:
-        use_case:         Use-case name shown in the scope block.
-        namespace:        Workload namespace shown in the scope block.
-        model_names:      Names of models whose resources were removed.
-        trustyai_removed: Whether TrustyAI resources were removed.
-        total:            Formatted total duration string, e.g. "1m 14s".
+        use_case:          Use-case name shown in the scope block.
+        namespace:         Workload namespace shown in the scope block.
+        model_names:       Names of models whose resources were removed.
+        staged_pvc_names:  Names of staged-model PVCs (and their Pods) that were removed.
+        trustyai_removed:  Whether TrustyAI resources were removed.
+        total:             Formatted total duration string, e.g. "1m 14s".
     """
     duration_str = f"  Total: {total}" if total else ""
     _console.print(f"\nCleanup complete.{duration_str}\n")
@@ -62,6 +72,8 @@ def _print_cleanup_summary(
     _console.print("Removed\n")
     for name in model_names:
         _console.print(f"  \u2714  {name}")
+    for pvc_name in staged_pvc_names:
+        _console.print(f"  \u2714  {pvc_name} (Pod + PVC)")
     if trustyai_removed:
         _console.print(f"  \u2714  TrustyAI")
     _console.print("")
@@ -82,6 +94,14 @@ def cleanup(config: dict[str, Any]) -> None:
     isvc_names    = [m["name"]                              for m in models]
     runtime_names = [assets.serving_runtime_name(m["name"]) for m in models]
     bias_models   = [m for m in models if m.get("bias_monitoring")]
+
+    # Collect PVC names for models that were staged by the framework.
+    # Uses the same derivation as deploy.py: model.pvc_name or "<model-name>-pvc".
+    staged_pvc_names = [
+        m.get("pvc_name") or f"{m['name']}-pvc"
+        for m in models
+        if m.get("model_path")
+    ]
 
     with elapsed_timer() as timer:
         # --- Phase 1: model serving -------------------------------------------
@@ -104,6 +124,20 @@ def cleanup(config: dict[str, Any]) -> None:
             with step("Waiting for serving runtime pods to terminate") as s:
                 inference.wait_until_serving_runtimes_gone(runtime_names, namespace)
 
+        # --- Phase 1b: staging Pods + staged PVCs ----------------------------
+        # The staging Pod is deleted first so the volume is released before the
+        # PVC delete is issued.  Normally the Pod is gone (deleted in the deploy
+        # finally block), but this handles any interrupted-deploy leftovers.
+        if staged_pvc_names:
+            with header_step("Removing staged models", outcome="Staged models removed"):
+                for pvc_name in staged_pvc_names:
+                    with step(f"Removing staging Pod for '{pvc_name}'"):
+                        log.debug("Staging Pod for PVC: %s", pvc_name)
+                        storage.delete_staging_pod(pvc_name, namespace)
+                    with step(f"Removing PVC '{pvc_name}'"):
+                        log.debug("Deleting PVC: %s", pvc_name)
+                        storage.delete_pvc(pvc_name, namespace)
+
         # --- Phase 2: TrustyAI ------------------------------------------------
         # CR + Deployment wait is inside delete_trustyai_service; config/RBAC after.
         if bias_models:
@@ -124,6 +158,7 @@ def cleanup(config: dict[str, Any]) -> None:
         use_case=config.get("_use_case", "fraud-detection"),
         namespace=namespace,
         model_names=isvc_names,
+        staged_pvc_names=staged_pvc_names,
         trustyai_removed=bool(bias_models),
         total=timer.formatted,
     )

@@ -123,9 +123,12 @@ class TestVerifyTritonInference:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
         self._patch(monkeypatch, post_return=self._GOOD_RESP)
-        inference.verify_triton_inference(
+        payload, response, curl_cmd = inference.verify_triton_inference(
             "fraud-detection", "ns", self._MODEL, self._sample_request(tmp_path)
-        )  # should not raise
+        )
+        assert payload["inputs"][0]["name"] == "dense_input"
+        assert response == self._GOOD_BODY
+        assert "curl -sk -X POST" in curl_cmd
 
     def test_posts_to_correct_url(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
@@ -213,6 +216,7 @@ class TestVerifyTritonInference:
         assert post_mock.call_count == 2
         assert self._BASE_URL in exc_info.value.infer_url
         assert "curl" in exc_info.value.curl_cmd
+        assert '"inputs"' in exc_info.value.curl_cmd
 
 
 # ---------------------------------------------------------------------------

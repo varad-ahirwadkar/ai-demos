@@ -550,7 +550,7 @@ def verify_triton_inference(
     model_name: str,
     sample_request: Path,
     schema_source: Path | None = None,
-) -> None:
+) -> tuple[dict[str, Any], dict[str, Any], str]:
     """Smoke-test a Triton InferenceService by submitting a sample request.
 
     Steps:
@@ -578,6 +578,10 @@ def verify_triton_inference(
                         ``inputs[0].datatype`` are read for CSV conversion.
                         ``None`` is safe for JSON request files.
 
+    Returns:
+        ``(payload, response, curl_cmd)`` for surfacing the exact input, output,
+        and reproducible curl command in higher-level summaries.
+
     Raises:
         EndpointUnreachable: When the endpoint cannot be reached after one retry.
         RuntimeError:        If the inference request fails or the response is not valid.
@@ -589,7 +593,7 @@ def verify_triton_inference(
     curl_cmd  = (
         f"curl -sk -X POST {infer_url}"
         f" -H 'Content-Type: application/json'"
-        f" -d @{sample_request}"
+        f" -d '{json.dumps(payload, separators=(",", ":"))}'"
     )
 
     log.info("Running model smoke test")
@@ -615,6 +619,7 @@ def verify_triton_inference(
 
     _assert_triton_response(response, model_name)
     log.info("Model is serving inference requests")
+    return payload, response, curl_cmd
 
 
 # ---------------------------------------------------------------------------

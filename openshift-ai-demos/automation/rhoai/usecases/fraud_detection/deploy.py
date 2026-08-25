@@ -30,15 +30,22 @@ bias_monitoring behaviour (per model entry in deployment.models):
     present               — full monitoring workflow is executed after TrustyAI is ready
 """
 
+import json
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 from rhoai.ocp import resources as ocp_resources
-from rhoai.platform import dsc, inference, manifests, operators, prepare, storage, trustyai, trustyai_client
+from rhoai.platform import dsc, inference, manifests, operators, prepare, request_generator, storage, trustyai, trustyai_client
 from rhoai.platform.inference import EndpointUnreachable
 from rhoai.usecases.fraud_detection import assets
-from rhoai.usecases.fraud_detection.assets import ModelResult, resolve_inference_request
+from rhoai.usecases.fraud_detection.assets import (
+    ModelResult,
+    render_curl_command,
+    render_curl_command_file,
+    resolve_inference_dataset,
+    resolve_inference_request,
+)
 from rhoai.utils import yaml_io
 from rhoai.utils.logger import get_logger
 from rhoai.utils.progress import elapsed_timer, header_step, step, sub_step
@@ -67,6 +74,54 @@ _COMPONENT_DISPLAY: dict[str, str] = {
     "trustyai":           "TrustyAI",
     "workbenches":        "Workbenches",
 }
+
+
+def _resolve_request_artifacts(
+    model: dict[str, Any],
+    repo_root: str,
+) -> tuple[Path, Path | None, dict[str, Any], str]:
+    """Resolve request path, schema source, payload, and reproducible curl command.
+
+    Precedence:
+      1. user-provided inference_request
+      2. generated request from inference_dataset + config_path
+    """
+    name = model["name"]
+    request_path = resolve_inference_request(model, repo_root)
+    schema_source = _resolve_schema_source(model, repo_root)
+    input_name, datatype = inference._read_tensor_schema(schema_source)
+
+    if request_path is not None:
+        if request_path.suffix.lower() == ".json":
+            payload = inference._load_request_payload(request_path)
+        else:
+            payload = inference._load_request_payload(
+                request_path,
+                input_name=input_name,
+                datatype=datatype,
+            )
+    else:
+        dataset_path = resolve_inference_dataset(model, repo_root)
+        config_path = model.get("config_path", "")
+        if not config_path:
+            raise ValueError(
+                f"Model '{name}' requires config_path when inference_dataset is used without inference_request."
+            )
+        _, payload = request_generator.build_request_from_csv_file(
+            Path(config_path),
+            dataset_path,
+        )
+        inputs_dir = Path(repo_root) / "automation" / "rhoai" / "usecases" / "fraud_detection" / "inputs"
+        inputs_dir.mkdir(parents=True, exist_ok=True)
+        request_path = inputs_dir / f"{name}_generated_request.json"
+        request_path.write_text(json.dumps(payload, indent=2))
+
+    curl_cmd = render_curl_command(
+        inference._TRITON_INFER_PATH.format(model_name=name),
+        payload,
+    )
+    return request_path, schema_source, payload, curl_cmd
+
 
 
 def _resolve_schema_source(model: dict[str, Any], repo_root: str) -> Path | None:
@@ -122,15 +177,64 @@ def _deploy_model(
     platform_namespace: str,
     namespace: str,
     inference_timeout: int,
+    staging_timeout: int = 120,
 ) -> ModelResult:
     """Deploy a single model: ServingRuntime, InferenceService, smoke test.
+
+    Accepts two mutually exclusive model source configurations:
+
+    ``model_uri`` — existing path on S3, PVC, Hugging Face, or OCI; used as-is.
+    ``model_path`` + ``config_path`` — local artifact files; the framework stages
+        them onto a PVC in the Triton repository layout and derives the URI.
 
     Returns a ModelResult that records whether validation was skipped.
     The caller is responsible for surfacing any warnings in the summary.
     """
     name         = model["name"]
     model_uri    = model.get("model_uri", "")
+    model_path   = model.get("model_path", "")
+    config_path  = model.get("config_path", "")
     runtime_name = assets.serving_runtime_name(name)
+
+    # --- Validate mutual exclusivity -----------------------------------------
+    if model_uri and (model_path or config_path):
+        raise ValueError(
+            f"Model '{name}': model_uri and model_path/config_path are mutually "
+            "exclusive. Provide either model_uri or both model_path and config_path."
+        )
+    if bool(model_path) != bool(config_path):
+        raise ValueError(
+            f"Model '{name}': model_path and config_path must both be provided together."
+        )
+
+    # --- Stage local artifacts onto PVC (Option 2) ---------------------------
+    if model_path and config_path:
+        pvc_name = model.get("pvc_name") or f"{name}-pvc"
+        pvc_size = model.get("pvc_size", "1Gi")
+        storage_class = model.get("storage_class", "")
+
+        with step("Validating local model artifacts"):
+            storage.validate_local_artifacts(Path(model_path), Path(config_path))
+
+        with step(f"Ensuring PVC '{pvc_name}'"):
+            pvc_created = storage.create_pvc(pvc_name, namespace, pvc_size,
+                                             storage_class=storage_class)
+
+        if pvc_created:
+            with step("Staging model repository on PVC"):
+                storage.copy_files_to_pvc(
+                    pvc_name=pvc_name,
+                    namespace=namespace,
+                    files=assets.triton_file_map(
+                        name, Path(model_path), Path(config_path)
+                    ),
+                    timeout=staging_timeout,
+                )
+        else:
+            log.info("PVC '%s' already populated — skipping file staging", pvc_name)
+
+        model_uri = assets.triton_pvc_uri(pvc_name, name)
+        log.debug("Derived model URI: %s", model_uri)
 
     with step("Ensuring serving runtime"):
         log.debug("ServingRuntime name: %s", runtime_name)
@@ -165,11 +269,20 @@ def _deploy_model(
     endpoint = inference.get_inference_url(name, namespace)
     result = ModelResult(name=name, model_uri=model_uri, endpoint=endpoint)
     with step("Smoke-testing model endpoint") as s:
+        request_path, schema_source, payload, curl_cmd = _resolve_request_artifacts(model, repo_root)
+        result.request_path    = request_path
+        result.inference_input = payload
+        result.curl_cmd = render_curl_command_file(
+            endpoint.rstrip("/") + inference._TRITON_INFER_PATH.format(model_name=name),
+            request_path,
+        )
         try:
-            inference.verify_triton_inference(
-                name, namespace, name, resolve_inference_request(model, repo_root),
-                schema_source=_resolve_schema_source(model, repo_root),
+            payload, response, _ = inference.verify_triton_inference(
+                name, namespace, name, request_path,
+                schema_source=schema_source,
             )
+            result.inference_input  = payload
+            result.inference_output = response
         except EndpointUnreachable as exc:
             s.skip()
             result.validation_skipped = True
@@ -416,6 +529,7 @@ def print_summary(
     trustyai_route: str = "",
     mode: str = "deploy",
     total: str = "",
+    show_identity: bool = True,
 ) -> None:
     """Print the end-of-command summary for a fraud-detection deploy or verify run.
 
@@ -423,17 +537,29 @@ def print_summary(
     both cases; the ``mode`` parameter controls the heading and the "Next steps"
     content shown.
 
+    Per-model block order:
+        Endpoint → Smoke test → Inference request → Invoke manually → Inference response
+
+    The request/response/curl sections are suppressed when the smoke test was
+    skipped (endpoint unreachable) — there is nothing to show in that case.
+
     Args:
         results:        Per-model outcomes collected during the run.
         use_case:       Use case name (e.g. "fraud-detection").
         namespace:      Workload namespace.
-        config_file:    Path to the --config file used, for the verify command hint.
+        config_file:    Path to the --config file used, for the verify/cleanup hints.
         trustyai_route: TrustyAI service URL; omitted from output when empty.
         mode:           "deploy" — prints "Deployment complete." heading.
                         "verify" — prints "Verification complete." heading.
         total:          Formatted total duration string, e.g. "3m 42s".  When non-empty,
                         appended to the heading line as "  Total: <value>".
+        show_identity:  Whether to include TrustyAI identity metric hints.
     """
+    cleanup_cmd = (
+        f"rhoai usecase cleanup {use_case} \\\n      -c {config_file}"
+        if config_file
+        else f"rhoai usecase cleanup {use_case}"
+    )
     verify_cmd = _verify_cmd(use_case, config_file)
 
     heading = "Deployment complete." if mode == "deploy" else "Verification complete."
@@ -447,17 +573,37 @@ def print_summary(
     # the model_uri in the header_step label or are implicit from the config.
     _console.print("Models\n")
     for r in results:
-        validation = "Unavailable" if r.validation_skipped else "Passed"
+        smoke_status = "Skipped (endpoint unreachable)" if r.validation_skipped else "Passed"
         _console.print(f"\u2714  {r.name}")
-        _console.print(f"  Endpoint    : {r.endpoint}")
-        _console.print(f"  Validation  : {validation}\n")
+        _console.print(f"  Endpoint     : {r.endpoint}")
+        _console.print(f"  Smoke test   : {smoke_status}")
+
+        if not r.validation_skipped:
+            if r.inference_input is not None:
+                _console.print(
+                    f"\n  Inference request\n"
+                    + "\n".join(
+                        f"    {line}"
+                        for line in json.dumps(r.inference_input, indent=2).splitlines()
+                    )
+                )
+            if r.inference_output is not None:
+                _console.print(
+                    f"\n  Inference response\n"
+                    + "\n".join(
+                        f"    {line}"
+                        for line in json.dumps(r.inference_output, indent=2).splitlines()
+                    )
+                )
+
+        _console.print("")
 
     # --- TrustyAI ---
     if trustyai_route:
         _console.print("TrustyAI\n")
         _console.print(f"  Endpoint    : {trustyai_route}\n")
 
-    # --- Warnings: only when validation was skipped ---
+    # --- Warnings: only when smoke test was skipped ---
     unvalidated = [r for r in results if r.validation_skipped]
     if unvalidated:
         _console.print("Warnings\n")
@@ -476,17 +622,27 @@ def print_summary(
             )
 
     # --- Next steps ---
-    # Build each item first; print the header only when there is something to show.
-    # The verify command is intentionally excluded — it was already run (verify mode)
-    # or will be prompted separately (deploy mode shows it only in the Warnings block
-    # when endpoints were unreachable).
-    next_lines: list[str] = []
+    _console.print("Next steps\n")
+
+    # "Invoke the model" — one curl block per model, using the file-based command.
+    # Falls back to the inline curl stored on EndpointUnreachable when the smoke
+    # test was skipped (no on-disk request file was exercised in that case).
+    invoke_lines: list[str] = []
+    for r in results:
+        if r.curl_cmd:
+            invoke_lines.append(f"    # {r.name}")
+            invoke_lines.append(f"    {r.curl_cmd.replace(chr(10), chr(10) + '    ')}\n")
+        elif r.unreachable and r.unreachable.curl_cmd:
+            invoke_lines.append(f"    # {r.name}")
+            invoke_lines.append(f"    {r.unreachable.curl_cmd}\n")
+    if invoke_lines:
+        _console.print("  Invoke the model\n\n" + "\n".join(invoke_lines))
 
     if trustyai_route:
         # TrustyAI is active — show Observe → Metrics guidance with direct links.
         dashboard_url = _metrics_dashboard_url(trustyai_route)
         spd_url       = _metrics_url(trustyai_route, "trustyai_spd")
-        identity_url  = _metrics_url(trustyai_route, "trustyai_identity")
+        identity_url  = _metrics_url(trustyai_route, "trustyai_identity") if show_identity else ""
 
         block = "  Check metrics in the OpenShift console\n\n"
         if dashboard_url:
@@ -498,37 +654,16 @@ def print_summary(
             "    and the refresh interval to 15 seconds (top right).\n"
             "    Enter one of the expressions below in the Expression field:\n\n"
             "      trustyai_spd       — statistical parity difference\n"
-            "      trustyai_identity  — identity metrics\n"
         )
+        if show_identity:
+            block += "      trustyai_identity  — identity metrics\n"
         if spd_url:
             block += f"\n    SPD metrics\n      {spd_url}\n"
         if identity_url:
             block += f"\n    Identity metrics\n      {identity_url}\n"
-        next_lines.append(block)
-    else:
-        # No TrustyAI — show a sample curl for each deployed model.
-        _TRITON_INFER_PATH = "/v2/models/{model_name}/infer"
-        curl_lines = ["  Test a model endpoint\n"]
-        for r in results:
-            if r.unreachable and r.unreachable.curl_cmd:
-                # Validation was skipped — reuse the curl command built during the run.
-                curl_lines.append(f"    # {r.name}")
-                curl_lines.append(f"    {r.unreachable.curl_cmd}\n")
-            elif r.endpoint:
-                infer_url = r.endpoint.rstrip("/") + _TRITON_INFER_PATH.format(model_name=r.name)
-                curl_lines.append(f"    # {r.name}")
-                curl_lines.append(
-                    f"    curl -sk -X POST {infer_url}"
-                    f" \\\n      -H 'Content-Type: application/json'"
-                    f" \\\n      -d @<path-to-request.json>\n"
-                )
-        if len(curl_lines) > 1:
-            next_lines.append("\n".join(curl_lines))
+        _console.print(block)
 
-    if next_lines:
-        _console.print("Next steps\n")
-        for line in next_lines:
-            _console.print(line)
+    _console.print(f"  Clean up deployment\n\n    {cleanup_cmd}\n")
 
 
 def deploy(config: dict[str, Any]) -> None:
@@ -541,6 +676,7 @@ def deploy(config: dict[str, Any]) -> None:
     trustyai_name    = dep_cfg.get("trustyai_service_name",    "trustyai-service")
     trustyai_sa      = dep_cfg.get("trustyai_service_account", "trustyai-user")
     trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
+    staging_timeout  = config["timeouts"].get("staging_ready", 120)
 
     log.info("Deploying Fraud Detection")
 
@@ -606,8 +742,11 @@ def deploy(config: dict[str, Any]) -> None:
                     pass
 
         # 4 — S3 credentials (applied once if any model uses an S3 URI).
+        # Models using model_path/config_path derive a pvc:// URI at deploy time —
+        # they do not need an S3 secret regardless of their eventual model_uri value.
         if any(
             not m.get("model_uri", "").startswith(_NON_S3_SCHEMES)
+            and not m.get("model_path")
             for m in models
         ):
             with step("Applying S3 storage credentials"):
@@ -626,6 +765,7 @@ def deploy(config: dict[str, Any]) -> None:
                     _deploy_model(
                         model, repo_root, platform_namespace, namespace,
                         config["timeouts"]["inference_ready"],
+                        staging_timeout=staging_timeout,
                     )
                 )
 
@@ -685,6 +825,10 @@ def deploy(config: dict[str, Any]) -> None:
                     )
 
     # Summary.
+    has_identity = any(
+        m.get("bias_monitoring", {}).get("identity_monitors")
+        for m in models
+    )
     print_summary(
         results,
         use_case=config.get("_use_case", "fraud-detection"),
@@ -692,4 +836,5 @@ def deploy(config: dict[str, Any]) -> None:
         config_file=config.get("_config_file", ""),
         trustyai_route=route,
         total=timer.formatted,
+        show_identity=has_identity,
     )

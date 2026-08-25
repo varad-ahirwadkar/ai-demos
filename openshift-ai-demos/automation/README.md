@@ -11,34 +11,6 @@ with a handful of commands instead of a manual, multi-step procedure.
 
 ---
 
-## Quick Start
-
-> **Prerequisite:** Python ≥ 3.12, `oc` CLI, and an active `oc login` session.
-> The fraud-detection use case also requires model files on a PVC —
-> see [rhoai/usecases/README.md → Prerequisites](rhoai/usecases/README.md#prerequisites) before running step 3.
-
-```bash
-# 1. Install
-git clone https://github.com/IBM/ai-demos.git && cd ai-demos
-git checkout rhoai-automation
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e openshift-ai-demos/automation
-
-# 2. Copy the example config and update my-config.yaml
-cp openshift-ai-demos/automation/config-fraud-detection.yaml my-config.yaml
-
-# 3. Deploy, verify, and clean up
-rhoai usecase deploy  fraud-detection -c my-config.yaml
-rhoai usecase verify  fraud-detection -c my-config.yaml
-rhoai usecase cleanup fraud-detection -c my-config.yaml
-```
-
-For the full lifecycle including TrustyAI bias monitoring, use
-[`config-fraud-detection-trustyai.yaml`](config-fraud-detection-trustyai.yaml) instead.
-See [`rhoai/usecases/README.md`](rhoai/usecases/README.md) for the complete workflow.
-
----
-
 ## Prerequisites
 
 | Requirement | Notes |
@@ -48,7 +20,7 @@ See [`rhoai/usecases/README.md`](rhoai/usecases/README.md) for the complete work
 | OpenShift cluster | OCP 4.20+, ppc64le or x86_64 |
 | Cluster-admin permissions | Required to install the RHOAI operator and to write to `openshift-monitoring` (TrustyAI only) |
 | StorageClass | At least one `ReadWriteOnce` StorageClass must exist — `oc get storageclass` |
-| Internet access | Cluster nodes must be able to pull from `quay.io/powercloud` (Triton serving runtime). Air-gapped clusters require a mirrored image. |
+| Internet access | Cluster nodes must be able to pull from `quay.io/powercloud` (Triton serving runtime). |
 | Compute (per model) | Each model deployment requests 2 CPU and 8 GiB on a worker node — confirm with `rhoai platform inspect` |
 
 ---
@@ -56,12 +28,13 @@ See [`rhoai/usecases/README.md`](rhoai/usecases/README.md) for the complete work
 ## Installation
 
 ```bash
-cd openshift-ai-demos/automation
+git clone https://github.com/IBM/ai-demos.git && cd ai-demos
+git checkout rhoai-automation
 
 python3 -m venv .venv
 source .venv/bin/activate
 
-pip install -e .          # add "[dev]" instead if you'll be running tests
+pip install -e openshift-ai-demos/automation.      # add "[dev]" instead if you'll be running tests
 
 rhoai --help
 ```
@@ -70,36 +43,9 @@ rhoai --help
 
 ## Configuration
 
-### The normal workflow — use a config file
-
 Pass a YAML config file with `--config`/`-c` on any subcommand.
-Only override what differs from the bundled defaults — everything else is
-inherited from [`rhoai/config/defaults.yaml`](rhoai/config/defaults.yaml).
 
-```bash
-rhoai usecase deploy fraud-detection --config config-fraud-detection.yaml
-```
-
-`repo_root` is the only key with no usable default — every other key inherits a
-working value from `rhoai/config/defaults.yaml`. A config file that only sets
-`repo_root` is sufficient to run any command:
-
-```yaml
-# Absolute path to the openshift-ai-demos directory inside the cloned repo.
-# e.g. if you cloned to /home/me/ai-demos → /home/me/ai-demos/openshift-ai-demos
-# ~ is not expanded — use the full path.
-repo_root: /home/me/ai-demos/openshift-ai-demos
-```
-
-Add keys only for values you actually need to change from the defaults. Common overrides:
-
-```yaml
-operator:
-  channel: stable-3.x     # default: stable
-
-deployment:
-  namespace: test-fraud    # default: falls back to platform.namespace
-```
+Add keys only for values you want to override from the bundled defaults. For one-off platform operations, prefer CLI flags such as `--channel`; for reusable cluster or deployment settings, use a config file.
 
 ### How configuration is resolved
 
@@ -109,7 +55,7 @@ Values are merged from three sources in priority order (highest → lowest):
 |---|---|---|
 | 1 | CLI flags (e.g. `--channel`) | One-off overrides for a single run |
 | 2 | `--config` file | Per-cluster or per-environment settings |
-| 3 | `rhoai/config/defaults.yaml` | Bundled fallback — no action needed |
+| 3 | `rhoai/config/defaults.yaml` | Defaults |
 
 > **Tip:** For kubeconfig, use the standard `KUBECONFIG` environment variable
 > or run `oc login` before invoking `rhoai`.
@@ -215,11 +161,6 @@ Override any of these under the `timeouts:` key in your config file:
 timeouts:
   ingestion_ready: 600   # increase on slow clusters
 ```
-
-## Testing
-
-See [`docs/README.md §12`](docs/README.md#12-testing) for test layout, conventions,
-and lint commands.
 
 ---
 
@@ -342,4 +283,3 @@ rhoai --log-level DEBUG usecase deploy fraud-detection -c my-config.yaml
 rhoai --log-level DEBUG platform status
 ```
 ---
-

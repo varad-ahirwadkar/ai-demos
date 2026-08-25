@@ -122,15 +122,29 @@ class TestResolveInferenceRequest:
         result = resolve_inference_request(model, str(tmp_path))
         assert result == tmp_path / rel
 
-    def test_raises_when_missing(self, tmp_path: Path) -> None:
+    def test_returns_none_when_missing(self, tmp_path: Path) -> None:
         from rhoai.usecases.fraud_detection.assets import resolve_inference_request
-        with pytest.raises(ValueError, match="no inference_request configured"):
-            resolve_inference_request({"name": "m"}, str(tmp_path))
+        assert resolve_inference_request({"name": "m"}, str(tmp_path)) is None
 
-    def test_raises_when_empty(self, tmp_path: Path) -> None:
+    def test_returns_none_when_empty(self, tmp_path: Path) -> None:
         from rhoai.usecases.fraud_detection.assets import resolve_inference_request
-        with pytest.raises(ValueError, match="no inference_request configured"):
-            resolve_inference_request({"name": "m", "inference_request": ""}, str(tmp_path))
+        assert resolve_inference_request({"name": "m", "inference_request": ""}, str(tmp_path)) is None
+
+
+class TestResolveInferenceDataset:
+    def test_returns_absolute_path(self, tmp_path: Path) -> None:
+        from rhoai.usecases.fraud_detection.assets import resolve_inference_dataset
+        rel = "inputs/data.csv"
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("1.0,2.0\n")
+        result = resolve_inference_dataset({"name": "m", "inference_dataset": rel}, str(tmp_path))
+        assert result == dest
+
+    def test_raises_when_missing(self, tmp_path: Path) -> None:
+        from rhoai.usecases.fraud_detection.assets import resolve_inference_dataset
+        with pytest.raises(ValueError, match="no inference_request or inference_dataset configured"):
+            resolve_inference_dataset({"name": "m"}, str(tmp_path))
 
 
 class TestDeploySmoke:
@@ -229,6 +243,27 @@ class TestDeploySmoke:
         assert call_args[0] == "fraud-detection"   # isvc_name
         assert call_args[1] == "test-ns"           # namespace
         assert call_args[2] == "fraud-detection"   # model_name
+
+    def test_deploy_generates_request_from_dataset_when_request_missing(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _write_manifest(tmp_path)
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+
+        dataset = tmp_path / "inputs" / "demo-loan.csv"
+        dataset.parent.mkdir(parents=True, exist_ok=True)
+        dataset.write_text("1.0,2.0,3.0\n")
+
+        config = self._make_config(tmp_path, models=[
+            {"name": "fraud-detection", "model_uri": "pvc://fraud-model-pvc/models",
+             "inference_dataset": "inputs/demo-loan.csv"},
+        ])
+        deploy_mod.deploy(config)
+
+        mocks["inference"].verify_triton_inference.assert_called_once()
+        request_path = mocks["inference"].verify_triton_inference.call_args[0][3]
+        assert request_path.suffix == ".json"
 
     # ------------------------------------------------------------------
     # model_uri variant: PVC — S3 secret skipped, storageUri injected
