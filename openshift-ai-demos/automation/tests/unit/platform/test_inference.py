@@ -400,8 +400,12 @@ class TestWaitUntilServingRuntimesGone:
 # _csv_to_kserve_payload
 # ---------------------------------------------------------------------------
 
-class TestCsvToKservePayload:
-    """Tests for the CSV → KServe v2 conversion helper."""
+# ---------------------------------------------------------------------------
+# _csv_payload_from_path
+# ---------------------------------------------------------------------------
+
+class TestCsvPayloadFromPath:
+    """Tests for the CSV → KServe v2 conversion helper (replaces _csv_to_kserve_payload)."""
 
     def _write(self, tmp_path, name: str, content: str):
         p = tmp_path / name
@@ -410,7 +414,7 @@ class TestCsvToKservePayload:
 
     def test_converts_numeric_csv_without_header(self, tmp_path) -> None:
         p = self._write(tmp_path, "data.csv", "1.0,2.0,3.0\n4.0,5.0,6.0\n")
-        payload = inference._csv_to_kserve_payload(p)
+        payload = inference._csv_payload_from_path(p)
         inputs = payload["inputs"][0]
         assert inputs["shape"] == [2, 3]
         assert inputs["data"] == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
@@ -419,7 +423,7 @@ class TestCsvToKservePayload:
 
     def test_custom_input_name_and_datatype(self, tmp_path) -> None:
         p = self._write(tmp_path, "data.csv", "1.0,2.0\n3.0,4.0\n")
-        payload = inference._csv_to_kserve_payload(
+        payload = inference._csv_payload_from_path(
             p, input_name="customer_data_input", datatype="FP32"
         )
         inputs = payload["inputs"][0]
@@ -428,39 +432,39 @@ class TestCsvToKservePayload:
 
     def test_skips_non_numeric_header_row(self, tmp_path) -> None:
         p = self._write(tmp_path, "data.csv", "col_a,col_b\n1.0,2.0\n3.0,4.0\n")
-        payload = inference._csv_to_kserve_payload(p)
+        payload = inference._csv_payload_from_path(p)
         inputs = payload["inputs"][0]
         assert inputs["shape"] == [2, 2]
         assert inputs["data"] == [[1.0, 2.0], [3.0, 4.0]]
 
     def test_single_row(self, tmp_path) -> None:
         p = self._write(tmp_path, "data.csv", "0.0,202500.0,1.0\n")
-        payload = inference._csv_to_kserve_payload(p)
+        payload = inference._csv_payload_from_path(p)
         assert payload["inputs"][0]["shape"] == [1, 3]
 
     def test_raises_on_empty_file(self, tmp_path) -> None:
         p = self._write(tmp_path, "data.csv", "")
         with pytest.raises(ValueError, match="no data rows"):
-            inference._csv_to_kserve_payload(p)
+            inference._csv_payload_from_path(p)
 
     def test_raises_on_header_only(self, tmp_path) -> None:
         p = self._write(tmp_path, "data.csv", "col_a,col_b\n")
         with pytest.raises(ValueError, match="no data rows"):
-            inference._csv_to_kserve_payload(p)
+            inference._csv_payload_from_path(p)
 
     def test_raises_on_non_numeric_data_row(self, tmp_path) -> None:
         p = self._write(tmp_path, "data.csv", "1.0,2.0\nbad,value\n")
-        with pytest.raises(ValueError, match="cannot convert to float"):
-            inference._csv_to_kserve_payload(p)
+        with pytest.raises(ValueError, match="cannot convert to FP64"):
+            inference._csv_payload_from_path(p)
 
     def test_raises_on_missing_file(self, tmp_path) -> None:
         p = tmp_path / "missing.csv"
         with pytest.raises(FileNotFoundError):
-            inference._csv_to_kserve_payload(p)
+            inference._csv_payload_from_path(p)
 
     def test_ignores_blank_lines(self, tmp_path) -> None:
         p = self._write(tmp_path, "data.csv", "1.0,2.0\n\n3.0,4.0\n")
-        payload = inference._csv_to_kserve_payload(p)
+        payload = inference._csv_payload_from_path(p)
         assert payload["inputs"][0]["shape"] == [2, 2]
 
 
@@ -607,6 +611,75 @@ class TestReadTensorSchema:
         p.write_text(_json.dumps({"inputs": [{"datatype": "FP64"}]}))
         with pytest.raises(ValueError, match="inputs\\[0\\]"):
             inference._read_tensor_schema(p)
+
+
+
+# ---------------------------------------------------------------------------
+# _validate_observation_file / send_observations — JSON arrays are rejected
+# ---------------------------------------------------------------------------
+
+class TestValidateObservationFileJsonArray:
+    """JSON observation files must be a KServe v2 object, not a bare array.
+
+    JSON inputs are never transformed — a bare array is not a valid KServe
+    v2 request and must be rejected with a clear error.
+    """
+
+    def _write(self, tmp_path, name: str, content) -> "Path":
+        import json as _json
+        p = tmp_path / name
+        p.write_text(_json.dumps(content))
+        return p
+
+    def test_raises_on_json_array(self, tmp_path) -> None:
+        doc = [{"inputs": [{"name": "x", "shape": [1, 1], "datatype": "FP64", "data": [[1.0]]}]}]
+        p = self._write(tmp_path, "obs.json", doc)
+        with pytest.raises(ValueError, match="not a valid KServe v2 request"):
+            inference._validate_observation_file(p)
+
+    def test_raises_on_non_dict_json(self, tmp_path) -> None:
+        p = self._write(tmp_path, "obs.json", "just a string")
+        with pytest.raises(ValueError, match="not a valid KServe v2 request"):
+            inference._validate_observation_file(p)
+
+
+class TestSendObservationsJsonArray:
+    """send_observations must reject a JSON array file with a clear error,
+    rather than merging or transforming it."""
+
+    def test_raises_on_json_array(self, tmp_path) -> None:
+        doc = [{"inputs": [{"name": "x", "shape": [1, 1], "datatype": "FP64", "data": [[1.0]]}]}]
+        p = tmp_path / "obs.json"
+        p.write_text(__import__("json").dumps(doc))
+        with pytest.raises(ValueError, match="not a valid KServe v2 request"):
+            inference.send_observations("model", "ns", [p])
+
+    def test_json_object_still_posts_once_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """A valid JSON object envelope is sent as-is, unchanged."""
+        captured: list[dict] = []
+        monkeypatch.setattr(
+            "rhoai.platform.inference.get_inference_url",
+            lambda *_: "https://model.example.com",
+        )
+        monkeypatch.setattr(
+            "rhoai.platform.inference._http_post",
+            lambda url, body: (captured.append(body), 0.01, 200)[1:],
+        )
+        env = {
+            "inputs": [{
+                "name": "x", "shape": [10, 1],
+                "datatype": "FP64",
+                "data": [[float(i)] for i in range(10)],
+            }]
+        }
+        p = tmp_path / "obs.json"
+        p.write_text(__import__("json").dumps(env))
+        total = inference.send_observations("model", "ns", [p])
+        assert total == 10
+        assert len(captured) == 1
+        assert captured[0] == env
 
 
 # ---------------------------------------------------------------------------

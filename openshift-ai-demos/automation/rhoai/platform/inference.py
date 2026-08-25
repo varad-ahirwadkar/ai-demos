@@ -1,7 +1,5 @@
 """KServe InferenceService and ServingRuntime capability."""
 
-import csv
-import io
 import json
 import logging
 import time
@@ -169,7 +167,15 @@ def send_observations(
     """Send historical observation batches to a deployed model for TrustyAI ingestion.
 
     Each file in observation_files must be a local KServe v2 inference request
-    (JSON or CSV).  Expected JSON structure::
+    (JSON or CSV).
+
+    * **CSV** — transformed into a KServe v2 payload via
+      :func:`_csv_payload_from_path`, using tensor metadata resolved from
+      ``schema_source``.
+    * **JSON** — assumed to already be a valid KServe v2 request; loaded and
+      posted as-is, with no transformation or reinterpretation.
+
+    Expected KServe v2 envelope structure::
 
         {
           "inputs": [{
@@ -180,14 +186,10 @@ def send_observations(
           }]
         }
 
-    CSV files are converted to the above structure; JSON files are posted as-is.
-    Tensor metadata (``name`` and ``datatype``) is read from ``schema_source``
-    via ``_read_tensor_schema`` — pass the model's ``inference_request`` JSON
-    (overridden by ``csv_config`` values when present).
-
     Files are validated locally before any network call is made.  Validation
-    checks that each file contains a non-empty ``inputs`` list and that
-    ``shape[0] == len(data)`` for the first tensor.
+    checks that each payload is a KServe v2 envelope (a JSON object with a
+    non-empty ``inputs`` list) and that ``shape[0] == len(data)`` for the
+    first tensor.
 
     Each file is posted as a single HTTP call to the model's KServe v2
     inference endpoint (``/v2/models/<model_name>/infer``).  The KServe
@@ -285,86 +287,6 @@ def _read_tensor_schema(schema_source: Path | None) -> tuple[str, str]:
 
 
 
-def _csv_to_kserve_payload(
-    path: Path,
-    input_name: str = "input",
-    datatype: str = "FP64",
-) -> dict:
-    """Convert a CSV file to a KServe v2 inference request payload.
-
-    Reads all rows, converts every value to ``float``, and wraps them in a
-    single-tensor KServe v2 envelope::
-
-        {
-          "inputs": [{
-            "name":     <input_name>,
-            "shape":    [N, F],
-            "datatype": <datatype>,
-            "data":     [[...], ...]
-          }]
-        }
-
-    The tensor ``name`` and ``datatype`` must match the model's expected input
-    signature.  They are resolved automatically from the model's
-    ``inference_request`` JSON via ``_read_tensor_schema``; ``csv_config`` in
-    the model config provides an optional explicit override.
-
-    A header row is detected automatically: if the first row cannot be
-    converted to float entirely, it is treated as a header and skipped.
-
-    Args:
-        path:       Path to the CSV file.
-        input_name: Name of the input tensor, resolved by the caller via
-                    ``_read_tensor_schema``.
-        datatype:   KServe v2 datatype string (e.g. ``"FP64"``, ``"FP32"``),
-                    resolved by the caller via ``_read_tensor_schema``.
-
-    Returns:
-        KServe v2 payload dict ready for JSON serialisation.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-        ValueError:        If the file is empty, contains no data rows, or
-                           a value cannot be converted to float.
-    """
-    if not path.exists():
-        raise FileNotFoundError(f"CSV file not found: {path}")
-
-    text = path.read_text()
-    reader = csv.reader(io.StringIO(text))
-    rows: list[list[float]] = []
-    for line_no, raw_row in enumerate(reader, start=1):
-        if not raw_row:
-            continue
-        try:
-            row = [float(v) for v in raw_row]
-        except ValueError:
-            if line_no == 1:
-                # Non-numeric first row → treat as header, skip it.
-                log.debug("CSV '%s': skipping header row: %s", path.name, raw_row)
-                continue
-            raise ValueError(
-                f"CSV '{path.name}' row {line_no}: "
-                f"cannot convert to float: {raw_row!r}. "
-                "All data values must be numeric."
-            )
-        rows.append(row)
-
-    if not rows:
-        raise ValueError(f"CSV '{path.name}' contains no data rows.")
-
-    n_rows = len(rows)
-    n_cols = len(rows[0])
-    return {
-        "inputs": [{
-            "name":     input_name,
-            "shape":    [n_rows, n_cols],
-            "datatype": datatype,
-            "data":     rows,
-        }]
-    }
-
-
 def _load_request_payload(
     path: Path,
     input_name: str = "input",
@@ -373,14 +295,13 @@ def _load_request_payload(
     """Load a KServe v2 inference request from a JSON or CSV file.
 
     JSON files are loaded as-is.  CSV files are converted to a single-tensor
-    KServe v2 payload via ``_csv_to_kserve_payload`` using the supplied
+    KServe v2 payload via :func:`_csv_payload_from_path` using the supplied
     ``input_name`` and ``datatype``.
 
     Args:
         path:       Path to a ``.json`` or ``.csv`` file.
-        input_name: Tensor input name passed to ``_csv_to_kserve_payload``.
-                    Ignored for JSON files.
-        datatype:   KServe v2 datatype string passed to ``_csv_to_kserve_payload``.
+        input_name: Tensor input name.  Ignored for JSON files.
+        datatype:   KServe v2 datatype string (e.g. ``"FP64"``).
                     Ignored for JSON files.
 
     Returns:
@@ -391,7 +312,7 @@ def _load_request_payload(
     """
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        return _csv_to_kserve_payload(path, input_name=input_name, datatype=datatype)
+        return _csv_payload_from_path(path, input_name=input_name, datatype=datatype)
     if suffix == ".json":
         try:
             return json.loads(path.read_text())
@@ -403,6 +324,76 @@ def _load_request_payload(
     )
 
 
+def _csv_payload_from_path(
+    path: Path,
+    input_name: str = "input",
+    datatype: str = "FP64",
+) -> dict:
+    """Convert a CSV file to a KServe v2 single-batch payload.
+
+    Uses :func:`~rhoai.platform.request_generator.cast_value` and
+    :func:`~rhoai.platform.request_generator.build_request` from
+    :mod:`rhoai.platform.request_generator` for type casting and request
+    assembly, so no request-building logic is duplicated.
+
+    CSV rows are read with :class:`csv.reader` (not ``DictReader``) so that
+    every row is treated as data.  A non-numeric first row is detected and
+    skipped automatically — this preserves the header-detection contract of
+    the original ``_csv_to_kserve_payload`` implementation.
+
+    All rows form a single batch with shape ``[N, F]``.
+
+    Args:
+        path:       Path to the CSV file.
+        input_name: KServe v2 tensor input name.
+        datatype:   KServe v2 datatype string (e.g. ``"FP64"``).
+
+    Returns:
+        KServe v2 payload dict with shape ``[N, F]``.
+
+    Raises:
+        FileNotFoundError: If *path* does not exist.
+        ValueError:        If the CSV is empty, contains no data rows, or a
+                           value in a data row cannot be cast to *datatype*.
+    """
+    import csv as _csv
+    import io as _io
+
+    from rhoai.platform.request_generator import (
+        TensorSpec,
+        build_request,
+        cast_value,
+    )
+
+    if not path.exists():
+        raise FileNotFoundError(f"CSV file not found: {path}")
+
+    text = path.read_text()
+    reader = _csv.reader(_io.StringIO(text))
+    rows: list[list] = []
+    for line_no, raw_row in enumerate(reader, start=1):
+        if not raw_row:
+            continue
+        try:
+            typed_row = [cast_value(v, datatype) for v in raw_row]
+        except (ValueError, TypeError):
+            if line_no == 1:
+                # Non-castable first row → treat as a text header, skip it.
+                log.debug("CSV '%s': skipping header row: %s", path.name, raw_row)
+                continue
+            raise ValueError(
+                f"CSV '{path.name}' row {line_no}: "
+                f"cannot convert to {datatype}: {raw_row!r}."
+            )
+        rows.append(typed_row)
+
+    if not rows:
+        raise ValueError(f"CSV '{path.name}' contains no data rows.")
+
+    spec = TensorSpec(name=input_name, datatype=datatype, dims=[-1])
+    return build_request([spec], {input_name: rows})
+
+
 def _validate_observation_file(
     path: Path,
     input_name: str = "input",
@@ -412,19 +403,21 @@ def _validate_observation_file(
 
     Accepts:
 
-    * **JSON** — must be a KServe v2 inference request payload.  The row count
+    * **JSON** — must be a KServe v2 inference request payload (a JSON object
+      with a non-empty ``inputs`` list). It is assumed to already be in
+      KServe v2 format and is validated, never transformed. The row count
       comes from ``inputs[0].shape[0]``.  Only the first tensor is inspected;
       additional tensors are posted in full.
-    * **CSV** — converted to a KServe v2 payload via ``_csv_to_kserve_payload``
+    * **CSV** — converted to a KServe v2 payload via ``_csv_payload_from_path``
       using ``input_name`` and ``datatype``.  The row count is the number of
       data rows after an optional header.
 
     Args:
         path:       Local path to a ``.json`` or ``.csv`` file.
-        input_name: Tensor name passed to ``_csv_to_kserve_payload`` for CSV
+        input_name: Tensor name passed to ``_csv_payload_from_path`` for CSV
                     files.  Ignored for JSON files.
         datatype:   KServe v2 datatype string passed to
-                    ``_csv_to_kserve_payload`` for CSV files.  Ignored for
+                    ``_csv_payload_from_path`` for CSV files.  Ignored for
                     JSON files.
 
     Returns:
@@ -438,6 +431,14 @@ def _validate_observation_file(
         raise FileNotFoundError(f"Observation file not found: {path}")
 
     payload = _load_request_payload(path, input_name=input_name, datatype=datatype)
+
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"Observation file '{path.name}' is not a valid KServe v2 request. "
+            "Expected a JSON object "
+            "({'inputs': [{'name': ..., 'shape': [N, ...], 'datatype': ..., 'data': [...]}]}), "
+            f"got {type(payload).__name__}."
+        )
 
     inputs = payload.get("inputs")
     if not inputs or not isinstance(inputs, list):

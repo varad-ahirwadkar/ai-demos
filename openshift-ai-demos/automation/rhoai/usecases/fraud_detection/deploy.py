@@ -102,15 +102,28 @@ def _resolve_request_artifacts(
             )
     else:
         dataset_path = resolve_inference_dataset(model, repo_root)
-        config_path = model.get("config_path", "")
+        # inference_config_path is the pbtxt used only for request generation.
+        # It is separate from config_path (which is the staging pbtxt for
+        # model_path deployments) so that model_uri models that use
+        # inference_dataset can supply a pbtxt without triggering the
+        # model_uri/config_path mutual-exclusivity guard.
+        # Falls back to config_path for backwards compatibility.
+        config_path = model.get("inference_config_path", "") or model.get("config_path", "")
         if not config_path:
             raise ValueError(
-                f"Model '{name}' requires config_path when inference_dataset is used without inference_request."
+                f"Model '{name}' requires 'inference_config_path' (or 'config_path') "
+                "when inference_dataset is used without inference_request."
             )
-        _, payload = request_generator.build_request_from_csv_file(
-            Path(config_path),
-            dataset_path,
-        )
+        if dataset_path.suffix.lower() == ".json":
+            # JSON dataset: use iter_requests which handles both single-envelope
+            # and array-of-envelopes formats, and supports multi-tensor models.
+            _, payload = next(request_generator.iter_requests(Path(config_path), dataset_path))
+        else:
+            # CSV dataset: single-tensor models only.
+            _, payload = request_generator.build_request_from_csv_file(
+                Path(config_path),
+                dataset_path,
+            )
         inputs_dir = Path(repo_root) / "automation" / "rhoai" / "usecases" / "fraud_detection" / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=True)
         request_path = inputs_dir / f"{name}_generated_request.json"
@@ -127,18 +140,22 @@ def _resolve_request_artifacts(
 def _resolve_schema_source(model: dict[str, Any], repo_root: str) -> Path | None:
     """Return the schema source path for a model's CSV conversions.
 
-    Resolution order:
+    Resolution order (highest → lowest priority):
 
-    1. ``csv_config`` present in model config — write its ``input_name`` and
-       ``datatype`` into a temporary JSON file so ``_read_tensor_schema`` can
-       read them uniformly.  (Not used here — callers pass ``csv_config`` values
-       directly when overriding.)
-    2. ``inference_request`` is a ``.json`` — return it as the schema source.
-    3. No usable source — return ``None`` (safe when all files are JSON).
-
-    In practice this returns the resolved ``inference_request`` JSON path when
-    it exists, which covers the common case.  ``csv_config`` override is handled
-    directly by passing a pre-built ``Path`` from the caller when needed.
+    1. ``csv_config`` present in model config — synthesises a minimal KServe v2
+       JSON file containing only ``input_name`` and ``datatype`` so that
+       ``_read_tensor_schema`` can read them through a uniform interface.
+    2. ``inference_request`` is a ``.json`` — return it directly.
+    3. ``config_path`` (pbtxt) is set — return the generated request JSON that
+       ``_resolve_request_artifacts`` writes when ``inference_dataset`` is used.
+       The path is deterministic: ``inputs/<model_name>_generated_request.json``
+       relative to the fraud-detection inputs directory.  If the file does not
+       yet exist (first run before the smoke test) this step is skipped and
+       ``None`` is returned; the generated file will exist on subsequent calls
+       within the same deployment run because ``_resolve_request_artifacts`` runs
+       before ``_configure_bias_monitoring``.
+    4. No usable source — return ``None`` (safe when all observation files are
+       already JSON with tensor metadata embedded).
 
     Args:
         model:     Model config dict.
@@ -147,8 +164,7 @@ def _resolve_schema_source(model: dict[str, Any], repo_root: str) -> Path | None
     Returns:
         Absolute path to a KServe v2 JSON file, or ``None``.
     """
-    # csv_config explicit override — build a temporary file on the fly so that
-    # _read_tensor_schema gets a Path as expected.
+    # 1 — csv_config explicit override.
     csv_cfg = model.get("csv_config")
     if csv_cfg:
         import tempfile, json as _json
@@ -163,10 +179,28 @@ def _resolve_schema_source(model: dict[str, Any], repo_root: str) -> Path | None
         }))
         return tmp
 
-    # Fall back to inference_request JSON.
+    # 2 — explicit inference_request JSON.
     req = model.get("inference_request", "")
     if req and Path(req).suffix.lower() == ".json":
         return Path(repo_root) / req
+
+    # 3 — generated request JSON produced by _resolve_request_artifacts when
+    #     the model uses inference_dataset + config_path instead of a pre-built
+    #     inference_request.  The file is written before _configure_bias_monitoring
+    #     is called, so it is available here during the same deployment run.
+    if model.get("config_path"):
+        name = model["name"]
+        generated = (
+            Path(repo_root)
+            / "automation"
+            / "rhoai"
+            / "usecases"
+            / "fraud_detection"
+            / "inputs"
+            / f"{name}_generated_request.json"
+        )
+        if generated.exists():
+            return generated
 
     return None
 

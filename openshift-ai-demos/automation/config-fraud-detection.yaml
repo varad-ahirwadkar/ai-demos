@@ -32,17 +32,24 @@ deployment:
     #   model_uri: pvc://fraud-model-pvc/upi-fraud-detection
     #   inference_request: automation/rhoai/usecases/fraud_detection/inputs/upi-fraud-detection.json
 
-    # - name: demo-loan-nn-onnx-alpha
-    #   model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
-    #   inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
-
     - name: demo-loan-nn-onnx-alpha
-      model_path:  /Users/varad/Desktop/automation-framework/model.onnx
-      config_path: /Users/varad/Desktop/automation-framework/config.pbtxt
-      pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
-      pvc_size:    1Gi  
-      #inference_dataset: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.csv
+      model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
       inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
+
+    # - name: demo-loan-nn-onnx-alpha
+    #   model_path:  /Users/varad/Desktop/automation-framework/model.onnx
+    #   config_path: /Users/varad/Desktop/automation-framework/config.pbtxt
+    #   pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
+    #   pvc_size:    1Gi  
+    #   inference_dataset: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.csv
+    #   #inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
+
+    # - name: upi-fraud-detection
+    #   model_path:  /Users/varad/Downloads/upi-fraud-detection/model.onnx
+    #   config_path: /Users/varad/Downloads/upi-fraud-detection/config.pbtxt
+    #   pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
+    #   pvc_size:    1Gi  
+    #   inference_dataset: /Users/varad/Downloads/upi-fraud-detection/sample_input_legit_tritonformat.json
 
     # - name: demo-loan-nn-onnx-beta
     #   model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model

@@ -29,6 +29,13 @@ deployment:
   trustyai_service_account: trustyai-user
 
   models:
+    # - name: upi-fraud-detection
+    #   model_path:  /Users/varad/Downloads/upi-fraud-detection/model.onnx
+    #   config_path: /Users/varad/Downloads/upi-fraud-detection/config.pbtxt
+    #   pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
+    #   pvc_size:    1Gi  
+    #   inference_dataset: /Users/varad/Downloads/upi-fraud-detection/sample_input_legit_tritonformat.json
+
     - name: demo-loan-nn-onnx-alpha
       model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
       inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
@@ -72,37 +79,37 @@ deployment:
         #   - column_name: "Will Default?"
         #     batch_size:  250
 
-    - name: demo-loan-nn-onnx-beta
-      model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
-      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
+    # - name: demo-loan-nn-onnx-beta
+    #   model_uri: pvc://fraud-model-pvc/bias-monitoring/biased_model
+    #   inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
 
-      bias_monitoring:
-        observations:
-          path: automation/rhoai/usecases/fraud_detection/inputs/training/csv
+    #   bias_monitoring:
+    #     observations:
+    #       path: automation/rhoai/usecases/fraud_detection/inputs/training/csv
 
-        name_mapping:
-          inputs:
-            customer_data_input-0:  "Number of Children"
-            customer_data_input-1:  "Total Income"
-            customer_data_input-2:  "Number of Total Family Members"
-            customer_data_input-3:  "Is Male-Identifying?"
-            customer_data_input-4:  "Owns Car?"
-            customer_data_input-5:  "Owns Realty?"
-            customer_data_input-6:  "Is Partnered?"
-            customer_data_input-7:  "Is Employed?"
-            customer_data_input-8:  "Lives with Parents?"
-            customer_data_input-9:  "Age"
-            customer_data_input-10: "Length of Employment?"
-          outputs:
-            predict: "Will Default?"
+    #     name_mapping:
+    #       inputs:
+    #         customer_data_input-0:  "Number of Children"
+    #         customer_data_input-1:  "Total Income"
+    #         customer_data_input-2:  "Number of Total Family Members"
+    #         customer_data_input-3:  "Is Male-Identifying?"
+    #         customer_data_input-4:  "Owns Car?"
+    #         customer_data_input-5:  "Owns Realty?"
+    #         customer_data_input-6:  "Is Partnered?"
+    #         customer_data_input-7:  "Is Employed?"
+    #         customer_data_input-8:  "Lives with Parents?"
+    #         customer_data_input-9:  "Age"
+    #         customer_data_input-10: "Length of Employment?"
+    #       outputs:
+    #         predict: "Will Default?"
 
-        spd_monitors:
-          - protected_attribute:   "Is Male-Identifying?"
-            privileged_value:      1.0
-            unprivileged_value:    0.0
-            outcome_name:          "Will Default?"
-            favorable_outcome:     0.0
-            batch_size:            5000
+    #     spd_monitors:
+    #       - protected_attribute:   "Is Male-Identifying?"
+    #         privileged_value:      1.0
+    #         unprivileged_value:    0.0
+    #         outcome_name:          "Will Default?"
+    #         favorable_outcome:     0.0
+    #         batch_size:            5000
 
         # identity_monitors:
         #   - column_name: "Is Male-Identifying?"

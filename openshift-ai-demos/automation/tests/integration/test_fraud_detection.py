@@ -174,30 +174,55 @@ class TestDeploySmoke:
             ]
         return config
 
+    # Stub payload returned by inference._load_request_payload and used as the
+    # generated request when inference_dataset is set.  Must be a real dict so
+    # render_curl_command can json.dumps it.
+    _STUB_PAYLOAD = {"inputs": [{"name": "input", "shape": [1, 3], "datatype": "FP64", "data": [[0.1, 0.2, 0.3]]}]}
+
     def _patch_all(
         self, monkeypatch: pytest.MonkeyPatch, deploy_mod: Any, tmp_path: Path
     ) -> dict[str, MagicMock]:
         """Patch every external dependency of deploy_mod and return the mocks."""
-        storage_mock       = MagicMock()
-        inference_mock     = MagicMock()
-        ocp_resources_mock = MagicMock()
-        prepare_mock       = MagicMock()
-        trustyai_mock      = MagicMock()
+        storage_mock          = MagicMock()
+        inference_mock        = MagicMock()
+        ocp_resources_mock    = MagicMock()
+        prepare_mock          = MagicMock()
+        trustyai_mock         = MagicMock()
+        request_generator_mock = MagicMock()
         # platform_needs_reconciliation returns False → fast-path, no bootstrap call.
         prepare_mock.platform_needs_reconciliation.return_value = False
+        # _read_tensor_schema must return a 2-tuple (input_name, datatype).
+        inference_mock._read_tensor_schema.return_value = ("input", "FP64")
+        # _load_request_payload must return a real dict (json.dumps is called on it).
+        inference_mock._load_request_payload.return_value = self._STUB_PAYLOAD
+        # verify_triton_inference must return a 3-tuple (payload, response, meta).
+        inference_mock.verify_triton_inference.return_value = (
+            self._STUB_PAYLOAD,
+            {"outputs": [{"name": "output", "data": [0.9]}]},
+            None,
+        )
+        # get_inference_url returns a plain string so rstrip and string concat work.
+        inference_mock.get_inference_url.return_value = "http://fake-endpoint"
+        # _TRITON_INFER_PATH must be a real string for .format() + concatenation.
+        inference_mock._TRITON_INFER_PATH = "/v2/models/{model_name}/infer"
+        # build_request_from_csv_file / iter_requests return (model_name, payload).
+        request_generator_mock.build_request_from_csv_file.return_value = ("fraud-detection", self._STUB_PAYLOAD)
+        request_generator_mock.iter_requests.return_value = iter([("fraud-detection", self._STUB_PAYLOAD)])
 
-        monkeypatch.setattr(deploy_mod, "storage",       storage_mock)
-        monkeypatch.setattr(deploy_mod, "inference",     inference_mock)
-        monkeypatch.setattr(deploy_mod, "ocp_resources", ocp_resources_mock)
-        monkeypatch.setattr(deploy_mod, "prepare",       prepare_mock)
-        monkeypatch.setattr(deploy_mod, "trustyai",      trustyai_mock)
+        monkeypatch.setattr(deploy_mod, "storage",           storage_mock)
+        monkeypatch.setattr(deploy_mod, "inference",         inference_mock)
+        monkeypatch.setattr(deploy_mod, "ocp_resources",     ocp_resources_mock)
+        monkeypatch.setattr(deploy_mod, "prepare",           prepare_mock)
+        monkeypatch.setattr(deploy_mod, "trustyai",          trustyai_mock)
+        monkeypatch.setattr(deploy_mod, "request_generator", request_generator_mock)
 
         return {
-            "storage":       storage_mock,
-            "inference":     inference_mock,
-            "ocp_resources": ocp_resources_mock,
-            "prepare":       prepare_mock,
-            "trustyai":      trustyai_mock,
+            "storage":           storage_mock,
+            "inference":         inference_mock,
+            "ocp_resources":     ocp_resources_mock,
+            "prepare":           prepare_mock,
+            "trustyai":          trustyai_mock,
+            "request_generator": request_generator_mock,
         }
 
     def _fresh_deploy_mod(self) -> Any:
@@ -247,6 +272,8 @@ class TestDeploySmoke:
     def test_deploy_generates_request_from_dataset_when_request_missing(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
+        """When inference_dataset is set (no inference_request), a request JSON is
+        generated from the dataset and passed to verify_triton_inference."""
         _write_manifest(tmp_path)
         deploy_mod = self._fresh_deploy_mod()
         mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
@@ -254,13 +281,26 @@ class TestDeploySmoke:
         dataset = tmp_path / "inputs" / "demo-loan.csv"
         dataset.parent.mkdir(parents=True, exist_ok=True)
         dataset.write_text("1.0,2.0,3.0\n")
+        # inference_config_path is the pbtxt for request generation only — it is
+        # separate from config_path (model staging) so model_uri + inference_dataset
+        # models don't hit the mutual-exclusivity guard.  The actual parsing is
+        # bypassed because request_generator is patched in _patch_all.
+        pbtxt = tmp_path / "config.pbtxt"
+        pbtxt.write_text('name: "fraud-detection"\nmax_batch_size: 0\n')
 
         config = self._make_config(tmp_path, models=[
             {"name": "fraud-detection", "model_uri": "pvc://fraud-model-pvc/models",
-             "inference_dataset": "inputs/demo-loan.csv"},
+             "inference_dataset": "inputs/demo-loan.csv",
+             "inference_config_path": str(pbtxt)},
         ])
         deploy_mod.deploy(config)
 
+        # request_generator.build_request_from_csv_file was called with the CSV dataset.
+        mocks["request_generator"].build_request_from_csv_file.assert_called_once()
+        call_args = mocks["request_generator"].build_request_from_csv_file.call_args[0]
+        assert call_args[1] == dataset
+
+        # A generated request JSON was written and passed to verify_triton_inference.
         mocks["inference"].verify_triton_inference.assert_called_once()
         request_path = mocks["inference"].verify_triton_inference.call_args[0][3]
         assert request_path.suffix == ".json"
