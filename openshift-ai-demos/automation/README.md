@@ -65,8 +65,8 @@ layered architecture (`cli → platform → ocp → utils`), see
 | A `ReadWriteOnce` StorageClass | `oc get storageclass` |
 | Internet access from nodes | Must reach `quay.io/powercloud` (Triton runtime) |
 
-> Each model deployment requests **2 CPU / 8 GiB** on a worker node. Confirm
-> available capacity with `rhoai platform inspect`.
+> Model deployments request cluster resources on a worker node — check capacity
+> with `rhoai platform inspect`. See a use case's guide for its exact footprint.
 
 ### 1. Install
 
@@ -85,9 +85,9 @@ rhoai --help
 ### 2. Deploy your first model
 
 The examples below use the bundled **fraud-detection** use case — see its
-[full walkthrough](rhoai/usecases/README.md) for configuration, datasets, and
-expected output. Point `repo_root` in the config at the **absolute** path of
-your `openshift-ai-demos` directory, then:
+[full guide](rhoai/usecases/fraud_detection/README.md) for configuration,
+datasets, and expected output. Point `repo_root` in the config at the
+**absolute** path of your `openshift-ai-demos` directory, then:
 
 ```bash
 rhoai usecase deploy fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
@@ -127,8 +127,8 @@ that matches your goal:
 | I want to… | How | Guide |
 |---|---|---|
 | Deploy a model and smoke-test it | `rhoai usecase deploy <name>` | [Use cases](rhoai/usecases/README.md) |
-| Deploy **with** bias monitoring | Enable the `trustyai` component + add a `bias_monitoring:` block | [Use cases → bias monitoring](rhoai/usecases/README.md#bias_monitoring) · [walkthrough](docs/bias-readme.md) |
-| Generate inference requests from a raw dataset | Set `inference_dataset:` on the model | [Use cases → inference input modes](rhoai/usecases/README.md#inference-input-modes) |
+| Deploy **with** bias monitoring | Enable the `trustyai` component + add a `bias_monitoring:` block | [Fraud Detection → TrustyAI](rhoai/usecases/fraud_detection/README.md#trustyai-configuration) · [concepts](docs/bias-readme.md) |
+| Generate inference requests from a raw dataset | Set `inference_dataset:` on the model | [Fraud Detection → inference input modes](rhoai/usecases/fraud_detection/README.md#inference-input-modes) |
 | Check health / observe metrics | `rhoai usecase verify` · `rhoai platform status` | [Command reference](#command-reference) |
 
 - **Standard deployment** — deploy → smoke-test → verify → clean up, the
@@ -142,7 +142,9 @@ that matches your goal:
   test; `platform status` reports operator and DSC-component health.
 
 Configuration for each of these — sample YAML, field references, datasets, and
-expected output — lives in the [use-case documentation](rhoai/usecases/README.md).
+expected output — lives in the use-case guides, indexed under
+[use cases](rhoai/usecases/README.md) (e.g. the
+[Fraud Detection guide](rhoai/usecases/fraud_detection/README.md)).
 
 ---
 
@@ -178,8 +180,10 @@ Deploys customer-facing solutions built on the platform layer.
 | `rhoai usecase verify <name>` | Check that all use-case resources are healthy |
 | `rhoai usecase cleanup <name>` | Remove use-case resources (`--delete-platform` also removes DSC/DSCI) |
 
-Worked example, sample output, and config reference:
-**[`rhoai/usecases/README.md`](rhoai/usecases/README.md)**.
+Use-case index and shared config concepts:
+**[`rhoai/usecases/README.md`](rhoai/usecases/README.md)**. Worked example,
+sample output, and config reference:
+**[Fraud Detection guide](rhoai/usecases/fraud_detection/README.md)**.
 
 ---
 
@@ -189,7 +193,8 @@ Worked example, sample output, and config reference:
 |---|---|
 | [Architecture & developer docs](docs/README.md) | Layering, project structure, configuration model, testing, adding a use case |
 | [Platform CLI reference](rhoai/platform/README.md) | Every `rhoai platform` command in detail |
-| [Use cases](rhoai/usecases/README.md) | Fraud Detection walkthrough, config reference, inference input modes |
+| [Use cases](rhoai/usecases/README.md) | Use-case index, lifecycle, and shared config concepts |
+| [Fraud Detection](rhoai/usecases/fraud_detection/README.md) | Full guide — config reference, inference input modes, TrustyAI, deploy/verify/cleanup |
 | [TrustyAI bias monitoring](docs/bias-readme.md) | Observations, name mapping, SPD & identity monitors |
 | [Configuration](docs/README.md#5-configuration) | How config is resolved and every supported key |
 | [Troubleshooting](docs/troubleshooting.md) | Full cause/fix reference, including timeout tuning |
