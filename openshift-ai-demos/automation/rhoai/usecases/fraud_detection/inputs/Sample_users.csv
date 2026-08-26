@@ -1,0 +1,51 @@
+Name,Age,user_account_age_days,User_prior_complaint_flag,risk_score,new_beneficiary_flag,device_binding_age_days,beneficiary_in_watchlist,upi_id,Phone Number,Bank Name,Autopay
+Nikhil1,39,766,Yes,0.7,Yes,133,No,user001@okbank,9876500000,Kotak,Netflix
+Sunita2,33,2055,No,0.68,Yes,233,No,user002@okbank,9876500001,Axis,Broadband
+Anita3,49,1768,No,0.54,Yes,321,No,user003@okbank,9876500002,PNB,Broadband
+Sunita4,24,2990,Yes,0.65,Yes,16,Yes,user004@okbank,9876500003,ICICI,Electricity
+Kavita5,28,1630,Yes,0.54,Yes,242,No,user005@okbank,9876500004,SBI,OTT
+Vikram6,24,2967,Yes,0.63,Yes,141,Yes,user006@okbank,9876500005,ICICI,Insurance
+Arjun7,63,1211,No,0.47,No,42,No,user007@okbank,9876500006,HDFC,OTT
+Nikhil8,58,1952,Yes,0.82,Yes,292,Yes,user008@okbank,9876500007,PNB,Jio
+Priya9,24,1382,No,0.61,Yes,371,No,user009@okbank,9876500008,Axis,Electricity
+Anita10,57,2866,No,0.3,No,245,No,user010@okbank,9876500009,Axis,Insurance
+Rahul11,62,2030,No,0.52,Yes,297,Yes,user011@okbank,9876500010,PNB,Electricity
+Pooja12,41,1618,No,0.42,No,318,Yes,user012@okbank,9876500011,Yes Bank,Insurance
+Anita13,35,2832,No,0.2,Yes,11,Yes,user013@okbank,9876500012,SBI,OTT
+Kavita14,29,861,Yes,0.75,No,94,Yes,user014@okbank,9876500013,Kotak,Electricity
+Arjun15,65,151,No,0.49,Yes,148,Yes,user015@okbank,9876500014,Canara,Netflix
+Sneha16,49,1944,Yes,0.88,Yes,348,No,user016@okbank,9876500015,Kotak,Broadband
+Pooja17,26,1120,No,0.68,Yes,307,Yes,user017@okbank,9876500016,Canara,Insurance
+Amit18,23,366,Yes,0.61,No,367,No,user018@okbank,9876500017,Kotak,Jio
+Vikram19,58,1163,Yes,0.62,Yes,122,Yes,user019@okbank,9876500018,Yes Bank,Netflix
+Amit20,55,2313,No,0.6,No,139,No,user020@okbank,9876500019,SBI,Jio
+Kavita21,24,286,No,0.48,Yes,385,Yes,user021@okbank,9876500020,Kotak,OTT
+Amit22,45,1704,Yes,0.45,No,208,No,user022@okbank,9876500021,HDFC,Netflix
+Arjun23,25,1348,No,0.66,No,157,Yes,user023@okbank,9876500022,PNB,Jio
+Arjun24,65,401,No,0.56,No,112,No,user024@okbank,9876500023,Yes Bank,OTT
+Arjun25,52,2998,Yes,0.59,Yes,373,No,user025@okbank,9876500024,Canara,Netflix
+Vikram26,62,1121,No,0.4,No,301,No,user026@okbank,9876500025,Kotak,OTT
+Anita27,30,493,Yes,0.41,Yes,137,No,user027@okbank,9876500026,SBI,Insurance
+Deepak28,39,1625,Yes,0.67,No,358,Yes,user028@okbank,9876500027,ICICI,OTT
+Rajesh29,27,2906,No,0.52,Yes,189,No,user029@okbank,9876500028,SBI,Electricity
+Kavita30,26,2713,Yes,0.59,Yes,176,No,user030@okbank,9876500029,Yes Bank,Netflix
+Arjun31,35,1496,No,0.78,Yes,337,Yes,user031@okbank,9876500030,SBI,Broadband
+Sneha32,41,2778,No,0.59,Yes,267,Yes,user032@okbank,9876500031,Axis,OTT
+Nikhil33,23,1525,Yes,0.57,Yes,146,Yes,user033@okbank,9876500032,ICICI,Jio
+Kavita34,55,2345,Yes,0.63,Yes,248,No,user034@okbank,9876500033,ICICI,Electricity
+Anita35,41,2855,No,0.51,Yes,61,Yes,user035@okbank,9876500034,HDFC,Netflix
+Nikhil36,41,2519,No,0.52,Yes,38,Yes,user036@okbank,9876500035,Yes Bank,Netflix
+Priya37,44,750,No,0.32,Yes,285,Yes,user037@okbank,9876500036,HDFC,Jio
+Nikhil38,24,1531,No,0.64,Yes,203,Yes,user038@okbank,9876500037,HDFC,Broadband
+Kavita39,51,314,Yes,0.55,Yes,299,Yes,user039@okbank,9876500038,Canara,Broadband
+Priya40,48,1632,No,0.62,Yes,228,No,user040@okbank,9876500039,Yes Bank,Electricity
+Vikram41,47,1676,No,0.45,Yes,376,No,user041@okbank,9876500040,PNB,Broadband
+Vikram42,38,312,No,0.73,Yes,288,Yes,user042@okbank,9876500041,ICICI,Jio
+Sanjay43,46,345,No,0.41,Yes,377,Yes,user043@okbank,9876500042,ICICI,Insurance
+Priya44,46,593,No,0.59,No,152,No,user044@okbank,9876500043,Canara,Insurance
+Sunita45,38,2381,No,0.21,No,11,No,user045@okbank,9876500044,Yes Bank,Netflix
+Rajesh46,33,489,Yes,0.8,No,83,No,user046@okbank,9876500045,Axis,OTT
+Priya47,23,818,Yes,0.46,No,116,Yes,user047@okbank,9876500046,SBI,Jio
+Sneha48,48,1391,Yes,0.63,Yes,18,No,user048@okbank,9876500047,SBI,Jio
+Amit49,49,2519,No,0.68,Yes,53,No,user049@okbank,9876500048,Axis,Electricity
+Sanjay50,22,1825,No,0.66,No,50,Yes,user050@okbank,9876500049,Axis,Netflix
