@@ -84,8 +84,12 @@ Each entry under `deployment.models` defines one independent model deployment:
 |---|---|---|
 | `name` | ✔ | Kubernetes resource name for the `InferenceService` and `ServingRuntime` |
 | `model_uri` | ✔ | Where the model is loaded from (see formats below) |
-| `inference_request` | ✔ | Path to a KServe v2 JSON payload used for post-deploy validation, relative to `repo_root` |
+| `inference_request` | ✱ | Path to a pre-built KServe v2 JSON payload used for post-deploy validation, relative to `repo_root` |
+| `inference_dataset` | ✱ | Path to a raw CSV/JSON dataset the framework generates requests from, relative to `repo_root` |
 | `bias_monitoring` | | TrustyAI bias monitoring config — see [`bias_monitoring`](#bias_monitoring) below |
+
+> ✱ Supply **exactly one** of `inference_request` or `inference_dataset` — see
+> [Inference input modes](#inference-input-modes).
 
 Multiple entries deploy multiple models in sequence, each with its own `ServingRuntime`
 and `InferenceService`. Use this when running biased and unbiased models side by side
@@ -102,6 +106,49 @@ Currently supported:
 > Additional URI schemes (`hf://`, `oci://`, S3) are listed in
 > [`rhoai/config/defaults.yaml`](../config/defaults.yaml) but are not yet
 > validated end-to-end. Use `pvc://` for all current deployments.
+
+#### Inference input modes
+
+Each model supplies its inference input in exactly one of two mutually exclusive
+modes (validated before any cluster call):
+
+| Mode | Key | Smoke test | Observations (TrustyAI) |
+|---|---|---|---|
+| **JSON** | `inference_request` | The file is used as-is | Declared explicitly under `bias_monitoring.observations.path`/`.files` |
+| **Dataset** | `inference_dataset` | First request generated from the dataset | Generated from the same dataset, batched by `bias_monitoring.observations.batch_size` |
+
+**JSON mode** — `inference_request` points at a pre-built KServe v2 JSON payload
+(or a CSV converted with the model's schema). Use it when you already have a
+request file and want to declare observation files separately.
+
+**Dataset mode** — `inference_dataset` points at a raw CSV/JSON dataset that
+becomes the single source of truth. The smoke-test request is the first
+generated request, and TrustyAI observations are generated from the whole
+dataset, batched by `bias_monitoring.observations.batch_size` (default `1`).
+Dataset mode requires a Triton `config.pbtxt` via `inference_config_path` (or
+`config_path`) for the request schema, and you must **not** also set
+`bias_monitoring.observations.path`/`.files`.
+
+```yaml
+# Dataset mode (excerpt) — see config-fraud-detection-trustyai.yaml
+deployment:
+  models:
+    - name: demo-loan-nn-onnx-alpha
+      model_path:  /abs/path/model.onnx
+      config_path: /abs/path/config.pbtxt      # also used as the request schema
+      inference_dataset: automation/rhoai/usecases/fraud_detection/inputs/training/csv/batch_01.csv
+      bias_monitoring:
+        observations:
+          batch_size: 250                        # observations per generated request
+```
+
+Rejected (fail-fast) combinations:
+
+- `inference_request` **and** `inference_dataset` together (ambiguous mode).
+- Neither set (no input source).
+- `inference_dataset` **with** `observations.path`/`.files` (dataset already supplies observations).
+- `inference_request` **with** `observations.batch_size` (batching applies only to dataset mode).
+- `inference_dataset` without a `config.pbtxt` schema source.
 
 #### `bias_monitoring`
 
@@ -171,10 +218,13 @@ deployment:
 See [`config-fraud-detection-trustyai.yaml`](../../config-fraud-detection-trustyai.yaml)
 for the complete example with both models fully configured.
 
-**`observations`** — path relative to `repo_root`. A directory loads all `*.json`
-files in lexical order; an explicit list of file paths is also accepted. Each file
-must be a KServe v2 inference request. Observations (training data) are sent
-automatically during `deploy` — no separate script is needed.
+**`observations`** — used in **JSON mode**: `path` relative to `repo_root` (a
+directory loads all `*.json` files in lexical order; an explicit list of file
+paths is also accepted). Each file must be a KServe v2 inference request. In
+**dataset mode** observations are generated from `inference_dataset` instead —
+set `observations.batch_size` rather than `path`/`files` (see
+[Inference input modes](#inference-input-modes)). Observations (training data)
+are sent automatically during `deploy` — no separate script is needed.
 
 **`name_mapping`** — renames opaque tensor column names to human-readable labels
 before monitors are scheduled, so that `spd_monitors` and `identity_monitors` can
