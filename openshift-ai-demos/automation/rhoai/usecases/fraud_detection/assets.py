@@ -175,6 +175,94 @@ def resolve_inference_dataset(model: dict[str, Any], repo_root: str) -> Path:
     return Path(repo_root) / rel
 
 
+def observation_batch_size(model: dict[str, Any]) -> int:
+    """Return observations-per-request for dataset mode.
+
+    Reads ``bias_monitoring.observations.batch_size``, defaulting to 1 when
+    unset.  Only meaningful in dataset mode — JSON mode rejects the key during
+    validation (see :func:`validate_model_config`).
+    """
+    obs = (model.get("bias_monitoring") or {}).get("observations") or {}
+    return int(obs.get("batch_size", 1))
+
+
+def validate_model_config(model: dict[str, Any]) -> None:
+    """Validate a model's inference-input configuration, failing fast on ambiguity.
+
+    Two mutually exclusive modes select how the smoke-test request and (when
+    bias monitoring is enabled) the observation requests are produced:
+
+    * **JSON mode** — ``inference_request`` points at a pre-built KServe v2 JSON
+      (or a CSV converted with the model's schema).  Observations, if any, are
+      declared explicitly under ``bias_monitoring.observations.path``/``files``.
+    * **Dataset mode** — ``inference_dataset`` is the single source of truth:
+      the smoke test is the first generated request and observations are the
+      whole dataset, batched by ``bias_monitoring.observations.batch_size``.
+      Requires a Triton ``config.pbtxt`` via ``inference_config_path`` (or
+      ``config_path``).
+
+    Rejected combinations:
+
+    1. ``inference_request`` and ``inference_dataset`` both set (ambiguous mode).
+    2. neither set (no input source).
+    3. ``inference_dataset`` + ``observations.path``/``files`` (dataset already
+       supplies observations).
+    4. ``inference_request`` + ``observations.batch_size`` (batching only
+       applies to dataset mode).
+    5. ``inference_dataset`` without a ``config.pbtxt`` schema source.
+
+    Args:
+        model: A single entry from ``deployment.models``.
+
+    Raises:
+        ValueError: If the configuration is ambiguous or incomplete.
+    """
+    name        = model.get("name", "?")
+    has_request = bool(model.get("inference_request"))
+    has_dataset = bool(model.get("inference_dataset"))
+
+    obs            = (model.get("bias_monitoring") or {}).get("observations") or {}
+    has_obs_source = bool(obs.get("path")) or bool(obs.get("files"))
+    has_obs_batch  = "batch_size" in obs
+
+    if has_request and has_dataset:
+        raise ValueError(
+            f"Model '{name}': 'inference_request' and 'inference_dataset' are mutually "
+            "exclusive — set exactly one."
+        )
+    if not has_request and not has_dataset:
+        raise ValueError(
+            f"Model '{name}': set either 'inference_request' (JSON/CSV) or "
+            "'inference_dataset' (CSV/JSON)."
+        )
+
+    if has_obs_batch:
+        batch = obs["batch_size"]
+        if not isinstance(batch, int) or isinstance(batch, bool) or batch < 1:
+            raise ValueError(
+                f"Model '{name}': 'bias_monitoring.observations.batch_size' must be an "
+                f"integer >= 1, got {batch!r}."
+            )
+
+    if has_request and has_obs_batch:
+        raise ValueError(
+            f"Model '{name}': 'bias_monitoring.observations.batch_size' is not applicable "
+            "with 'inference_request' — batching applies only to 'inference_dataset' mode."
+        )
+
+    if has_dataset:
+        if has_obs_source:
+            raise ValueError(
+                f"Model '{name}': 'bias_monitoring.observations.path'/'files' cannot be "
+                "combined with 'inference_dataset' — observations are derived from the dataset."
+            )
+        if not (model.get("inference_config_path") or model.get("config_path")):
+            raise ValueError(
+                f"Model '{name}': 'inference_dataset' requires a Triton 'config.pbtxt' via "
+                "'inference_config_path' (or 'config_path')."
+            )
+
+
 def render_curl_command(infer_url: str, payload: dict[str, Any]) -> str:
     """Return a copy-pasteable curl command with the request payload inline."""
     body = json.dumps(payload, separators=(",", ":"))

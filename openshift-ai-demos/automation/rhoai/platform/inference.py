@@ -431,10 +431,32 @@ def _validate_observation_file(
         raise FileNotFoundError(f"Observation file not found: {path}")
 
     payload = _load_request_payload(path, input_name=input_name, datatype=datatype)
+    return _count_payload_rows(payload, path.name)
 
+
+def _count_payload_rows(payload: object, label: str) -> int:
+    """Validate a KServe v2 request payload and return its first-tensor row count.
+
+    Shared by :func:`_validate_observation_file` (file-based observations) and
+    :func:`send_observation_payloads` (in-memory batches generated from a
+    dataset), so both apply identical structural checks.
+
+    Args:
+        payload: The candidate KServe v2 request (must be a dict with a
+                 non-empty ``inputs`` list whose first tensor's ``shape[0]``
+                 equals ``len(data)``).
+        label:   Human-readable source label for error messages (a filename or
+                 a synthetic identifier such as ``"batch[3]"``).
+
+    Returns:
+        ``inputs[0].shape[0]`` — the number of rows in the first tensor.
+
+    Raises:
+        ValueError: On any structural problem, with a descriptive message.
+    """
     if not isinstance(payload, dict):
         raise ValueError(
-            f"Observation file '{path.name}' is not a valid KServe v2 request. "
+            f"Observation '{label}' is not a valid KServe v2 request. "
             "Expected a JSON object "
             "({'inputs': [{'name': ..., 'shape': [N, ...], 'datatype': ..., 'data': [...]}]}), "
             f"got {type(payload).__name__}."
@@ -443,7 +465,7 @@ def _validate_observation_file(
     inputs = payload.get("inputs")
     if not inputs or not isinstance(inputs, list):
         raise ValueError(
-            f"Observation file '{path.name}' has no 'inputs' list. "
+            f"Observation '{label}' has no 'inputs' list. "
             "Expected a KServe v2 payload "
             "({'inputs': [{'name': ..., 'shape': [N, ...], 'datatype': ..., 'data': [...]}]})."
         )
@@ -451,21 +473,69 @@ def _validate_observation_file(
     shape = first.get("shape")
     data  = first.get("data")
     if not shape or not isinstance(shape, list) or len(shape) < 1:
-        raise ValueError(
-            f"Observation file '{path.name}': inputs[0] missing valid 'shape'."
-        )
+        raise ValueError(f"Observation '{label}': inputs[0] missing valid 'shape'.")
     if data is None or not isinstance(data, list):
-        raise ValueError(
-            f"Observation file '{path.name}': inputs[0] missing 'data'."
-        )
+        raise ValueError(f"Observation '{label}': inputs[0] missing 'data'.")
     declared_rows = shape[0]
     actual_rows   = len(data)
     if declared_rows != actual_rows:
         raise ValueError(
-            f"Observation file '{path.name}': shape[0]={declared_rows} "
+            f"Observation '{label}': shape[0]={declared_rows} "
             f"does not match len(data)={actual_rows}."
         )
     return declared_rows
+
+
+def send_observation_payloads(
+    model_name: str,
+    namespace: str,
+    payloads: list[dict],
+) -> int:
+    """Send pre-built KServe v2 request payloads to a model for TrustyAI ingestion.
+
+    The in-memory counterpart to :func:`send_observations`: instead of reading
+    observation files, it posts payloads generated from an ``inference_dataset``
+    (see ``request_generator.iter_requests``).  Each payload is one HTTP POST to
+    the model's ``/v2/models/<model_name>/infer`` endpoint; the KServe
+    payload-logger sidecar forwards each call to TrustyAI automatically.
+
+    Payloads are validated locally before any network call is made.
+
+    Args:
+        model_name: InferenceService name (also the Triton model name).
+        namespace:  Namespace where the model is deployed.
+        payloads:   Non-empty list of KServe v2 request dicts, each already
+                    batched to the desired size.
+
+    Returns:
+        Total number of observation rows sent across all payloads.
+
+    Raises:
+        ValueError:   If ``payloads`` is empty or any payload fails validation.
+        RuntimeError: If any HTTP POST fails (non-200 response).
+    """
+    if not payloads:
+        raise ValueError("payloads must not be empty")
+
+    # --- local validation pass (before touching the cluster) ---
+    total_rows = sum(
+        _count_payload_rows(p, f"batch[{i}]") for i, p in enumerate(payloads)
+    )
+
+    base_url  = get_inference_url(model_name, namespace)
+    infer_url = base_url + _TRITON_INFER_PATH.format(model_name=model_name)
+
+    log.info(
+        "Sending %d observation rows across %d request(s) to '%s'",
+        total_rows, len(payloads), model_name,
+    )
+    for i, payload in enumerate(payloads):
+        log.debug("POST %s  (batch %d/%d)", infer_url, i + 1, len(payloads))
+        with _quiet_urllib3():
+            _http_post(infer_url, payload)
+
+    log.info("Observations sent: %d rows", total_rows)
+    return total_rows
 
 
 def delete_inference_service(name: str, namespace: str) -> None:

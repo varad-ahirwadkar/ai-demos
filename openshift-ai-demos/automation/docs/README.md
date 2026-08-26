@@ -498,6 +498,25 @@ Orchestrates the full deployment in a documented, numbered sequence:
 
 `deploy.py` calls `platform/` modules only — never `ocp/` directly.
 
+#### Inference input modes
+
+Each model entry declares its inference input in exactly one of two mutually
+exclusive modes, validated up front by `assets.validate_model_config` (both
+`deploy` and `verify` run it before touching the cluster):
+
+| | JSON mode | Dataset mode |
+|---|---|---|
+| Key | `inference_request` | `inference_dataset` |
+| Smoke test | the file, used as-is (JSON) or converted (CSV) | first request from `iter_requests(..., batch_size=1)` — the first row/element, never the full batch |
+| Observations | declared separately under `bias_monitoring.observations.path`/`.files` | derived from the dataset, batched by `bias_monitoring.observations.batch_size` (default 1) |
+| Extra requirement | — | a Triton `config.pbtxt` via `inference_config_path` (or `config_path`) |
+
+Smoke test and observations share one generator (`request_generator.iter_requests`),
+so in dataset mode the dataset is the single source of truth. Rejected as
+ambiguous: both keys set; neither set; `inference_dataset` +
+`observations.path`/`.files`; `inference_request` + `observations.batch_size`;
+a dataset with no pbtxt.
+
 ### `verify.py`
 
 Runs platform checks (`verify_platform`) then for each model:

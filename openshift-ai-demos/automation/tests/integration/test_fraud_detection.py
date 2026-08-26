@@ -295,15 +295,58 @@ class TestDeploySmoke:
         ])
         deploy_mod.deploy(config)
 
-        # request_generator.build_request_from_csv_file was called with the CSV dataset.
-        mocks["request_generator"].build_request_from_csv_file.assert_called_once()
-        call_args = mocks["request_generator"].build_request_from_csv_file.call_args[0]
-        assert call_args[1] == dataset
+        # Smoke test and observations share one generator: request_generator.iter_requests
+        # was called with the CSV dataset (batch_size=1 for the smoke request).
+        mocks["request_generator"].iter_requests.assert_called_once()
+        gen_call = mocks["request_generator"].iter_requests.call_args
+        assert gen_call.args[1] == dataset
+        assert gen_call.kwargs.get("batch_size") == 1
 
         # A generated request JSON was written and passed to verify_triton_inference.
         mocks["inference"].verify_triton_inference.assert_called_once()
         request_path = mocks["inference"].verify_triton_inference.call_args[0][3]
         assert request_path.suffix == ".json"
+
+    def test_bias_monitoring_dataset_mode_sends_batched_payloads(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Dataset mode derives observations from the dataset (no observations.path),
+        batched by observations.batch_size, and posts them via send_observation_payloads."""
+        deploy_mod = self._fresh_deploy_mod()
+        mocks = self._patch_all(monkeypatch, deploy_mod, tmp_path)
+        monkeypatch.setattr(deploy_mod, "trustyai_client", MagicMock())
+
+        dataset = tmp_path / "inputs" / "d.csv"
+        dataset.parent.mkdir(parents=True, exist_ok=True)
+        dataset.write_text("1.0\n2.0\n3.0\n")
+        pbtxt = tmp_path / "config.pbtxt"
+        pbtxt.write_text('name: "m"\nmax_batch_size: 0\n')
+
+        batch = self._STUB_PAYLOAD
+        mocks["request_generator"].iter_requests.return_value = iter(
+            [("m", batch), ("m", batch), ("m", batch)]
+        )
+        mocks["inference"].send_observation_payloads.return_value = 3
+
+        model = {
+            "name": "m",
+            "inference_dataset": "inputs/d.csv",
+            "inference_config_path": str(pbtxt),
+            "bias_monitoring": {"observations": {"batch_size": 50}},
+        }
+        deploy_mod._configure_bias_monitoring(
+            model, "http://route", "token", "test-ns", str(tmp_path), 300
+        )
+
+        # Observations came from the dataset generator, batched at batch_size=50.
+        mocks["request_generator"].iter_requests.assert_called_once()
+        assert mocks["request_generator"].iter_requests.call_args.kwargs["batch_size"] == 50
+
+        # The generated payloads were posted; the file-based sender was not used.
+        mocks["inference"].send_observation_payloads.assert_called_once()
+        sent = mocks["inference"].send_observation_payloads.call_args[0][2]
+        assert len(sent) == 3
+        mocks["inference"].send_observations.assert_not_called()
 
     # ------------------------------------------------------------------
     # model_uri variant: PVC — S3 secret skipped, storageUri injected

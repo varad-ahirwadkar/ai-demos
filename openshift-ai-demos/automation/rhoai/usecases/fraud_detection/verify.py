@@ -9,7 +9,11 @@ from typing import Any
 from rhoai.platform import inference, trustyai, trustyai_client
 from rhoai.platform import verify as platform_verify
 from rhoai.platform.inference import EndpointUnreachable
-from rhoai.usecases.fraud_detection.assets import ModelResult, render_curl_command_file
+from rhoai.usecases.fraud_detection.assets import (
+    ModelResult,
+    render_curl_command_file,
+    validate_model_config,
+)
 from rhoai.usecases.fraud_detection.deploy import _resolve_request_artifacts, print_summary
 from rhoai.utils.logger import get_logger
 from rhoai.utils.progress import elapsed_timer, header_step, step
@@ -57,6 +61,10 @@ def verify(config: dict[str, Any]) -> None:
 
     trustyai_name  = dep_cfg.get("trustyai_service_name",    "trustyai-service")
     trustyai_sa    = dep_cfg.get("trustyai_service_account", "trustyai-user")
+
+    # Fail fast on ambiguous inference-input configuration, matching deploy().
+    for model in models:
+        validate_model_config(model)
 
     log.info("Verifying Fraud Detection in '%s'", namespace)
 

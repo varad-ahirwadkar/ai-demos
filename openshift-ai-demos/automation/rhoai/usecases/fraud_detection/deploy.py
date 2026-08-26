@@ -28,6 +28,13 @@ model_uri behaviour (per model entry in deployment.models):
 bias_monitoring behaviour (per model entry in deployment.models):
     absent / null         — model is deployed without any TrustyAI monitoring
     present               — full monitoring workflow is executed after TrustyAI is ready
+
+inference input modes (validated by assets.validate_model_config, mutually exclusive):
+    inference_request     — JSON mode: file used as-is for the smoke test;
+                            observations declared under bias_monitoring.observations.path/files
+    inference_dataset     — dataset mode: single source of truth; smoke test is the first
+                            generated request, observations are the whole dataset batched by
+                            bias_monitoring.observations.batch_size. Requires a config.pbtxt.
 """
 
 import json
@@ -41,10 +48,12 @@ from rhoai.platform.inference import EndpointUnreachable
 from rhoai.usecases.fraud_detection import assets
 from rhoai.usecases.fraud_detection.assets import (
     ModelResult,
+    observation_batch_size,
     render_curl_command,
     render_curl_command_file,
     resolve_inference_dataset,
     resolve_inference_request,
+    validate_model_config,
 )
 from rhoai.utils import yaml_io
 from rhoai.utils.logger import get_logger
@@ -76,54 +85,66 @@ _COMPONENT_DISPLAY: dict[str, str] = {
 }
 
 
+def _resolve_pbtxt(model: dict[str, Any]) -> Path:
+    """Return the Triton ``config.pbtxt`` path for a dataset-mode model.
+
+    ``inference_config_path`` is the pbtxt used only for request generation.  It
+    is separate from ``config_path`` (the staging pbtxt for model_path
+    deployments) so that model_uri models using ``inference_dataset`` can supply
+    a pbtxt without triggering the model_uri/config_path mutual-exclusivity
+    guard.  Falls back to ``config_path`` for model_path deployments.
+
+    The path is used as given (absolute or CWD-relative) — it is not resolved
+    against ``repo_root``, matching how ``config_path`` is supplied elsewhere.
+    """
+    config_path = model.get("inference_config_path", "") or model.get("config_path", "")
+    if not config_path:
+        raise ValueError(
+            f"Model '{model.get('name', '?')}': 'inference_dataset' requires "
+            "'inference_config_path' (or 'config_path') pointing to a Triton config.pbtxt."
+        )
+    return Path(config_path)
+
+
 def _resolve_request_artifacts(
     model: dict[str, Any],
     repo_root: str,
 ) -> tuple[Path, Path | None, dict[str, Any], str]:
     """Resolve request path, schema source, payload, and reproducible curl command.
 
-    Precedence:
-      1. user-provided inference_request
-      2. generated request from inference_dataset + config_path
+    Mode is selected by :func:`validate_model_config` upstream:
+
+      * JSON mode (``inference_request``) — the file is used as the smoke-test
+        request (JSON verbatim, CSV converted with the model's schema).
+      * Dataset mode (``inference_dataset``) — the smoke-test request is the
+        first request produced by ``iter_requests(..., batch_size=1)`` (the
+        first row/element, never the full observation batch), written out as
+        ``inputs/<name>_generated_request.json``.  Smoke and observations share
+        this generator so the dataset is the single source of truth.
     """
     name = model["name"]
     request_path = resolve_inference_request(model, repo_root)
-    schema_source = _resolve_schema_source(model, repo_root)
-    input_name, datatype = inference._read_tensor_schema(schema_source)
 
     if request_path is not None:
+        schema_source = _resolve_schema_source(model, repo_root)
         if request_path.suffix.lower() == ".json":
             payload = inference._load_request_payload(request_path)
         else:
+            input_name, datatype = inference._read_tensor_schema(schema_source)
             payload = inference._load_request_payload(
                 request_path,
                 input_name=input_name,
                 datatype=datatype,
             )
     else:
+        # Dataset mode — the generated JSON request carries its own schema, so
+        # no separate schema_source is needed for the smoke test.
+        schema_source = None
         dataset_path = resolve_inference_dataset(model, repo_root)
-        # inference_config_path is the pbtxt used only for request generation.
-        # It is separate from config_path (which is the staging pbtxt for
-        # model_path deployments) so that model_uri models that use
-        # inference_dataset can supply a pbtxt without triggering the
-        # model_uri/config_path mutual-exclusivity guard.
-        # Falls back to config_path for backwards compatibility.
-        config_path = model.get("inference_config_path", "") or model.get("config_path", "")
-        if not config_path:
-            raise ValueError(
-                f"Model '{name}' requires 'inference_config_path' (or 'config_path') "
-                "when inference_dataset is used without inference_request."
-            )
-        if dataset_path.suffix.lower() == ".json":
-            # JSON dataset: use iter_requests which handles both single-envelope
-            # and array-of-envelopes formats, and supports multi-tensor models.
-            _, payload = next(request_generator.iter_requests(Path(config_path), dataset_path))
-        else:
-            # CSV dataset: single-tensor models only.
-            _, payload = request_generator.build_request_from_csv_file(
-                Path(config_path),
-                dataset_path,
-            )
+        pbtxt = _resolve_pbtxt(model)
+        _, payload = next(
+            request_generator.iter_requests(pbtxt, dataset_path, batch_size=1)
+        )
         inputs_dir = Path(repo_root) / "automation" / "rhoai" / "usecases" / "fraud_detection" / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=True)
         request_path = inputs_dir / f"{name}_generated_request.json"
@@ -420,13 +441,25 @@ def _configure_bias_monitoring(
 
     model_id = model["name"]
 
-    # 1+2 — resolve files, validate locally, send to model endpoint.
+    # 1+2 — resolve observations, validate locally, send to model endpoint.
+    # Dataset mode derives batched observations from inference_dataset; JSON mode
+    # sends the explicitly-declared observation files.  Mode was validated upstream.
     with step("Sending observations") as s:
-        obs_files  = _resolve_observation_files(cfg["observations"], repo_root)
-        total_sent = inference.send_observations(
-            model_id, namespace, obs_files,
-            schema_source=_resolve_schema_source(model, repo_root),
-        )
+        if model.get("inference_dataset"):
+            dataset_path = resolve_inference_dataset(model, repo_root)
+            pbtxt        = _resolve_pbtxt(model)
+            payloads     = [
+                req for _, req in request_generator.iter_requests(
+                    pbtxt, dataset_path, batch_size=observation_batch_size(model)
+                )
+            ]
+            total_sent = inference.send_observation_payloads(model_id, namespace, payloads)
+        else:
+            obs_files  = _resolve_observation_files(cfg["observations"], repo_root)
+            total_sent = inference.send_observations(
+                model_id, namespace, obs_files,
+                schema_source=_resolve_schema_source(model, repo_root),
+            )
 
     # 3 — wait for TrustyAI to ingest the observations.
     with step(f"Waiting for ingestion ({total_sent} rows)") as s:
@@ -711,6 +744,10 @@ def deploy(config: dict[str, Any]) -> None:
     trustyai_sa      = dep_cfg.get("trustyai_service_account", "trustyai-user")
     trustyai_timeout = config["timeouts"].get("trustyai_ready", 300)
     staging_timeout  = config["timeouts"].get("staging_ready", 120)
+
+    # Fail fast on ambiguous inference-input configuration before touching the cluster.
+    for model in models:
+        validate_model_config(model)
 
     log.info("Deploying Fraud Detection")
 

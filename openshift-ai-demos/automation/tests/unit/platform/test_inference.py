@@ -751,6 +751,54 @@ class TestSendObservationsSchemaSource:
         assert captured[0]["inputs"][0]["datatype"] == "FP64"
 
 
+class TestSendObservationPayloads:
+    """send_observation_payloads posts in-memory batches generated from a dataset."""
+
+    def _env(self, rows: int) -> dict:
+        return {
+            "inputs": [{
+                "name": "x", "shape": [rows, 1], "datatype": "FP64",
+                "data": [[float(i)] for i in range(rows)],
+            }]
+        }
+
+    def _patch(self, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+        captured: list[dict] = []
+        monkeypatch.setattr(
+            "rhoai.platform.inference.get_inference_url",
+            lambda *_: "https://model.example.com",
+        )
+
+        def capture_post(url, body):
+            captured.append(body)
+            return ({"outputs": []}, 0.01, 200)
+
+        monkeypatch.setattr("rhoai.platform.inference._http_post", capture_post)
+        return captured
+
+    def test_posts_each_payload_and_sums_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = self._patch(monkeypatch)
+        payloads = [self._env(50), self._env(50), self._env(23)]
+        total = inference.send_observation_payloads("model", "ns", payloads)
+        assert total == 123
+        assert len(captured) == 3
+        assert captured == payloads
+
+    def test_raises_on_empty_payloads(self) -> None:
+        with pytest.raises(ValueError, match="must not be empty"):
+            inference.send_observation_payloads("model", "ns", [])
+
+    def test_validates_before_any_post(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured = self._patch(monkeypatch)
+        # Second payload has a shape[0]/len(data) mismatch — must fail with no POSTs.
+        bad = {"inputs": [{"name": "x", "shape": [5, 1], "datatype": "FP64", "data": [[1.0]]}]}
+        with pytest.raises(ValueError, match="does not match len"):
+            inference.send_observation_payloads("model", "ns", [self._env(2), bad])
+        assert captured == []
+
+
 # ---------------------------------------------------------------------------
 # verify_triton_inference — schema_source param
 # ---------------------------------------------------------------------------

@@ -36,13 +36,15 @@ deployment:
       model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
       inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
 
+    # Dataset mode: inference_dataset is the single source of truth for the
+    # smoke test. config_path (the Triton pbtxt) doubles as the request schema.
+    # inference_request and inference_dataset are mutually exclusive — set one.
     # - name: demo-loan-nn-onnx-alpha
     #   model_path:  /Users/varad/Desktop/automation-framework/model.onnx
     #   config_path: /Users/varad/Desktop/automation-framework/config.pbtxt
     #   pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
-    #   pvc_size:    1Gi  
+    #   pvc_size:    1Gi
     #   inference_dataset: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.csv
-    #   #inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
 
     # - name: upi-fraud-detection
     #   model_path:  /Users/varad/Downloads/upi-fraud-detection/model.onnx
