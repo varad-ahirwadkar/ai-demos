@@ -485,7 +485,7 @@ Orchestrates the full deployment in a documented, numbered sequence:
 
 1–3. Call `prepare.bootstrap_platform(config)` — validates the cluster,
      installs the operator, and applies DSC/DSCI.
-4.   Apply S3 credentials (skipped for `pvc://`, `hf://`, `oci://` URIs).
+4.   Apply S3 credentials (skipped for `pvc://` URIs).
 5.   For each model in `deployment.models`: apply Triton `ServingRuntime`
      (via OpenShift Template), apply `InferenceService`, wait for `Ready`,
      run smoke-test inference.

@@ -38,11 +38,8 @@ deployment:
 
   # List of models to deploy. Each entry is an independent InferenceService.
   # For bias monitoring, supply two entries (e.g. baseline + candidate).
-  # model_uri formats:
-  #   pvc://<claim-name>/<path>   — model pre-loaded on a PersistentVolumeClaim
-  #   hf://<org>/<repo>           — model downloaded directly from Hugging Face
-  #   oci://<registry>/<image>    — model stored as an OCI artifact
-  #   <s3-path>                   — plain S3 path; also fills shared/s3-secret.yaml values
+  # model_uri: reference a model already staged on a PersistentVolumeClaim.
+  #   pvc://<claim-name>/<path>   — model pre-loaded on a PVC
   models:
     - name: fraud-detection
       model_uri: pvc://fraud-model-pvc/models
