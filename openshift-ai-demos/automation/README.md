@@ -1,72 +1,58 @@
 # rhoai-automation
 
-**Install Red Hat OpenShift AI (RHOAI) and deploy working use cases on OpenShift
-with a handful of commands** — instead of a manual, multi-step procedure.
+Deploy Red Hat OpenShift AI (RHOAI) and AI use cases on OpenShift with a handful
+of commands instead of a manual, multi-step process.
 
 The `rhoai` CLI validates your cluster, installs the operator, configures the
-platform, deploys a model, runs a smoke test, and (optionally) wires up
-TrustyAI bias monitoring — each step waits for health before moving on.
+platform, deploys a use case, and waits for each step to become healthy before
+continuing.
 
 ### Key capabilities
 
-- **One-command platform setup** — operator install, DSCInitialization, and
-  DataScienceCluster components in a single `rhoai platform setup`.
-- **End-to-end use cases** — `deploy` / `verify` / `cleanup` a complete solution
-  (e.g. Fraud Detection) that bootstraps the platform if needed.
-- **Built-in smoke tests** — every deploy sends a real inference request and
-  reports the result.
-- **TrustyAI bias monitoring** — send observations, apply name mappings, and
-  schedule fairness (SPD) monitors automatically.
-- **Flexible inference inputs** — supply a pre-built request or a raw dataset
-  and let the framework generate requests for you.
+- **One-command platform setup:** Install the RHOAI operator, configure the
+  platform, and wait for it to become ready with a single
+  `rhoai platform setup`.
+- **End-to-end use case deployment:** Deploy, verify, and clean up complete AI
+  use cases (for example, Fraud Detection), automatically bootstrapping the
+  platform when needed.
+- **Flexible inference inputs:** Run inference using either pre-built requests or CSV datasets. The framework automatically generates inference requests from the dataset.
 
 ### Supported platforms
 
 | | |
 |---|---|
-| OpenShift | OCP 4.20+ |
+| OpenShift | OCP 4.19+ |
 | Architectures | `ppc64le`, `x86_64` |
 | Python | ≥ 3.12 |
 
+> **The framework orchestrates your manifests and models — it does not ship
+> them.** It applies existing YAML in dependency order and waits for health.
+> Every use case requires **external assets you provide** (a model repository, a
+> Triton `config.pbtxt`, and a dataset or request payload); each use-case guide
+> lists exactly what it needs. See [Deploy a use case](#3-deploy-a-use-case).
 ---
 
 ## How it works
 
-The user journey from a fresh config to a monitored, running model:
-
+rhoai usecase deploy automatically bootstraps the platform when needed, allowing a new environment to go from configuration to a deployed and verified use case with a single workflow.
 ```mermaid
 flowchart LR
-    A([Configure<br/>my-config.yaml]) --> B[Deploy<br/>rhoai usecase deploy]
-    B --> C{Smoke test<br/>passes?}
-    C -->|No| T[Troubleshoot<br/>--log-level DEBUG]
-    T --> B
-    C -->|Yes| D{Enable<br/>TrustyAI?}
-    D -->|No| F([Done ✅])
-    D -->|Yes| E[TrustyAI setup<br/>observations + SPD monitors]
-    E --> V[Verify & monitor<br/>rhoai usecase verify]
-    V --> F
+    A([Configure<br/>my-config.yaml]) --> B[Platform setup<br/>if needed]
+    B --> C[Deploy<br/>Use case]
+    C --> D[Verify]
+    D --> E{Optional<br/>Capabilities}
+    E -->|Deploy| F[Configure]
+    E -->|Skip| G([Ready ✅])
+    F --> G
 ```
-
-`deploy` bootstraps the platform automatically if it isn't already installed, so
-a first run goes straight from config to a running, smoke-tested model. For the
-layered architecture (`cli → platform → ocp → utils`), see
-[`docs/README.md`](docs/README.md#2-architecture).
 
 ---
 
-## Quick Start
+## Getting Started
 
-### Prerequisites
-
-| Requirement | Check |
-|---|---|
-| `oc` CLI, logged in | `oc login <cluster-url>` |
-| Cluster-admin permissions | Required to install the operator (and, for TrustyAI, to write to `openshift-monitoring`) |
-| A `ReadWriteOnce` StorageClass | `oc get storageclass` |
-| Internet access from nodes | Must reach `quay.io/powercloud` (Triton runtime) |
-
-> Model deployments request cluster resources on a worker node — check capacity
-> with `rhoai platform inspect`. See a use case's guide for its exact footprint.
+This section gets the CLI installed and confirms it works. The install steps run
+straight from the repository with **no cluster and no external assets**.
+Deploying an actual model needs both.
 
 ### 1. Install
 
@@ -82,34 +68,45 @@ pip install -e openshift-ai-demos/automation   # add "[dev]" to also run tests
 rhoai --help
 ```
 
-### 2. Deploy your first model
+### 2. Confirm the tool works
 
-The examples below use the bundled **fraud-detection** use case — see its
-[full guide](rhoai/usecases/fraud_detection/README.md) for configuration,
-datasets, and expected output. Point `repo_root` in the config at the
-**absolute** path of your `openshift-ai-demos` directory, then:
+These commands are read-only, they take no assets and (aside from `inspect`)
+touch no cluster:
 
 ```bash
-rhoai usecase deploy fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
+rhoai usecase list        # every use case registered on your install
+rhoai platform inspect    # cluster info: version, storage classes, capacity (needs oc login)
 ```
 
-This bootstraps the platform (if needed), stages the model, deploys the
-InferenceService, and runs a smoke-test inference request.
+`usecase list` is the entry point to everything you can deploy.
 
-### 3. Verify
+### 3. Deploy a use case
+
+Deploying a use case requires external assets that are not included in this repository. Depending on the use case, these may include a model repository, a Triton config.pbtxt, and an inference input such as a request payload or dataset. 
+
+Before you can run a
+`deploy` you'll need:
+
+| Requirement | Check |
+|---|---|
+| `oc` CLI, logged in | `oc login <cluster-url>` |
+| Cluster-admin permissions | Required to install the operator (and, for TrustyAI, to write to `openshift-monitoring`) |
+| A `ReadWriteOnce` StorageClass | `oc get storageclass` |
+| Internet access from nodes | Must reach the registries your use case pulls runtime/model images from |
+| The use case's external assets | Listed in that use case's guide |
+
+> Model deployments request cluster resources on a worker node, check capacity
+> with `rhoai platform inspect`. Each use-case guide states its exact footprint.
+
+Pick a use case from the **[use-case index](rhoai/usecases/README.md)**, follow
+its guide to assemble the assets and write a config, then run the standard
+lifecycle. The commands are the same for every use case (`<name>` from
+`rhoai usecase list`):
 
 ```bash
-rhoai usecase verify fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
-```
-
-### 4. Clean up
-
-```bash
-# Remove use-case resources only
-rhoai usecase cleanup fraud-detection -c openshift-ai-demos/automation/config-fraud-detection.yaml
-
-# ...or also remove the platform (DSC/DSCI)
-rhoai usecase cleanup fraud-detection --delete-platform -c openshift-ai-demos/automation/config-fraud-detection.yaml
+rhoai usecase deploy  <name> -c my-config.yaml   # bootstrap platform + deploy + smoke test
+rhoai usecase verify  <name> -c my-config.yaml   # re-check health
+rhoai usecase cleanup <name> -c my-config.yaml   # tear down
 ```
 
 > **Something failed?** Re-run any command with `--log-level DEBUG` placed
@@ -120,31 +117,21 @@ rhoai usecase cleanup fraud-detection --delete-platform -c openshift-ai-demos/au
 
 ## Common Workflows
 
-The same `deploy` / `verify` / `cleanup` commands apply to every registered use
-case. `fraud-detection` is the reference use case shipped today. Pick the path
-that matches your goal:
+Every registered use case shares the same `deploy` / `verify` / `cleanup`
+commands; what differs is the config each one accepts. Optional features (such
+as TrustyAI bias monitoring) are turned on through
+configuration, they do not add separate commands.
 
-| I want to… | How | Guide |
-|---|---|---|
-| Deploy a model and smoke-test it | `rhoai usecase deploy <name>` | [Use cases](rhoai/usecases/README.md) |
-| Deploy **with** bias monitoring | Enable the `trustyai` component + add a `bias_monitoring:` block | [Fraud Detection → TrustyAI](rhoai/usecases/fraud_detection/README.md#trustyai-configuration) · [concepts](docs/bias-readme.md) |
-| Generate inference requests from a raw dataset | Set `inference_dataset:` on the model | [Fraud Detection → inference input modes](rhoai/usecases/fraud_detection/README.md#inference-input-modes) |
-| Check health / observe metrics | `rhoai usecase verify` · `rhoai platform status` | [Command reference](#command-reference) |
+- **Standard deployment:** deploy → smoke-test → verify → clean up. The
+  framework applies each model's manifests in dependency order and waits for
+  health.
+- **Bias monitoring:** when a use case's config enables it, deploy sends
+  observations, applies name mappings, and schedules fairness (SPD) monitors,
+  then reports each result.
 
-- **Standard deployment** — deploy → smoke-test → verify → clean up, the
-  [Quick Start](#quick-start) flow. The framework applies each model's manifests
-  in dependency order and waits for health.
-- **Bias monitoring** — during deploy the framework sends observations, applies
-  name mappings, and schedules fairness (SPD) monitors, then reports each result.
-- **Dataset-driven inference** — point a model at a raw dataset and the framework
-  generates both the smoke-test request and TrustyAI observations from it.
-- **Monitoring & verification** — `verify` re-checks health and re-runs the smoke
-  test; `platform status` reports operator and DSC-component health.
-
-Configuration for each of these — sample YAML, field references, datasets, and
-expected output — lives in the use-case guides, indexed under
-[use cases](rhoai/usecases/README.md) (e.g. the
-[Fraud Detection guide](rhoai/usecases/fraud_detection/README.md)).
+Configuration for each of these — sample YAML, field references, required assets,
+and expected output, lives in the use-case guides, indexed under
+[use cases](rhoai/usecases/README.md).
 
 ---
 
@@ -181,48 +168,10 @@ Deploys customer-facing solutions built on the platform layer.
 | `rhoai usecase cleanup <name>` | Remove use-case resources (`--delete-platform` also removes DSC/DSCI) |
 
 Use-case index and shared config concepts:
-**[`rhoai/usecases/README.md`](rhoai/usecases/README.md)**. Worked example,
-sample output, and config reference:
-**[Fraud Detection guide](rhoai/usecases/fraud_detection/README.md)**.
+**[`rhoai/usecases/README.md`](rhoai/usecases/README.md)**.
 
 ---
 
-## Documentation
-
-| Guide | Contents |
-|---|---|
-| [Architecture & developer docs](docs/README.md) | Layering, project structure, configuration model, testing, adding a use case |
-| [Platform CLI reference](rhoai/platform/README.md) | Every `rhoai platform` command in detail |
-| [Use cases](rhoai/usecases/README.md) | Use-case index, lifecycle, and shared config concepts |
-| [Fraud Detection](rhoai/usecases/fraud_detection/README.md) | Full guide — config reference, inference input modes, TrustyAI, deploy/verify/cleanup |
-| [TrustyAI bias monitoring](docs/bias-readme.md) | Observations, name mapping, SPD & identity monitors |
-| [Configuration](docs/README.md#5-configuration) | How config is resolved and every supported key |
-| [Troubleshooting](docs/troubleshooting.md) | Full cause/fix reference, including timeout tuning |
-
-**Configuration in brief:** values are deep-merged from three sources, highest
-priority first — **CLI flags** → **`--config` YAML** → bundled
-**`defaults.yaml`**. A user config file only needs the keys it overrides. Full
-details in [Configuration](docs/README.md#5-configuration).
-
----
-
-## Contributing
-
-```bash
-# From the repo root, with the venv active:
-pip install -e "openshift-ai-demos/automation[dev]"   # pulls in pytest, pytest-mock, ruff
-
-cd openshift-ai-demos/automation
-pytest                       # all tests — no live cluster required (Kubernetes I/O is mocked)
-ruff check rhoai/            # lint (line-length 100)
-```
-
-Architecture invariants, layering rules, and a worked template for adding a new
-use case live in [`docs/README.md`](docs/README.md). Contributions require
-agreement to the Developer Certificate of Origin — see
-[`DCO.txt`](../../DCO.txt).
-
----
 
 ## Troubleshooting / FAQ
 
@@ -240,3 +189,5 @@ for causes and detailed fixes.
 | Any command fails with no clear error | Re-run with `rhoai --log-level DEBUG <subcommand>` |
 
 **→ [Full troubleshooting guide](docs/troubleshooting.md)**
+</content>
+</invoke>

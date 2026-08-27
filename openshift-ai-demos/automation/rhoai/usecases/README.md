@@ -1,15 +1,11 @@
 # rhoai usecases
 
-A **use case** is a self-contained, customer-facing solution built on top of
-the [platform layer](../platform/README.md) — each one owns a `deploy` /
-`verify` / `cleanup` sequence and is invoked through `rhoai usecase`.
+A use case is a self-contained solution built on top of the [platform layer](../platform/README.md). Each use case defines its own `deploy` /
+`verify` / `cleanup` lifecycle and is managed through `rhoai usecase`.
 
-`deploy` checks whether the RHOAI platform is already in the desired state and
-bootstraps it if needed — running it against a completely fresh cluster is
-expected to work end to end.
+`deploy` ensures the required RHOAI platform components are available, automatically bootstrapping the platform when needed. Deploying to a fresh cluster is therefore a supported workflow.
 
-This page is an **index**. For how to configure and run a specific use case,
-follow the link in [Available use cases](#available-use-cases).
+This page is an index. To prepare the required assets, configure, and deploy a specific use case, follow the corresponding guide in [Available use cases](#available-use-cases).
 
 ---
 
@@ -23,10 +19,6 @@ Every use case follows the same three-step lifecycle:
 | 2. Verify | `rhoai usecase verify <name> -c config.yaml` |
 | 3. Clean up | `rhoai usecase cleanup <name> -c config.yaml` |
 
-Optional features such as TrustyAI bias monitoring extend the behavior of each
-step through configuration — they do not introduce a separate workflow. Use
-`rhoai usecase list` to see everything registered on your install.
-
 ---
 
 ## Available use cases
@@ -39,28 +31,21 @@ step through configuration — they do not introduce a separate workflow. Use
 
 ## Common configuration concepts
 
-Every use case is driven by a YAML config passed with `--config`/`-c`. Values
-are deep-merged from CLI flags → `--config` file → bundled defaults; a config
-file only needs the keys it overrides. Full details:
-[Configuration](../../docs/README.md#5-configuration).
+Every use case uses a YAML configuration file passed with --config (or -c). Settings from the command line override your config file, which overrides the built-in defaults.
 
-Config is split into two layers:
+Configuration is split into two layers:
 
-| Layer | Keys | Shared across use cases? |
+| Layer | Purpose | Shared across use cases? |
 |---|---|---|
-| **Platform** | `repo_root`, `operator`, `components`, `storage`, `timeouts` | Yes — same meaning everywhere |
-| **Deployment** | everything under `deployment:` (e.g. `namespace`, `models`) | No — each use case defines its own schema, documented in its own guide |
+| **Platform** | Platform settings such as `repo_root`, operator, components, storage, and timeouts | Yes |
+| **Deployment** | Use case specific settings, such as namespaces, models, and other deployment options | No |
 
-`repo_root` must be an **absolute** path to the `openshift-ai-demos` directory
-(`~` is not expanded). Everything a use case applies is resolved relative to it.
+`repo_root` must be an **absolute** path to the `openshift-ai-demos` directory.
+Each use case guide documents the deployment settings it supports.
 
 ---
 
 ## Adding a new use case
 
 A use case is a package under `rhoai/usecases/<name>/` exposing `deploy` /
-`verify` / `cleanup`, plus an `assets.py` and one entry in `registry.py`. For the
-internal structure and a worked template, see
-[Adding a New Use Case](../../docs/README.md#10-adding-a-new-use-case). When you
-add one, give it a `README.md` in its directory and link it from the
-[Available use cases](#available-use-cases) table above.
+`verify` / `cleanup`, plus an `assets.py` and one entry in `registry.py`.

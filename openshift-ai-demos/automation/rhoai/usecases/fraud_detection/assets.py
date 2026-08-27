@@ -155,24 +155,31 @@ class ModelResult:
     unreachable:        EndpointUnreachable | None = field(default=None, repr=False)
 
 
-def resolve_inference_request(model: dict[str, Any], repo_root: str) -> Path | None:
-    """Return the absolute Path to this model's inference request file, if set."""
-    rel = model.get("inference_request", "")
-    if not rel:
+def resolve_inference_request(model: dict[str, Any]) -> Path | None:
+    """Return the Path to this model's inference request file, if set.
+
+    The configured ``inference_request`` is used as given — supply an absolute
+    path (matching how ``model_path`` / ``config_path`` are supplied).
+    """
+    path = model.get("inference_request", "")
+    if not path:
         return None
-    return Path(repo_root) / rel
+    return Path(path)
 
 
+def resolve_inference_dataset(model: dict[str, Any]) -> Path:
+    """Return the Path to the dataset used to auto-generate a request.
 
-def resolve_inference_dataset(model: dict[str, Any], repo_root: str) -> Path:
-    """Return the absolute Path to the dataset used to auto-generate a request."""
-    rel = model.get("inference_dataset", "")
-    if not rel:
+    The configured ``inference_dataset`` is used as given — supply an absolute
+    path (matching how ``model_path`` / ``config_path`` are supplied).
+    """
+    path = model.get("inference_dataset", "")
+    if not path:
         raise ValueError(
             f"Model '{model.get('name', '?')}' has no inference_request or inference_dataset configured. "
-            "Set inference_request: <json/csv path> or inference_dataset: <csv path relative to repo_root>."
+            "Set inference_request: <absolute json/csv path> or inference_dataset: <absolute csv path>."
         )
-    return Path(repo_root) / rel
+    return Path(path)
 
 
 def observation_batch_size(model: dict[str, Any]) -> int:

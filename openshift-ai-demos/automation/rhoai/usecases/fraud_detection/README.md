@@ -1,18 +1,18 @@
 # Fraud Detection
 
-A use case that deploys one or more fraud-detection models on the **Triton**
-serving runtime, each fronted by a KServe `InferenceService`, with **optional
-TrustyAI bias monitoring**. For the generic use-case lifecycle and shared
-concepts, see the [use-case index](../README.md).
+Deploy one or more fraud detection models on Red Hat OpenShift AI using the Triton serving runtime, with optional TrustyAI bias monitoring. This guide covers the required assets, configuration, deployment, verification, and cleanup steps. 
+
+For the generic use case lifecycle and shared concepts, see the [use-case index](../README.md).
 
 ## Contents
 
 - [When should I use this?](#when-should-i-use-this)
+- [Required assets](#required-assets)
 - [Architecture](#architecture)
 - [Configuration reference](#configuration-reference)
   - [Model configuration](#model-configuration)
   - [Providing the model](#providing-the-model)
-  - [Inference input modes](#inference-input-modes)
+  - [Inference inputs](#inference-inputs)
   - [TrustyAI configuration](#trustyai-configuration)
 - [Deployment walkthrough](#deployment-walkthrough)
 - [Verification](#verification)
@@ -23,38 +23,34 @@ concepts, see the [use-case index](../README.md).
 
 ## When should I use this?
 
-Use this to stand up a **predictive fraud-detection model** on OpenShift AI and,
-optionally, demonstrate **fairness monitoring** — for example running a biased
-and an unbiased model side by side and comparing their Statistical Parity
-Difference (SPD) over time.
+Use this use case to deploy one or more predictive fraud detection models on OpenShift AI and, optionally, demonstrate TrustyAI fairness monitoring. For example, you can deploy a biased and an unbiased model side by side and compare their Statistical Parity Difference (SPD) over time.
 
 **Prerequisites**
 
-- The framework installed and `oc` logged in to a cluster — see the
-  [main README](../../../README.md#quick-start).
-- Cluster-admin permissions (needed to install the operator, and — for TrustyAI
-  — to write to the `openshift-monitoring` namespace).
+- For framework installation, cluster access, and platform requirements, see the [Getting Started](../../../README.md#getting-started) guide.
 - **Compute:** each model deployment requests **2 CPU / 8 GiB** on a worker
   node. Confirm capacity with `rhoai platform inspect`.
-- A model, either as local files or already staged on a PVC — see
-  [Providing the model](#providing-the-model).
-
-**Typical workflow**
-
-```bash
-rhoai usecase deploy  fraud-detection -c config-fraud-detection.yaml   # deploy + smoke test
-rhoai usecase verify  fraud-detection -c config-fraud-detection.yaml   # re-check health
-rhoai usecase cleanup fraud-detection -c config-fraud-detection.yaml   # tear down
-```
-
-Two ready-to-use config files are provided:
-
-| Config file | When to use |
-|---|---|
-| [`config-fraud-detection.yaml`](../../../config-fraud-detection.yaml) | Model serving only — no TrustyAI |
-| [`config-fraud-detection-trustyai.yaml`](../../../config-fraud-detection-trustyai.yaml) | Model serving **+** TrustyAI bias monitoring (biased and unbiased models side by side) |
 
 ---
+
+## Required assets
+
+This use case requires external assets that are not included in the framework. Assemble them before deploying.
+
+| Asset | What it is | Where it's used |
+|---|---|---|
+| Model file (e.g. `model.onnx`) | The trained fraud-detection model, in a Triton-supported format | Staged to a PVC via `model_path` or a pre-loaded `model_uri` |
+| Triton `config.pbtxt` | The model's Triton configuration | `config_path`  |
+| Inference input | Either a pre-built KServe v2 request **or** a raw CSV/JSON dataset | `inference_request` **or** `inference_dataset`  |
+
+All asset paths (`model_path`, `config_path`, `inference_request`,
+`inference_dataset`) are **absolute** local paths. Set
+`repo_root` to the **absolute** path of your `openshift-ai-demos` directory; it
+is used to locate the framework's own manifests and generated files, not your
+asset paths.
+
+---
+
 
 ## Architecture
 
@@ -86,10 +82,13 @@ loads the model from the standard repository layout:
 
 ## Configuration reference
 
-Config keys for this use case live under `deployment:` in your YAML file.
-Platform-level keys (`operator`, `components`, `storage`, `timeouts`) and how
-config is merged are covered in
-[Configuration](../../../docs/README.md#5-configuration). A minimal example:
+Start with `config-fraud-detection.yaml`. If you want to enable TrustyAI bias monitoring, see `config-fraud-detection-trustyai.yaml`.
+
+| Config file | When to use |
+|---|---|
+| [`config-fraud-detection.yaml`](../../../config-fraud-detection.yaml) | Deploy the Fraud Detection use case without TrustyAI |
+| [`config-fraud-detection-trustyai.yaml`](../../../config-fraud-detection-trustyai.yaml) | Deploy the Fraud Detection use case with TrustyAI bias monitoring (biased and unbiased models side by side). |
+
 
 ```yaml
 # config-fraud-detection.yaml
@@ -107,8 +106,11 @@ deployment:
   namespace: test-fraud
   models:
     - name: upi-fraud-detection
-      model_uri: pvc://fraud-model-pvc/upi-fraud-detection
-      inference_request: automation/rhoai/usecases/fraud_detection/inputs/upi-fraud-detection.json
+      model_path:  /absolute/path/to/model.onnx
+      config_path: /absolute/path/to/config.pbtxt
+      pvc_name:    my-fraud-model-pvc   
+      pvc_size:    1Gi
+      inference_request: /absolute/path/to/inference request
 ```
 
 ### Model configuration
@@ -118,43 +120,34 @@ Each entry under `deployment.models` defines one independent model deployment:
 | Field | Required | Description |
 |---|---|---|
 | `name` | ✔ | Kubernetes resource name for the `InferenceService` and `ServingRuntime` |
-| `model_uri` | ✦ | Reference a model **already staged** on a PVC — see [`model_uri` formats](#model_uri-formats) |
+| `model_uri` | ✦ | Reference a model **already staged** on a PVC, currently only `pvc://<claim>/<path>` is supported. |
 | `model_path` + `config_path` | ✦ | Local model file + Triton `config.pbtxt`; the framework creates the PVC and stages the Triton layout for you |
 | `pvc_name` | | Local-staging only — PVC to create/reuse (defaults to `<name>-pvc`) |
 | `pvc_size` | | Local-staging only — PVC size (defaults to `1Gi`) |
-| `inference_request` | ✱ | Path to a pre-built KServe v2 JSON payload used for post-deploy validation, relative to `repo_root` |
-| `inference_dataset` | ✱ | Path to a raw CSV/JSON dataset the framework generates requests from, relative to `repo_root` |
+| `inference_request` | ✱ |  Absolute path to a pre-built KServe v2 JSON payload used for post-deploy validation |
+| `inference_dataset` | ✱ |  Absolute path to a raw CSV/JSON dataset the framework generates requests from |
 | `bias_monitoring` | | TrustyAI bias monitoring config — see [TrustyAI configuration](#trustyai-configuration) |
 
 > **✦ Model source** — supply **either** `model_uri` **or** both `model_path`
-> and `config_path` (mutually exclusive) — see [Providing the model](#providing-the-model).
+> and `config_path`.
 >
 > **✱ Inference input** — supply **exactly one** of `inference_request` or
-> `inference_dataset` — see [Inference input modes](#inference-input-modes).
+> `inference_dataset`.
 
 Multiple entries deploy multiple models in sequence, each with its own
-`ServingRuntime` and `InferenceService` — use this to run biased and unbiased
+`ServingRuntime` and `InferenceService`. Use this to run biased and unbiased
 models side by side for a comparative fairness demonstration.
 
-#### `model_uri` formats
-
-| Format | Example | Notes |
-|---|---|---|
-| `pvc://<claim>/<path>` | `pvc://fraud-model-pvc/bias-monitoring/unbiased_model` | Model pre-loaded on a PersistentVolumeClaim |
-
-> `pvc://` is the scheme used by the shipped configs. Other schemes are defined
-> in [`rhoai/config/defaults.yaml`](../../config/defaults.yaml) but are not yet
-> validated end-to-end — use `pvc://` for all current deployments.
 
 ### Providing the model
 
-There are two ways to supply the model.
+Provide the model in one of the following ways:
 
-**Option A — local files (recommended): `model_path` + `config_path`.** Point at
-a local model file and its `config.pbtxt`, and the framework does the rest — it
-validates the artifacts, **creates the PVC** (`pvc_name`, default `<name>-pvc`;
-`pvc_size`, default `1Gi`), and **stages the Triton layout** for you. No manual
-PVC steps.
+**Local files (recommended):**  
+Specify a local model file with `model_path` and its accompanying Triton
+`config.pbtxt` with `config_path`. The framework validates the files, creates
+(or reuses) the PVC, and stages the Triton model repository layout
+automatically.
 
 ```yaml
 deployment:
@@ -165,108 +158,73 @@ deployment:
       pvc_size:    5Gi                          # optional
 ```
 
-**Option B — pre-staged PVC: `model_uri: pvc://<claim>/<path>`.** Use this when
-the model already lives on a PVC in the workload namespace; the framework only
-references it, so you must create and populate the PVC **before** `deploy`:
+**Existing PVC:**  
+If the model is already staged on a PVC, reference it with
+`model_uri: pvc://<claim>/<path>`. The framework uses the existing model
+repository without copying any files.
 
-```bash
-# 1. Create the PVC
-cat <<EOF | oc apply -f -
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: fraud-model-pvc
-  namespace: test-fraud
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 5Gi
-EOF
-
-# 2. Attach a temporary pod to the PVC
-oc run model-loader -n test-fraud --restart=Never \
-  --image=registry.access.redhat.com/ubi9/python-312:latest \
-  --overrides='{
-    "spec":{
-      "containers":[{"name":"model-loader",
-        "image":"registry.access.redhat.com/ubi9/python-312:latest",
-        "command":["sleep","3600"],
-        "volumeMounts":[{"mountPath":"/mnt/models","name":"models"}]}],
-      "volumes":[{"name":"models","persistentVolumeClaim":{"claimName":"fraud-model-pvc"}}]
-    }}'
-oc wait --for=condition=Ready pod/model-loader -n test-fraud --timeout=120s
-
-# 3. Create the directory structure and copy the model files
-oc exec model-loader -n test-fraud -- mkdir -p /mnt/models/upi-fraud-detection/1
-oc cp config.pbtxt test-fraud/model-loader:/mnt/models/upi-fraud-detection/config.pbtxt
-oc cp model.onnx   test-fraud/model-loader:/mnt/models/upi-fraud-detection/1/model.onnx
-
-# 4. Remove the loader pod
-oc delete pod model-loader -n test-fraud
+> Ensure the PVC exists, is Bound, and contains the expected Triton model
+repository before deploying.
+```
+oc get pvc -n <namespace>
 ```
 
-> For Option B, the PVC name, path, and namespace must match your config. Run
-> `oc get pvc -n test-fraud` and confirm `STATUS = Bound` before deploying.
+### Inference inputs
 
-### Inference input modes
+Each model must specify exactly one inference input:
 
-Each model supplies its inference input in exactly one of two mutually exclusive
-modes (validated before any cluster call):
+| Mode | Key | Used for |
+|---|---|---|
+| **JSON request** | `inference_request` | Uses a pre-built KServe request for validation |
+| **Dataset** | `inference_dataset` | Generates validation requests and TrustyAI observations from the dataset |
 
-| Mode | Key | Smoke test | Observations (TrustyAI) |
-|---|---|---|---|
-| **JSON** | `inference_request` | The file is used as-is | Declared explicitly under `bias_monitoring.observations.path`/`.files` |
-| **Dataset** | `inference_dataset` | First request generated from the dataset | Generated from the same dataset, batched by `bias_monitoring.observations.batch_size` |
+JSON request uses a pre-built KServe v2 request payload for deployment validation. If TrustyAI is enabled, observations are provided separately through `bias_monitoring.observations`.
 
-**JSON mode** — `inference_request` points at a pre-built KServe v2 JSON payload
-(or a CSV converted with the model's schema). Use it when you already have a
-request file and want to declare observation files separately.
+#### Dataset mode
 
-#### Dataset-driven inference
+Use `inference_dataset` when your input is a CSV dataset. The dataset
+becomes the single source of truth:
 
-**Dataset mode** — `inference_dataset` points at a raw CSV/JSON dataset that
-becomes the single source of truth. The smoke-test request is the first
-generated request, and TrustyAI observations are generated from the whole
-dataset, batched by `bias_monitoring.observations.batch_size` (default `1`).
-Dataset mode requires a Triton `config.pbtxt` via `inference_config_path` (or
-`config_path`) for the request schema, and you must **not** also set
-`bias_monitoring.observations.path`/`.files`.
+- The framework generates the deployment validation request from the dataset.
+- If TrustyAI is enabled, observations are generated from the same dataset.
+- `bias_monitoring.observations.batch_size` controls how many observations are
+  included in each generated request (default: `1`).
+
+Dataset mode requires a Triton `config.pbtxt` (via `config_path` or
+`inference_config_path`) to define the request schema.
 
 ```yaml
 # Dataset mode (excerpt) — see config-fraud-detection-trustyai.yaml
 deployment:
   models:
-    - name: demo-loan-nn-onnx-alpha
-      model_path:  /abs/path/model.onnx
-      config_path: /abs/path/config.pbtxt      # also used as the request schema
-      inference_dataset: automation/rhoai/usecases/fraud_detection/inputs/training/csv/batch_01.csv
+    - name: upi-fraud-detection
+      model_path:  /absolute/path/model.onnx
+      config_path: /absolute/path/config.pbtxt      # also used as the request schema
+      inference_dataset:/absolute/path/to/csv/batch_01.csv
       bias_monitoring:
         observations:
           batch_size: 250                        # observations per generated request
 ```
 
-Rejected (fail-fast) combinations:
+**Configuration rules**
 
-- `inference_request` **and** `inference_dataset` together (ambiguous mode).
-- Neither set (no input source).
-- `inference_dataset` **with** `observations.path`/`.files` (dataset already supplies observations).
-- `inference_request` **with** `observations.batch_size` (batching applies only to dataset mode).
-- `inference_dataset` without a `config.pbtxt` schema source.
+- Use either `inference_request` or `inference_dataset`, but not both.
+- Dataset mode requires a Triton `config.pbtxt`.
+- Dataset mode automatically generates TrustyAI observations, so do not set `bias_monitoring.observations.path` or `bias_monitoring.observations.files`.
+- `observations.batch_size` is only used with dataset mode.
 
 ### TrustyAI configuration
 
-`bias_monitoring` is an optional block on each model entry. When present on any
-model, the deploy sequence is extended to set up TrustyAI for that model. For the
-underlying TrustyAI concepts and a manual walkthrough, see
-[`docs/bias-readme.md`](../../../docs/bias-readme.md).
+TrustyAI bias monitoring is optional. Enable it by adding a
+`bias_monitoring` block to each model you want to monitor.
 
 To enable bias monitoring:
 
 - Add `trustyai` to the `components` list.
 - Add a `bias_monitoring` block to each model you want monitored.
-- Set `trustyai_service_name` / `trustyai_service_account` at the `deployment:`
-  level (one TrustyAI service is shared across all models in the namespace).
+- Configure `trustyai_service_name` and `trustyai_service_account` under
+  `deployment:`. One TrustyAI service is shared by all monitored models in the
+  namespace.
 
 ```yaml
 # config-fraud-detection-trustyai.yaml (excerpt) — see the file for the full example
@@ -276,12 +234,13 @@ deployment:
   trustyai_service_account: trustyai-user      # default
 
   models:
-    - name: demo-loan-nn-onnx-alpha
-      model_uri: pvc://fraud-model-pvc/bias-monitoring/unbiased_model
-      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan.json
+    - name: upi-fraud-detection
+      model_path:  /absolute/path/model.onnx
+      config_path: /absolute/path/config.pbtxt   
+      inference_dataset: /absolute/path/to/csv/batch_01.csv 
       bias_monitoring:
         observations:
-          path: automation/rhoai/usecases/fraud_detection/inputs/training/data
+          batch_size: 250   
         name_mapping:
           inputs:  { customer_data_input-3: "Is Male-Identifying?" }
           outputs: { predict: "Will Default?" }
@@ -296,19 +255,15 @@ deployment:
 
 | Key | Purpose |
 |---|---|
-| `observations` | Baseline data sent to TrustyAI during deploy. **JSON mode:** `path` (a directory of `*.json` in lexical order) or an explicit `files` list, each a KServe v2 request. **Dataset mode:** generated from `inference_dataset` — set `observations.batch_size` instead (see [Inference input modes](#inference-input-modes)). Sent automatically; no separate script. |
-| `name_mapping` | Renames opaque tensor columns to human-readable labels before monitors are scheduled, so `spd_monitors`/`identity_monitors` can reference readable names. |
-| `spd_monitors` | Each entry schedules a recurring Statistical Parity Difference computation for one protected attribute. |
-| `identity_monitors` | Optional (not in the shipped configs). Each entry tracks the column-average value of one named column over time. |
+| `observations` | Baseline data sent to TrustyAI during deployment. In JSON mode, specify path or files. In dataset mode, observations are generated automatically from `inference_dataset`; configure `observations.batch_size` instead |
+| `name_mapping` | Maps tensor names to human-readable labels so monitors can reference meaningful names |
+| `spd_monitors` | Schedules recurring Statistical Parity Difference (SPD) monitors |
+| `identity_monitors` | Optional. Tracks the average value of a named column over time |
 | `trustyai_service_name` | `TrustyAIService` resource name (default `trustyai-service`). |
 | `trustyai_service_account` | ServiceAccount created for TrustyAI RBAC (default `trustyai-user`). |
 
-**Observing fairness metrics** — after a TrustyAI deploy, the summary's
-**Next steps** block prints a link to the OpenShift console metrics browser
-(*Observe → Metrics*). Query `trustyai_spd` (statistical parity difference); set
-a 5-minute window and 15-second refresh, and refresh the page if metrics have
-not appeared yet. (`trustyai_identity` is also available if you add
-`identity_monitors`.)
+**Observing fairness metrics:**  
+After deployment, the summary includes a link to the OpenShift metrics browser. Query `trustyai_spd` to view Statistical Parity Difference metrics. If you've configured `identity monitors`, `trustyai_identity` metrics are also available.
 
 ---
 
@@ -324,28 +279,75 @@ smoke-tests each model.
 
 **Sample output:**
 ```
+
 Deploying  : fraud-detection
 Namespace  : test-fraud
 
+
 Checking RHOAI platform...
+
   ✔  Operator ready
   ✔  DSCInitialization ready
   ✔  DataScienceCluster ready
   ✔  Components enabled: Dashboard, Workbenches, KServe
+
 ✔  Platform ready  (3s)
 
 Deploying 'upi-fraud-detection'...
-✔  Ensuring serving runtime  (6s)
-✔  Ensuring inference service  (0s)
-✔  Smoke-testing model endpoint  (1s)
-✔  'upi-fraud-detection' ready  (8s)
 
-Deployment complete.  Total: 12s
+✔  Validating local model artifacts  (0s)
+✔  Ensuring PVC 'my-fraud-model-pvc'  (0s)
+✔  Staging model repository on PVC  (26s)
+✔  Ensuring serving runtime  (6s)
+✔  Ensuring inference service  (21s)
+✔  Smoke-testing model endpoint  (1s)
+
+✔  'upi-fraud-detection' ready  (56s)
+
+Deployment complete.  Total: 59s
+
+  Use case   : fraud-detection
+  Namespace  : test-fraud
 
 Models
+
 ✔  upi-fraud-detection
-  Endpoint    : https://upi-fraud-detection-test-fraud.apps.<cluster>
-  Validation  : Passed
+  Endpoint     : https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com
+  Smoke test   : Passed
+
+  Inference request
+    {
+      "inputs": [
+         . . .
+      ]
+    }
+  Inference response
+    {
+      "model_name": "upi-fraud-detection",
+      "model_version": "1",
+      "outputs": [
+            . . .
+      ]
+    }
+
+Next steps
+
+  Invoke the model
+
+    # upi-fraud-detection
+    curl -sk -X POST \
+      https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com/v2/models/upi-
+fraud-detection/infer \
+      -H 'Content-Type: application/json' \
+      -d
+@/Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_dete
+ction/inputs/upi-fraud-detection.json
+
+  Clean up deployment
+
+    rhoai usecase cleanup fraud-detection \
+      -c openshift-ai-demos/automation/config-fraud-detection.yaml
+
 ```
 
 If the endpoint is unreachable from the machine running the CLI (for example, a
@@ -388,19 +390,46 @@ model.
 Verifying  : fraud-detection
 Namespace  : test-fraud
 
-✔  Checking RHOAI platform  (2s)
+✔  Checking RHOAI platform  (4s)
 
 Verifying 'upi-fraud-detection'...
+
 ✔  Checking inference service  (0s)
 ✔  Checking model inference  (1s)
+
 ✔  'upi-fraud-detection' healthy  (1s)
 
-Verification complete.  Total: 4s
+Verification complete.  Total: 5s
+
+  Use case   : fraud-detection
+  Namespace  : test-fraud
 
 Models
+
 ✔  upi-fraud-detection
-  Endpoint    : https://upi-fraud-detection-test-fraud.apps.<cluster>
-  Validation  : Passed
+  Endpoint     : https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com
+  Smoke test   : Passed
+
+  Inference request { data }
+  Inference response { data }
+
+Next steps
+
+  Invoke the model
+
+    # upi-fraud-detection
+    curl -sk -X POST \
+      https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com/v2/models/upi-
+fraud-detection/infer \
+      -H 'Content-Type: application/json' \
+      -d
+@/Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_dete
+ction/inputs/upi-fraud-detection.json
+
+  Clean up deployment
+
+    rhoai usecase cleanup fraud-detection \
+      -c openshift-ai-demos/automation/config-fraud-detection.yaml
 ```
 
 ---
@@ -426,16 +455,32 @@ are gone.
 Removing   : fraud-detection
 Namespace  : test-fraud
 
+
 Removing model serving...
+
 ✔  Removing inference service 'upi-fraud-detection'  (1s)
 ✔  Waiting for inference service pods to terminate  (0s)
 ✔  Removing serving runtime 'triton-upi-fraud-detection'  (0s)
+✔  Waiting for serving runtime pods to terminate  (0s)
+
 ✔  Model serving removed  (1s)
 
-Cleanup complete.  Total: 1s
+Removing staged models...
+
+✔  Removing staging Pod for 'my-fraud-model-pvc'  (0s)
+✔  Removing PVC 'my-fraud-model-pvc'  (5s)
+
+✔  Staged models removed  (6s)
+
+Cleanup complete.  Total: 8s
+
+  Use case   : fraud-detection
+  Namespace  : test-fraud
 
 Removed
+
   ✔  upi-fraud-detection
+  ✔  my-fraud-model-pvc (Pod + PVC)
 ```
 
 ---
@@ -448,8 +493,8 @@ install, timeouts, `rhoai: command not found`), see the
 
 | Symptom | Cause / fix |
 |---|---|
-| Validation shows **Unavailable** after deploy | The endpoint isn't reachable from your machine. Add the ingress IP to `/etc/hosts` and rerun `rhoai usecase verify fraud-detection -c <config>` — see [troubleshooting guide](../../../docs/troubleshooting.md). |
+| Validation shows **Unavailable** after deploy | The endpoint isn't reachable from your machine. Add the ingress IP to `/etc/hosts` and rerun `rhoai usecase verify fraud-detection -c <config>`  |
 | `InferenceService` stays `Unknown` | `model_uri` PVC not `Bound`, path wrong, or `kserve` not enabled. Check `oc get pvc -n <namespace>` and `rhoai platform status`. |
-| Config rejected before any cluster call | An invalid input-mode combination — see the rejected combinations under [Inference input modes](#inference-input-modes). |
+| Config rejected before any cluster call | An invalid input-mode combination — see the rejected combinations under [Inference inputs](#inference-inputs). |
 | TrustyAI pod stays `Pending` | `trustyai` component not enabled, or no matching storage class. Run `rhoai platform enable trustyai`. |
-| Ingestion never reaches the expected count | Raise `timeouts.ingestion_ready` on slow clusters — see the [troubleshooting guide](../../../docs/troubleshooting.md). |
+| Ingestion never reaches the expected count | Raise `timeouts.ingestion_ready` on slow clusters |

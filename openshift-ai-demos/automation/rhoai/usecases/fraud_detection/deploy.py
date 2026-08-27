@@ -123,7 +123,7 @@ def _resolve_request_artifacts(
         this generator so the dataset is the single source of truth.
     """
     name = model["name"]
-    request_path = resolve_inference_request(model, repo_root)
+    request_path = resolve_inference_request(model)
 
     if request_path is not None:
         schema_source = _resolve_schema_source(model, repo_root)
@@ -140,7 +140,7 @@ def _resolve_request_artifacts(
         # Dataset mode — the generated JSON request carries its own schema, so
         # no separate schema_source is needed for the smoke test.
         schema_source = None
-        dataset_path = resolve_inference_dataset(model, repo_root)
+        dataset_path = resolve_inference_dataset(model)
         pbtxt = _resolve_pbtxt(model)
         _, payload = next(
             request_generator.iter_requests(pbtxt, dataset_path, batch_size=1)
@@ -200,10 +200,10 @@ def _resolve_schema_source(model: dict[str, Any], repo_root: str) -> Path | None
         }))
         return tmp
 
-    # 2 — explicit inference_request JSON.
+    # 2 — explicit inference_request JSON (used as given — supply an absolute path).
     req = model.get("inference_request", "")
     if req and Path(req).suffix.lower() == ".json":
-        return Path(repo_root) / req
+        return Path(req)
 
     # 3 — generated request JSON produced by _resolve_request_artifacts when
     #     the model uses inference_dataset + config_path instead of a pre-built
@@ -347,7 +347,7 @@ def _deploy_model(
     return result
 
 
-def _resolve_observation_files(obs_cfg: dict[str, Any], repo_root: str) -> list[Path]:
+def _resolve_observation_files(obs_cfg: dict[str, Any]) -> list[Path]:
     """Resolve the list of observation file paths from the bias_monitoring.observations config.
 
     Accepts two mutually exclusive forms:
@@ -357,13 +357,15 @@ def _resolve_observation_files(obs_cfg: dict[str, Any], repo_root: str) -> list[
     files may be mixed; each is converted to a KServe v2 payload at send time).
     An empty directory raises ``ValueError``.
 
-    ``files`` — an explicit ordered list of file paths (relative to repo_root).
+    ``files`` — an explicit ordered list of file paths.
+
+    Both forms take **absolute** paths, used as given (matching how
+    ``inference_request`` / ``inference_dataset`` are supplied).
 
     ``path`` and ``files`` must not both be set.
 
     Args:
-        obs_cfg:   The ``bias_monitoring.observations`` sub-dict from the model config.
-        repo_root: Absolute path to the repo root (used to resolve relative paths).
+        obs_cfg: The ``bias_monitoring.observations`` sub-dict from the model config.
 
     Returns:
         Non-empty ordered list of absolute Path objects.
@@ -386,13 +388,13 @@ def _resolve_observation_files(obs_cfg: dict[str, Any], repo_root: str) -> list[
         )
 
     if has_files:
-        paths = [Path(repo_root) / f for f in obs_cfg["files"]]
+        paths = [Path(f) for f in obs_cfg["files"]]
         if not paths:
             raise ValueError("bias_monitoring.observations.files must not be empty.")
         return paths
 
     # --- path form ---
-    resolved = Path(repo_root) / obs_cfg["path"]
+    resolved = Path(obs_cfg["path"])
     if resolved.is_dir():
         paths = sorted(
             [p for p in resolved.iterdir() if p.suffix.lower() in (".json", ".csv")],
@@ -446,7 +448,7 @@ def _configure_bias_monitoring(
     # sends the explicitly-declared observation files.  Mode was validated upstream.
     with step("Sending observations") as s:
         if model.get("inference_dataset"):
-            dataset_path = resolve_inference_dataset(model, repo_root)
+            dataset_path = resolve_inference_dataset(model)
             pbtxt        = _resolve_pbtxt(model)
             payloads     = [
                 req for _, req in request_generator.iter_requests(
@@ -455,7 +457,7 @@ def _configure_bias_monitoring(
             ]
             total_sent = inference.send_observation_payloads(model_id, namespace, payloads)
         else:
-            obs_files  = _resolve_observation_files(cfg["observations"], repo_root)
+            obs_files  = _resolve_observation_files(cfg["observations"])
             total_sent = inference.send_observations(
                 model_id, namespace, obs_files,
                 schema_source=_resolve_schema_source(model, repo_root),

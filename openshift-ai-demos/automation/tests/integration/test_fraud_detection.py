@@ -106,45 +106,42 @@ class TestAssetPaths:
 
 
 def _write_request(tmp_path: Path, rel: str = "requests/model.json") -> str:
-    """Write a stub KServe v2 inference request and return its repo-relative path."""
+    """Write a stub KServe v2 inference request and return its absolute path."""
     import json as _json
     dest = tmp_path / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(_json.dumps({"inputs": [{"name": "dense_input", "data": [0.1] * 10}]}))
-    return rel
+    return str(dest)
 
 
 class TestResolveInferenceRequest:
-    def test_returns_absolute_path(self, tmp_path: Path) -> None:
+    def test_returns_configured_path(self, tmp_path: Path) -> None:
         from rhoai.usecases.fraud_detection.assets import resolve_inference_request
-        rel = _write_request(tmp_path, "requests/fraud.json")
-        model = {"name": "fraud-detection", "inference_request": rel}
-        result = resolve_inference_request(model, str(tmp_path))
-        assert result == tmp_path / rel
+        abs_path = str(tmp_path / "requests" / "fraud.json")
+        model = {"name": "fraud-detection", "inference_request": abs_path}
+        result = resolve_inference_request(model)
+        assert result == Path(abs_path)
 
-    def test_returns_none_when_missing(self, tmp_path: Path) -> None:
+    def test_returns_none_when_missing(self) -> None:
         from rhoai.usecases.fraud_detection.assets import resolve_inference_request
-        assert resolve_inference_request({"name": "m"}, str(tmp_path)) is None
+        assert resolve_inference_request({"name": "m"}) is None
 
-    def test_returns_none_when_empty(self, tmp_path: Path) -> None:
+    def test_returns_none_when_empty(self) -> None:
         from rhoai.usecases.fraud_detection.assets import resolve_inference_request
-        assert resolve_inference_request({"name": "m", "inference_request": ""}, str(tmp_path)) is None
+        assert resolve_inference_request({"name": "m", "inference_request": ""}) is None
 
 
 class TestResolveInferenceDataset:
-    def test_returns_absolute_path(self, tmp_path: Path) -> None:
+    def test_returns_configured_path(self, tmp_path: Path) -> None:
         from rhoai.usecases.fraud_detection.assets import resolve_inference_dataset
-        rel = "inputs/data.csv"
-        dest = tmp_path / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text("1.0,2.0\n")
-        result = resolve_inference_dataset({"name": "m", "inference_dataset": rel}, str(tmp_path))
-        assert result == dest
+        abs_path = str(tmp_path / "inputs" / "data.csv")
+        result = resolve_inference_dataset({"name": "m", "inference_dataset": abs_path})
+        assert result == Path(abs_path)
 
-    def test_raises_when_missing(self, tmp_path: Path) -> None:
+    def test_raises_when_missing(self) -> None:
         from rhoai.usecases.fraud_detection.assets import resolve_inference_dataset
         with pytest.raises(ValueError, match="no inference_request or inference_dataset configured"):
-            resolve_inference_dataset({"name": "m"}, str(tmp_path))
+            resolve_inference_dataset({"name": "m"})
 
 
 class TestDeploySmoke:
@@ -290,7 +287,7 @@ class TestDeploySmoke:
 
         config = self._make_config(tmp_path, models=[
             {"name": "fraud-detection", "model_uri": "pvc://fraud-model-pvc/models",
-             "inference_dataset": "inputs/demo-loan.csv",
+             "inference_dataset": str(dataset),
              "inference_config_path": str(pbtxt)},
         ])
         deploy_mod.deploy(config)
@@ -330,7 +327,7 @@ class TestDeploySmoke:
 
         model = {
             "name": "m",
-            "inference_dataset": "inputs/d.csv",
+            "inference_dataset": str(dataset),
             "inference_config_path": str(pbtxt),
             "bias_monitoring": {"observations": {"batch_size": 50}},
         }

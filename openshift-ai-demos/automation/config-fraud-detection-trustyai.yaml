@@ -39,13 +39,15 @@ deployment:
       config_path: /Users/varad/Desktop/automation-framework/config.pbtxt
       pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
       pvc_size:    1Gi
-      # inference_dataset: automation/rhoai/usecases/fraud_detection/inputs/training/csv/batch_01.csv
-      inference_request: automation/rhoai/usecases/fraud_detection/inputs/demo-loan-nn-onnx-alpha_generated_request.json
+      # inference_request / inference_dataset are absolute paths (~ is not expanded).
+      # inference_dataset: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_detection/inputs/training/csv/batch_01.csv
+      inference_request: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_detection/inputs/demo-loan-nn-onnx-alpha_generated_request.json
 
       bias_monitoring:
         # Observations are generated from inference_dataset, batched by size.
         observations:
-          path: automation/rhoai/usecases/fraud_detection/inputs/training/data/batch_01.json
+          # JSON mode: observations.path / .files are absolute paths (~ is not expanded).
+          path: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_detection/inputs/training/data/batch_01.json
           #batch_size: 250   # observations per generated KServe request
 
         # Rename opaque internal column names to human-readable labels.

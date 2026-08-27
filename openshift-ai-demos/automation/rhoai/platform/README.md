@@ -4,7 +4,7 @@ The `rhoai platform` command group manages the full lifecycle of a Red Hat OpenS
 (RHOAI) installation: operator install, DSCInitialization, component management,
 status reporting, and clean uninstall.
 
-Prerequisites and installation: see the [top-level README](../../README.md#prerequisites).
+Prerequisites and installation: see the [top-level README](../../README.md#getting-started).
 
 ---
 
@@ -23,7 +23,7 @@ rhoai --log-level DEBUG platform init --channel stable-3.x
 
 > **Flag position matters:** `--log-level` must come _before_ `platform`, not after it.
 
-See [README.md §Logging](../../README.md#logging) for details.
+See [README.md §Command reference](../../README.md#command-reference) for details.
 
 ---
 
@@ -50,7 +50,7 @@ components: []   # used by 'setup' — empty = apply dsc.yaml as-is
 ```
 
 Pass `--config /path/to/my-config.yaml` to any command to override defaults. See
-[README.md §Configuration](../../README.md#configuration) for how values are merged.
+[README.md §Documentation](../../README.md#documentation) for how values are merged.
 
 ---
 

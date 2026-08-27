@@ -47,7 +47,7 @@ deployment:
     - name: fraud-detection
       model_uri: pvc://fraud-model-pvc/models
       # Path to the KServe v2 inference request used for smoke-testing.
-      # Relative to repo_root; required for deployment validation and verify.
+      # Absolute path (~ is not expanded); required for deployment validation and verify.
       # Accepts .json (KServe v2 payload) or .csv (auto-converted).
       inference_request: ""
       # Optional: override the tensor name and datatype used when converting
@@ -60,11 +60,11 @@ deployment:
       # Optional: configure TrustyAI bias monitoring for this model.
       # Omit or set to null to deploy without monitoring.
       # bias_monitoring:
-      #   observations:
-      #     path: data/training/    # directory (*.json, lexical order) or single file
+      #   observations:             # absolute paths (~ is not expanded)
+      #     path: /abs/path/to/data/training/    # directory (*.json, lexical order) or single file
       #     # files:                # OR explicit ordered list (mutually exclusive with path)
-      #     #   - data/training/0.json
-      #     #   - data/training/250.json
+      #     #   - /abs/path/to/data/training/0.json
+      #     #   - /abs/path/to/data/training/250.json
       #   name_mapping:             # optional — rename opaque tensor columns
       #     inputs:
       #       input-0: "feature name"
