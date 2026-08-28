@@ -47,25 +47,17 @@ deployment:
           batch_size: 250   # observations per generated KServe request
 
         # Rename opaque internal column names to human-readable labels.
+        # Inputs are auto-derived from the CSV headers (single flat tensor →
+        # columnIndex), title-cased: num_children → "Num Children",
+        # is_male → "Is Male", employment_length → "Employment Length", etc.
+        # Set 'inputs' only to override those derived labels.
         name_mapping:
-          inputs:
-            customer_data_input-0:  "Number of Children"
-            customer_data_input-1:  "Total Income"
-            customer_data_input-2:  "Number of Total Family Members"
-            customer_data_input-3:  "Is Male-Identifying?"
-            customer_data_input-4:  "Owns Car?"
-            customer_data_input-5:  "Owns Realty?"
-            customer_data_input-6:  "Is Partnered?"
-            customer_data_input-7:  "Is Employed?"
-            customer_data_input-8:  "Lives with Parents?"
-            customer_data_input-9:  "Age"
-            customer_data_input-10: "Length of Employment?"
           outputs:
             predict: "Will Default?"
 
         # SPD fairness monitors: validated immediately before scheduling.
         spd_monitors:
-          - protected_attribute:   "Is Male-Identifying?"
+          - protected_attribute:   "Is Male"   # auto-derived from CSV header 'is_male'
             privileged_value:      1.0
             unprivileged_value:    0.0
             outcome_name:          "Will Default?"

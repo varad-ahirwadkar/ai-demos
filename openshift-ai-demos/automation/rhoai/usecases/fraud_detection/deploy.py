@@ -468,14 +468,37 @@ def _configure_bias_monitoring(
         trustyai.wait_for_ingestion(route, token, model_id, expected=total_sent,
                                     timeout=ingestion_timeout, on_tick=s.tick)
 
-    # 4 — optional name mapping.
-    if nm := cfg.get("name_mapping"):
-        with step("Mapping feature names"):
-            trustyai_client.apply_name_mapping(
-                route, token, model_id,
-                nm.get("inputs", {}),
-                nm.get("outputs", {}),
-            )
+    # 4 — name mapping.  Inputs: explicit config wins, else auto-derive from the
+    #     CSV dataset headers + TrustyAI's inputSchema.  Outputs: explicit config
+    #     wins, else default to identity from the config.pbtxt output names (or the
+    #     first inference response's output names when no pbtxt is available).
+    nm = cfg.get("name_mapping") or {}
+    explicit_inputs  = nm.get("inputs", {})
+    explicit_outputs = nm.get("outputs", {})
+
+    csv_headers: list[str] | None = None
+    num_input_tensors = 1
+    if not explicit_inputs and model.get("inference_dataset"):
+        dataset_path = resolve_inference_dataset(model)
+        if dataset_path.suffix.lower() == ".csv":
+            csv_headers = request_generator.read_csv_headers(dataset_path)
+            _, specs = request_generator.parse_pbtxt(_resolve_pbtxt(model))
+            num_input_tensors = len(specs)
+
+    pbtxt_output_names: list[str] = []
+    pbtxt_path = model.get("inference_config_path") or model.get("config_path")
+    if not explicit_outputs and pbtxt_path and Path(pbtxt_path).exists():
+        pbtxt_output_names = request_generator.parse_pbtxt_output_names(Path(pbtxt_path))
+
+    with step("Mapping feature names"):
+        trustyai.resolve_and_apply_name_mapping(
+            route, token, model_id,
+            explicit_inputs=explicit_inputs,
+            explicit_outputs=explicit_outputs,
+            csv_headers=csv_headers,
+            num_input_tensors=num_input_tensors,
+            pbtxt_output_names=pbtxt_output_names,
+        )
 
     # 5 — SPD monitors: evaluate (compute + print result), then schedule.
     # Compute and schedule are separate steps so each outcome is visible.

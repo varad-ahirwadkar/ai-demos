@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from rhoai.platform.request_generator import generate_batched_requests, iter_requests
+from rhoai.platform.request_generator import (
+    derive_input_name_mapping,
+    generate_batched_requests,
+    humanize_feature_name,
+    iter_requests,
+    normalize_feature_name,
+    read_csv_headers,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -660,3 +667,159 @@ class TestGenerateBatchedRequests:
         assert n == 3
         result = json.loads(out.read_text())
         assert result == doc
+
+
+# ---------------------------------------------------------------------------
+# read_csv_headers
+# ---------------------------------------------------------------------------
+
+class TestReadCsvHeaders:
+    def test_returns_headers_in_order(self, tmp_path: Path) -> None:
+        p = tmp_path / "d.csv"
+        p.write_text("age,income,is_male\n30,1000,1\n")
+        assert read_csv_headers(p) == ["age", "income", "is_male"]
+
+    def test_empty_file_raises(self, tmp_path: Path) -> None:
+        p = tmp_path / "empty.csv"
+        p.write_text("")
+        with pytest.raises(ValueError, match="no header row"):
+            read_csv_headers(p)
+
+
+# ---------------------------------------------------------------------------
+# derive_input_name_mapping
+# ---------------------------------------------------------------------------
+
+def _items(*specs: tuple[str, str, int]) -> dict[str, dict]:
+    """Build an inputSchema.items dict from (display_name, internal_name, columnIndex)."""
+    return {
+        display: {"name": internal, "type": "DOUBLE", "columnIndex": idx}
+        for display, internal, idx in specs
+    }
+
+
+class TestDeriveInputNameMapping:
+    def test_scalar_tensors_with_identical_names_map_by_identity(self) -> None:
+        """Multi-scalar model whose feature names already equal the CSV headers."""
+        headers = ["age", "income", "is_male"]
+        items = _items(("age", "age", 0), ("income", "income", 1), ("is_male", "is_male", 2))
+        assert derive_input_name_mapping(headers, items, num_input_tensors=3) == {
+            "age": "Age", "income": "Income", "is_male": "Is Male",
+        }
+
+    def test_single_flattened_tensor_maps_by_column_index(self) -> None:
+        headers = ["num_children", "income", "is_male"]
+        items = _items(
+            ("customer_data_input-0", "customer_data_input-0", 0),
+            ("customer_data_input-1", "customer_data_input-1", 1),
+            ("customer_data_input-2", "customer_data_input-2", 2),
+        )
+        assert derive_input_name_mapping(headers, items, num_input_tensors=1) == {
+            "customer_data_input-0": "Num Children",
+            "customer_data_input-1": "Income",
+            "customer_data_input-2": "Is Male",
+        }
+
+    def test_column_index_respects_schema_order_not_header_order(self) -> None:
+        """A flat tensor whose items arrive out of order still maps by columnIndex."""
+        headers = ["a", "b", "c"]
+        items = _items(("t-2", "t-2", 2), ("t-0", "t-0", 0), ("t-1", "t-1", 1))
+        assert derive_input_name_mapping(headers, items, num_input_tensors=1) == {
+            "t-0": "A", "t-1": "B", "t-2": "C",
+        }
+
+    def test_multiple_scalar_tensors_with_suffixed_names_skip(self) -> None:
+        """Suffixed names on a >1-tensor model can't safely use columnIndex → skip."""
+        headers = ["age", "income"]
+        items = _items(("age-0", "age-0", 0), ("income-0", "income-0", 1))
+        assert derive_input_name_mapping(headers, items, num_input_tensors=2) == {}
+
+    def test_multiple_vector_tensors_skip(self) -> None:
+        headers = ["a", "b", "c", "d"]
+        items = _items(
+            ("t1-0", "t1-0", 0), ("t1-1", "t1-1", 1),
+            ("t2-0", "t2-0", 2), ("t2-1", "t2-1", 3),
+        )
+        assert derive_input_name_mapping(headers, items, num_input_tensors=2) == {}
+
+    def test_count_mismatch_skips(self) -> None:
+        headers = ["a", "b", "c"]
+        items = _items(("t-0", "t-0", 0), ("t-1", "t-1", 1))
+        assert derive_input_name_mapping(headers, items, num_input_tensors=1) == {}
+
+    def test_duplicate_headers_skip(self) -> None:
+        headers = ["a", "a", "b"]
+        items = _items(("t-0", "t-0", 0), ("t-1", "t-1", 1), ("t-2", "t-2", 2))
+        assert derive_input_name_mapping(headers, items, num_input_tensors=1) == {}
+
+    def test_non_bijective_column_index_skips(self) -> None:
+        headers = ["a", "b", "c"]
+        items = _items(("t-0", "t-0", 0), ("t-1", "t-1", 1), ("t-2", "t-2", 1))
+        assert derive_input_name_mapping(headers, items, num_input_tensors=1) == {}
+
+    def test_missing_column_index_skips(self) -> None:
+        headers = ["a", "b"]
+        items = {
+            "t-0": {"name": "t-0", "type": "DOUBLE"},          # no columnIndex
+            "t-1": {"name": "t-1", "type": "DOUBLE", "columnIndex": 1},
+        }
+        assert derive_input_name_mapping(headers, items, num_input_tensors=1) == {}
+
+    def test_no_headers_returns_empty(self) -> None:
+        items = _items(("t-0", "t-0", 0))
+        assert derive_input_name_mapping([], items, num_input_tensors=1) == {}
+
+    def test_no_schema_items_returns_empty(self) -> None:
+        assert derive_input_name_mapping(["a", "b"], {}, num_input_tensors=1) == {}
+
+
+# ---------------------------------------------------------------------------
+# normalize_feature_name
+# ---------------------------------------------------------------------------
+
+class TestNormalizeFeatureName:
+    @pytest.mark.parametrize("raw,expected", [
+        ("Bank_Name", "bank name"),
+        ("bank_name", "bank name"),
+        ("Bank Name", "bank name"),
+        ("USER_MEAN_AMOUNT", "user mean amount"),
+        ("user_mean_amount", "user mean amount"),
+        ("  Multiple   Spaces_here ", "multiple spaces here"),
+    ])
+    def test_normalization(self, raw: str, expected: str) -> None:
+        assert normalize_feature_name(raw) == expected
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("bank_name", "Bank Name"),
+        ("USER_MEAN_AMOUNT", "User Mean Amount"),
+        ("num_children", "Num Children"),
+        ("Transaction Amount", "Transaction Amount"),
+    ])
+    def test_humanize(self, raw: str, expected: str) -> None:
+        assert humanize_feature_name(raw) == expected
+
+
+class TestDeriveInputNameMappingNormalized:
+    def test_matches_across_case_and_separators(self) -> None:
+        """Schema names and headers that differ only by case/underscores match."""
+        headers = ["bank name", "user_mean_amount"]
+        items = _items(("Bank_Name", "Bank_Name", 0), ("USER_MEAN_AMOUNT", "USER_MEAN_AMOUNT", 1))
+        assert derive_input_name_mapping(headers, items, num_input_tensors=2) == {
+            "Bank_Name": "Bank Name",
+            "USER_MEAN_AMOUNT": "User Mean Amount",
+        }
+
+    def test_display_names_are_title_cased(self) -> None:
+        headers = ["transaction_amount"]
+        items = _items(("transaction_amount", "transaction_amount", 0))
+        assert derive_input_name_mapping(headers, items, num_input_tensors=1) == {
+            "transaction_amount": "Transaction Amount",
+        }
+
+    def test_ambiguous_normalized_headers_are_skipped(self) -> None:
+        """Two headers collapsing to the same normal form don't match by name."""
+        headers = ["Bank_Name", "bank name"]      # both -> "bank name"
+        items = _items(("BANK NAME", "BANK NAME", 0), ("other", "other", 1))
+        # 'BANK NAME' is ambiguous → not matched; 'other' has no header → skipped.
+        # num_input_tensors=2 blocks the columnIndex fallback.
+        assert derive_input_name_mapping(headers, items, num_input_tensors=2) == {}

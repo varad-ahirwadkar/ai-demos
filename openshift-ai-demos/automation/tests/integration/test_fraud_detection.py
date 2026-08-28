@@ -205,6 +205,9 @@ class TestDeploySmoke:
         # build_request_from_csv_file / iter_requests return (model_name, payload).
         request_generator_mock.build_request_from_csv_file.return_value = ("fraud-detection", self._STUB_PAYLOAD)
         request_generator_mock.iter_requests.return_value = iter([("fraud-detection", self._STUB_PAYLOAD)])
+        # Auto name-mapping derivation (dataset mode) reads CSV headers + pbtxt specs.
+        request_generator_mock.read_csv_headers.return_value = ["a", "b", "c"]
+        request_generator_mock.parse_pbtxt.return_value = ("fraud-detection", [object()])
 
         monkeypatch.setattr(deploy_mod, "storage",           storage_mock)
         monkeypatch.setattr(deploy_mod, "inference",         inference_mock)

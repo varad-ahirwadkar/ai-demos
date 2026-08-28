@@ -367,3 +367,138 @@ class TestCleanup:
         mock_resources.delete_manifest.assert_called_once_with(
             "RoleBinding", "trustyai-user-view", "ns"
         )
+
+
+# ---------------------------------------------------------------------------
+# resolve_and_apply_name_mapping
+# ---------------------------------------------------------------------------
+
+class TestResolveAndApplyNameMapping:
+    def test_explicit_mappings_used_verbatim(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicit inputs and outputs are applied verbatim; /info is never fetched."""
+        get_info = MagicMock()
+        apply    = MagicMock()
+        monkeypatch.setattr("rhoai.platform.trustyai_client.get_model_info", get_info)
+        monkeypatch.setattr("rhoai.platform.trustyai_client.apply_name_mapping", apply)
+
+        result = trustyai.resolve_and_apply_name_mapping(
+            "http://ta", "tok", "m",
+            explicit_inputs={"customer_data_input-3": "Is Male?"},
+            explicit_outputs={"predict": "Will Default?"},
+            csv_headers=["a", "b"],          # present, but must be ignored
+            num_input_tensors=1,
+            pbtxt_output_names=["predict"],  # present, but explicit outputs win
+        )
+        get_info.assert_not_called()
+        apply.assert_called_once_with(
+            "http://ta", "tok", "m",
+            {"customer_data_input-3": "Is Male?"},
+            {"predict": "Will Default?"},
+        )
+        assert result == (
+            {"customer_data_input-3": "Is Male?"},
+            {"predict": "Will Default?"},
+        )
+
+    def test_nothing_available_applies_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No CSV, no pbtxt, empty response schema → nothing applied."""
+        get_info = MagicMock(return_value={"data": {}})
+        apply    = MagicMock()
+        monkeypatch.setattr("rhoai.platform.trustyai_client.get_model_info", get_info)
+        monkeypatch.setattr("rhoai.platform.trustyai_client.apply_name_mapping", apply)
+
+        result = trustyai.resolve_and_apply_name_mapping(
+            "http://ta", "tok", "m",
+            explicit_inputs={}, explicit_outputs={},
+            csv_headers=None, num_input_tensors=3,
+            pbtxt_output_names=[],
+        )
+        apply.assert_not_called()
+        assert result == ({}, {})
+
+    def test_auto_derives_flat_tensor_from_headers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CSV headers + single flat tensor → derived input mapping fetched and applied."""
+        get_info = MagicMock(return_value={
+            "data": {"inputSchema": {"items": {
+                "t-0": {"name": "t-0", "columnIndex": 0},
+                "t-1": {"name": "t-1", "columnIndex": 1},
+            }}}
+        })
+        apply = MagicMock()
+        monkeypatch.setattr("rhoai.platform.trustyai_client.get_model_info", get_info)
+        monkeypatch.setattr("rhoai.platform.trustyai_client.apply_name_mapping", apply)
+
+        result = trustyai.resolve_and_apply_name_mapping(
+            "http://ta", "tok", "m",
+            explicit_inputs={}, explicit_outputs={},
+            csv_headers=["age", "income"], num_input_tensors=1,
+            pbtxt_output_names=["predict"],
+        )
+        get_info.assert_called_once()      # fetched once, reused for both schemas
+        apply.assert_called_once_with(
+            "http://ta", "tok", "m",
+            {"t-0": "Age", "t-1": "Income"}, {"predict": "predict"},
+        )
+        assert result == ({"t-0": "Age", "t-1": "Income"}, {"predict": "predict"})
+
+    def test_ambiguous_inputs_still_default_outputs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A >1-tensor suffixed layout derives no inputs, but outputs still default."""
+        get_info = MagicMock(return_value={
+            "data": {"inputSchema": {"items": {
+                "a-0": {"name": "a-0", "columnIndex": 0},
+                "b-0": {"name": "b-0", "columnIndex": 1},
+            }}}
+        })
+        apply = MagicMock()
+        monkeypatch.setattr("rhoai.platform.trustyai_client.get_model_info", get_info)
+        monkeypatch.setattr("rhoai.platform.trustyai_client.apply_name_mapping", apply)
+
+        result = trustyai.resolve_and_apply_name_mapping(
+            "http://ta", "tok", "m",
+            explicit_inputs={}, explicit_outputs={},
+            csv_headers=["a", "b"], num_input_tensors=2,
+            pbtxt_output_names=["label"],
+        )
+        apply.assert_called_once_with("http://ta", "tok", "m", {}, {"label": "label"})
+        assert result == ({}, {"label": "label"})
+
+    def test_defaults_outputs_from_pbtxt_identity(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No explicit outputs → identity mapping from pbtxt names; no /info fetch."""
+        get_info = MagicMock()
+        apply    = MagicMock()
+        monkeypatch.setattr("rhoai.platform.trustyai_client.get_model_info", get_info)
+        monkeypatch.setattr("rhoai.platform.trustyai_client.apply_name_mapping", apply)
+
+        result = trustyai.resolve_and_apply_name_mapping(
+            "http://ta", "tok", "m",
+            explicit_inputs={}, explicit_outputs={},
+            csv_headers=None, num_input_tensors=1,
+            pbtxt_output_names=["probabilities", "label"],
+        )
+        get_info.assert_not_called()
+        apply.assert_called_once_with(
+            "http://ta", "tok", "m",
+            {}, {"probabilities": "probabilities", "label": "label"},
+        )
+        assert result == ({}, {"probabilities": "probabilities", "label": "label"})
+
+    def test_defaults_outputs_from_response_schema(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No pbtxt → identity mapping from the response (outputSchema) names."""
+        get_info = MagicMock(return_value={
+            "data": {"outputSchema": {"items": {
+                "predict": {"name": "predict", "columnIndex": 0},
+            }}}
+        })
+        apply = MagicMock()
+        monkeypatch.setattr("rhoai.platform.trustyai_client.get_model_info", get_info)
+        monkeypatch.setattr("rhoai.platform.trustyai_client.apply_name_mapping", apply)
+
+        result = trustyai.resolve_and_apply_name_mapping(
+            "http://ta", "tok", "m",
+            explicit_inputs={}, explicit_outputs={},
+            csv_headers=None, num_input_tensors=1,
+            pbtxt_output_names=[],
+        )
+        get_info.assert_called_once()
+        apply.assert_called_once_with("http://ta", "tok", "m", {}, {"predict": "predict"})
+        assert result == ({}, {"predict": "predict"})

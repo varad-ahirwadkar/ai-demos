@@ -62,9 +62,14 @@ deployment:
       #     # files:                # OR explicit ordered list (mutually exclusive with path)
       #     #   - /abs/path/to/data/training/0.json
       #     #   - /abs/path/to/data/training/250.json
-      #   name_mapping:             # optional — rename opaque tensor columns
+      #   name_mapping:             # optional — rename opaque tensor columns.
+      #     # Input names are auto-derived from the CSV dataset headers when
+      #     # 'inference_dataset' is a .csv (single flat tensor → columnIndex,
+      #     # multi-tensor → identical names); set 'inputs' only to override.
       #     inputs:
       #       input-0: "feature name"
+      #     # Output names default to identity from the config.pbtxt output names
+      #     # (or the first inference response); set 'outputs' only to relabel.
       #     outputs:
       #       output-0: "outcome name"
       #   spd_monitors:             # optional — Statistical Parity Difference

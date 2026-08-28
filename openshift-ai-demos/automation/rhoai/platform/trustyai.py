@@ -243,6 +243,91 @@ def wait_for_ingestion(
 
 
 # ---------------------------------------------------------------------------
+# Name mapping
+# ---------------------------------------------------------------------------
+
+def resolve_and_apply_name_mapping(
+    route: str,
+    token: str,
+    model_id: str,
+    *,
+    explicit_inputs: dict[str, str],
+    explicit_outputs: dict[str, str],
+    csv_headers: list[str] | None,
+    num_input_tensors: int,
+    pbtxt_output_names: list[str] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Resolve and apply the input/output name mappings to TrustyAI.
+
+    Precedence for the *input* mapping:
+
+        1. ``explicit_inputs`` — user-supplied ``name_mapping.inputs``; used
+           verbatim, no derivation.
+        2. Auto-derived from ``csv_headers`` + TrustyAI's ``inputSchema`` (only
+           when observations came from a CSV dataset, so headers are available).
+        3. Nothing — leave TrustyAI's original feature names in place.
+
+    Precedence for the *output* mapping (identity — the goal is to register the
+    model's own output names, not invent labels):
+
+        1. ``explicit_outputs`` — used verbatim.
+        2. ``config.pbtxt`` output tensor names → ``{name: name}``.
+        3. TrustyAI's ``outputSchema`` names (i.e. the names seen in the first
+           inference response) → ``{name: name}``.
+        4. Nothing — leave outputs unmapped.
+
+    The ``POST /info/names`` is issued (idempotently) only when there is a
+    non-empty input or output mapping to apply.  ``GET /info`` is fetched at most
+    once and only when a derivation step actually needs it.
+
+    Returns ``(input_mapping, output_mapping)`` as resolved (either may be empty).
+    """
+    from rhoai.platform import request_generator, trustyai_client  # avoid cycle
+
+    info: dict | None = None
+
+    def _model_info() -> dict:
+        nonlocal info
+        if info is None:
+            info = trustyai_client.get_model_info(route, token, model_id)
+        return info
+
+    # --- inputs ---
+    input_mapping = dict(explicit_inputs)
+    if not input_mapping and csv_headers:
+        items = _model_info().get("data", {}).get("inputSchema", {}).get("items", {})
+        input_mapping = request_generator.derive_input_name_mapping(
+            csv_headers, items, num_input_tensors
+        )
+        if input_mapping:
+            log.info("Auto-derived input name mapping for '%s' (%d features)",
+                     model_id, len(input_mapping))
+        else:
+            log.info("No safe input name mapping could be derived for '%s' — "
+                     "leaving original feature names", model_id)
+
+    # --- outputs (identity from pbtxt names, else from the response schema) ---
+    output_mapping = dict(explicit_outputs)
+    if not output_mapping:
+        names = list(pbtxt_output_names or [])
+        if not names:
+            out_items = _model_info().get("data", {}).get("outputSchema", {}).get("items", {})
+            names = [
+                str(meta["name"]) for meta in out_items.values() if meta.get("name") is not None
+            ]
+        output_mapping = {name: name for name in names}
+        if output_mapping:
+            log.info("Defaulting output name mapping for '%s' to model output names: %s",
+                     model_id, ", ".join(output_mapping))
+
+    if input_mapping or output_mapping:
+        trustyai_client.apply_name_mapping(
+            route, token, model_id, input_mapping, output_mapping
+        )
+    return input_mapping, output_mapping
+
+
+# ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 

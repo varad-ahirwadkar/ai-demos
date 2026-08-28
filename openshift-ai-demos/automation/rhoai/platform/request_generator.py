@@ -154,6 +154,24 @@ def parse_pbtxt(path: Path) -> tuple[str, list[TensorSpec]]:
 
 
 
+def parse_pbtxt_output_names(path: Path) -> list[str]:
+    """Return the ordered output tensor names from a Triton ``config.pbtxt``.
+
+    Reuses the same bracket/brace scanning as :func:`parse_pbtxt`.  Returns an
+    empty list when the file has no ``output [...]`` block.
+    """
+    text = path.read_text()
+    output_block = _extract_bracket_block(text, "output")
+    if output_block is None:
+        return []
+    names: list[str] = []
+    for entry in _split_brace_blocks(output_block):
+        name_match = re.search(r'name\s*:\s*"([^"]+)"', entry)
+        if name_match:
+            names.append(name_match.group(1))
+    return names
+
+
 def _flat_row(row: dict, headers: list[str], transforms: dict[str, str]) -> list[float]:
     """Convert one CSV row to a flat float list (flat-tensor mode)."""
     flat: list[float] = []
@@ -554,6 +572,141 @@ def iter_requests(
         for start in range(0, len(all_flat), batch_size):
             chunk = all_flat[start : start + batch_size]
             yield model_name, build_request(specs, {spec.name: chunk})
+
+
+def normalize_feature_name(name: str) -> str:
+    """Normalise a feature name for tolerant comparison.
+
+    Lowercases, treats underscores as spaces, collapses runs of whitespace, and
+    trims.  Lets differently-cased/spaced spellings of the same feature match::
+
+        Bank_Name  ->  "bank name"
+        bank_name  ->  "bank name"
+        Bank Name  ->  "bank name"
+        USER_MEAN_AMOUNT / user_mean_amount  ->  "user mean amount"
+    """
+    return re.sub(r"\s+", " ", name.replace("_", " ")).strip().lower()
+
+
+def humanize_feature_name(name: str) -> str:
+    """Return a title-cased display label for a raw feature/column name.
+
+    Normalises (see :func:`normalize_feature_name`) then capitalises each word::
+
+        bank_name         ->  "Bank Name"
+        USER_MEAN_AMOUNT  ->  "User Mean Amount"
+        num_children      ->  "Num Children"
+    """
+    return " ".join(w.capitalize() for w in normalize_feature_name(name).split(" ") if w)
+
+
+def read_csv_headers(path: Path) -> list[str]:
+    """Return the ordered column headers of a CSV file.
+
+    Reads only the header row.  Raises ``ValueError`` if the file has no rows.
+    """
+    reader = csv_mod.DictReader(io.StringIO(path.read_text()))
+    if reader.fieldnames is None:
+        raise ValueError(f"CSV '{path.name}' has no header row.")
+    return list(reader.fieldnames)
+
+
+def derive_input_name_mapping(
+    csv_headers: list[str],
+    input_schema_items: dict[str, dict],
+    num_input_tensors: int,
+) -> dict[str, str]:
+    """Derive an ``{internal_name: display_name}`` input mapping from CSV headers.
+
+    Given the CSV headers that produced a model's observations and TrustyAI's
+    ``inputSchema.items`` (each value carries the feature's original ``name`` and
+    its ``columnIndex`` in the flattened feature vector), return the input name
+    mapping to apply — or ``{}`` when the layout is ambiguous and no safe mapping
+    can be derived.
+
+    Two rules, applied per schema item:
+
+    Derived display names are title-cased via :func:`humanize_feature_name`
+    (``bank_name`` → ``"Bank Name"``).  Explicit user-supplied mappings are never
+    passed through here, so they keep their exact spelling.
+
+    * **Name match** — if a schema item's internal name matches a CSV header
+      after normalisation (see :func:`normalize_feature_name` — case-, underscore-
+      and whitespace-insensitive), map it to that header's humanized label.  A
+      schema name matches a header only when the request built that feature
+      directly from that column (multi-tensor mode, where the tensor name *is* the
+      header), so the mapping cannot mislabel.  Headers that normalise ambiguously
+      (two distinct headers collapsing to the same normal form) are excluded from
+      matching.  Covers multi-scalar models whose tensor names are meaningful.
+
+    * **columnIndex positional derivation** — for any item left unmatched, map it
+      to the humanized ``csv_headers[columnIndex]``.  Only safe for a model with
+      **exactly one input tensor**: with more than one tensor the flattened
+      ``columnIndex`` follows request (pbtxt) order, which need not match CSV
+      header order, so a positional mapping could silently mislabel features.
+      Covers the single flattened-tensor case (``<tensor>-0``…``<tensor>-N``).
+
+    Returns ``{}`` (skip) when there are no headers or schema items.  Explicit
+    user-supplied mappings and output mappings are handled by the caller — this
+    function only ever derives *input* names.
+    """
+    if not csv_headers or not input_schema_items:
+        return {}
+
+    # Each schema item value carries the feature's ORIGINAL internal name and its
+    # position in TrustyAI's flattened feature vector.
+    items: list[tuple[str, object]] = []
+    for meta in input_schema_items.values():
+        internal = meta.get("name")
+        if internal is None:
+            return {}
+        items.append((str(internal), meta.get("columnIndex")))
+
+    header_set = set(csv_headers)
+
+    # Map each normalised CSV header to its original spelling; a normal form
+    # produced by two distinct headers is ambiguous and excluded from matching.
+    norm_to_header: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for header in csv_headers:
+        norm = normalize_feature_name(header)
+        if norm in norm_to_header and norm_to_header[norm] != header:
+            ambiguous.add(norm)
+        norm_to_header.setdefault(norm, header)
+
+    mapping: dict[str, str] = {}
+    unmatched: list[tuple[str, object]] = []
+
+    # Rule A — normalised-name match (maps to a title-cased header; safe for
+    # every layout since a match means the feature came from that column).
+    for internal, column_index in items:
+        norm = normalize_feature_name(internal)
+        if norm in norm_to_header and norm not in ambiguous:
+            mapping[internal] = humanize_feature_name(norm_to_header[norm])
+        else:
+            unmatched.append((internal, column_index))
+
+    if not unmatched:
+        return mapping
+
+    # Rule B — columnIndex derivation, guarded to single-tensor models.
+    if num_input_tensors != 1:
+        return mapping                                    # order not CSV-aligned
+    if len(csv_headers) != len(header_set):
+        return mapping                                    # duplicate headers
+    if len(items) != len(csv_headers):
+        return mapping                                    # feature-count mismatch
+    indices = [column_index for _, column_index in items]
+    if any(not isinstance(i, int) for i in indices):
+        return mapping                                    # missing/invalid index
+    int_indices = [i for i in indices if isinstance(i, int)]
+    if sorted(int_indices) != list(range(len(csv_headers))):
+        return mapping                                    # non-bijective / out of range
+
+    for internal, column_index in unmatched:
+        if isinstance(column_index, int):
+            mapping[internal] = humanize_feature_name(csv_headers[column_index])
+    return mapping
 
 
 def generate_batched_requests(
