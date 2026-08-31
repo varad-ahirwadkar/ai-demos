@@ -36,7 +36,6 @@ deployment:
   models:
     - name: demo-loan-nn-onnx-alpha
       model_path:  /Users/varad/Desktop/automation-framework/model.onnx
-      config_path: /Users/varad/Desktop/automation-framework/config.pbtxt
       pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
       pvc_size:    1Gi
       inference_dataset: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_detection/inputs/training/csv/batch_01.csv
@@ -50,16 +49,17 @@ deployment:
         # Inputs are auto-derived from the CSV headers (single flat tensor →
         # columnIndex), title-cased: num_children → "Num Children",
         # is_male → "Is Male", employment_length → "Employment Length", etc.
-        # Set 'inputs' only to override those derived labels.
-        name_mapping:
-          outputs:
-            predict: "Will Default?"
+        # Outputs labels are derived from config.pbtxt
+        # Set 'inputs' or 'outputs' only to override those derived labels.
+        # name_mapping:
+        #   outputs:
+        #     predict: "Will Default?"
 
         # SPD fairness monitors: validated immediately before scheduling.
         spd_monitors:
           - protected_attribute:   "Is Male"   # auto-derived from CSV header 'is_male'
             privileged_value:      1.0
             unprivileged_value:    0.0
-            outcome_name:          "Will Default?"
+            outcome_name:          "predict"
             favorable_outcome:     0.0
             batch_size:            5000

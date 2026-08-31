@@ -30,16 +30,8 @@ deployment:
   models:
     # Dataset mode: inference_dataset is the single source of truth for the
     # smoke test.
-    # inference_request and inference_dataset are mutually exclusive — set one.
-    # - name: upi-fraud-detection
-    #   model_path:  /Users/varad/Downloads/upi-fraud-detection/model.onnx
-    #   config_path: /Users/varad/Downloads/upi-fraud-detection/config.pbtxt
-    #   pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
-    #   pvc_size:    1Gi  
-    #   inference_request: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_detection/inputs/upi-fraud-detection.json
     - name: demo-loan-nn-onnx-alpha
       model_path:  /Users/varad/Desktop/automation-framework/model.onnx
-      #config_path: /Users/varad/Desktop/repos/ai-demos/config.pbtxt
       pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
       pvc_size:    1Gi
       inference_dataset: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_detection/inputs/training/csv/batch_01.csv
