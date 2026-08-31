@@ -510,13 +510,19 @@ exclusive modes, validated up front by `assets.validate_model_config` (both
 | Key | `inference_request` | `inference_dataset` |
 | Smoke test | the file, used as-is (JSON) or converted (CSV) | first request from `iter_requests(..., batch_size=1)` — the first row/element, never the full batch |
 | Observations | declared separately under `bias_monitoring.observations.path`/`.files` | derived from the dataset, batched by `bias_monitoring.observations.batch_size` (default 1) |
-| Extra requirement | — | a Triton `config.pbtxt` via `inference_config_path` (or `config_path`) |
+| Extra requirement | — | a Triton `config.pbtxt` via `inference_config_path`/`config_path`, or an ONNX `model_path` the framework generates one from |
 
 Smoke test and observations share one generator (`request_generator.iter_requests`),
 so in dataset mode the dataset is the single source of truth. Rejected as
 ambiguous: both keys set; neither set; `inference_dataset` +
 `observations.path`/`.files`; `inference_request` + `observations.batch_size`;
-a dataset with no pbtxt.
+a dataset with no pbtxt and no `model_path` to generate one from.
+
+When an ONNX `model_path` is supplied without a `config_path`, `deploy.py`
+generates a Triton `config.pbtxt` via `platform/config_generator.py` (writing it
+to `usecases/fraud_detection/inputs/<name>/config.pbtxt`) and records the path on
+the model dict so staging, request generation, and name mapping all resolve the
+same file.
 
 ### `verify.py`
 

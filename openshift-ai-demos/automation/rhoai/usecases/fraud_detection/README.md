@@ -40,7 +40,7 @@ This use case requires external assets that are not included in the framework. A
 | Asset | What it is | Where it's used |
 |---|---|---|
 | Model file (e.g. `model.onnx`) | The trained fraud-detection model, in a Triton-supported format | Staged to a PVC via `model_path` or a pre-loaded `model_uri` |
-| Triton `config.pbtxt` | The model's Triton configuration | `config_path`  |
+| Triton `config.pbtxt` | The model's Triton configuration | `config_path` — **optional for ONNX models**; auto-generated from the model's I/O signature when omitted |
 | Inference input | Either a pre-built KServe v2 request **or** a raw CSV/JSON dataset | `inference_request` **or** `inference_dataset`  |
 
 All asset paths (`model_path`, `config_path`, `inference_request`,
@@ -121,15 +121,18 @@ Each entry under `deployment.models` defines one independent model deployment:
 |---|---|---|
 | `name` | ✔ | Kubernetes resource name for the `InferenceService` and `ServingRuntime` |
 | `model_uri` | ✦ | Reference a model **already staged** on a PVC, currently only `pvc://<claim>/<path>` is supported. |
-| `model_path` + `config_path` | ✦ | Local model file + Triton `config.pbtxt`; the framework creates the PVC and stages the Triton layout for you |
+| `model_path` | ✦ | Local model file; the framework creates the PVC and stages the Triton layout for you |
+| `config_path` | | Local Triton `config.pbtxt`. **Optional for ONNX models** — when omitted, one is generated from the model's I/O signature (see [Generated config.pbtxt](#generated-configpbtxt)) |
+| `max_batch_size` | | Config generation only — enable batching with this max batch size (default `0` = shapes preserved verbatim). Requires a dynamic leading dim on every tensor |
+| `dynamic_batching` | | Config generation only — emit a `dynamic_batching {}` block when batching is enabled (default `true`) |
 | `pvc_name` | | Local-staging only — PVC to create/reuse (defaults to `<name>-pvc`) |
 | `pvc_size` | | Local-staging only — PVC size (defaults to `1Gi`) |
 | `inference_request` | ✱ |  Absolute path to a pre-built KServe v2 JSON payload used for post-deploy validation |
 | `inference_dataset` | ✱ |  Absolute path to a raw CSV/JSON dataset the framework generates requests from |
 | `bias_monitoring` | | TrustyAI bias monitoring config — see [TrustyAI configuration](#trustyai-configuration) |
 
-> **✦ Model source** — supply **either** `model_uri` **or** both `model_path`
-> and `config_path`.
+> **✦ Model source** — supply **either** `model_uri` **or** `model_path`
+> (with an optional `config_path`).
 >
 > **✱ Inference input** — supply **exactly one** of `inference_request` or
 > `inference_dataset`.
@@ -144,17 +147,18 @@ models side by side for a comparative fairness demonstration.
 Provide the model in one of the following ways:
 
 **Local files (recommended):**  
-Specify a local model file with `model_path` and its accompanying Triton
-`config.pbtxt` with `config_path`. The framework validates the files, creates
-(or reuses) the PVC, and stages the Triton model repository layout
-automatically.
+Specify a local model file with `model_path`. Optionally provide its Triton
+`config.pbtxt` with `config_path`; for ONNX models you can omit it and the
+framework generates one (see [Generated config.pbtxt](#generated-configpbtxt)).
+The framework validates the files, creates (or reuses) the PVC, and stages the
+Triton model repository layout automatically.
 
 ```yaml
 deployment:
   models:
     - name: upi-fraud-detection
       model_path:  /abs/path/to/model.onnx
-      config_path: /abs/path/to/config.pbtxt
+      config_path: /abs/path/to/config.pbtxt   # optional for ONNX — generated when omitted
       pvc_size:    5Gi                          # optional
 ```
 
@@ -168,6 +172,49 @@ repository before deploying.
 ```
 oc get pvc -n <namespace>
 ```
+
+#### Generated config.pbtxt
+
+When you supply an ONNX `model_path` without a `config_path`, the framework
+inspects the model's input/output signature (via ONNX Runtime) and generates a
+Triton `config.pbtxt` for you. It records the model `name`, the
+`onnxruntime_onnx` platform, and the input/output tensors (names, datatypes,
+and shapes, preserving dynamic dimensions as `-1`).
+
+The generated file is written to a persistent, discoverable location so you can
+inspect exactly what was staged:
+
+```
+rhoai/usecases/fraud_detection/inputs/<name>/config.pbtxt
+```
+
+Its path is printed in the deploy summary under the model, annotated
+`(generated)`. It is also reused as the request schema in
+[dataset mode](#dataset-mode) and as the source of output names for
+[name mapping](#name-mapping).
+
+Batching is **opt-in** because a dynamic leading dimension is ambiguous — it may
+be a batch dim or a genuine variable-length dim. By default (`max_batch_size: 0`)
+the model's shapes are preserved verbatim. Set `max_batch_size` > 0 to enable
+batching (this requires a dynamic leading dim on every tensor; otherwise it
+falls back to `0`), and set `dynamic_batching: false` to suppress the
+`dynamic_batching {}` block.
+
+```yaml
+deployment:
+  models:
+    - name: upi-fraud-detection
+      model_path:       /abs/path/to/model.onnx   # no config_path → generated
+      max_batch_size:   8                          # optional (default 0 = no batching)
+      dynamic_batching: true                       # optional (default true)
+```
+
+> Installing the framework with the `onnx` extra (`pip install -e ".[onnx]"`)
+> pulls in ONNX Runtime, which is required for config generation.
+>
+> A standalone version of this generator is also available at
+> [`tools/generate_config_pbtxt.py`](../../../tools/README_generate_config_pbtxt.md)
+> for generating a `config.pbtxt` outside of a deployment.
 
 ### Inference inputs
 
@@ -190,8 +237,9 @@ becomes the single source of truth:
 - `bias_monitoring.observations.batch_size` controls how many observations are
   included in each generated request (default: `1`).
 
-Dataset mode requires a Triton `config.pbtxt` (via `config_path` or
-`inference_config_path`) to define the request schema.
+Dataset mode needs a Triton `config.pbtxt` to define the request schema. Supply
+one via `config_path` (or `inference_config_path`), **or** provide an ONNX
+`model_path` and let the framework [generate one](#generated-configpbtxt).
 
 ```yaml
 # Dataset mode (excerpt) — see config-fraud-detection-trustyai.yaml
@@ -199,7 +247,7 @@ deployment:
   models:
     - name: upi-fraud-detection
       model_path:  /absolute/path/model.onnx
-      config_path: /absolute/path/config.pbtxt      # also used as the request schema
+      config_path: /absolute/path/config.pbtxt      # optional — generated from model_path when omitted
       inference_dataset:/absolute/path/to/csv/batch_01.csv
       bias_monitoring:
         observations:
@@ -209,7 +257,7 @@ deployment:
 **Configuration rules**
 
 - Use either `inference_request` or `inference_dataset`, but not both.
-- Dataset mode requires a Triton `config.pbtxt`.
+- Dataset mode needs a Triton `config.pbtxt` — supplied via `config_path`, or generated from an ONNX `model_path`.
 - Dataset mode automatically generates TrustyAI observations, so do not set `bias_monitoring.observations.path` or `bias_monitoring.observations.files`.
 - `observations.batch_size` is only used with dataset mode.
 
@@ -242,6 +290,7 @@ deployment:
         observations:
           batch_size: 250   
         name_mapping:
+          # inputs/outputs are optional — see "Name mapping" below.
           inputs:  { customer_data_input-3: "Is Male-Identifying?" }
           outputs: { predict: "Will Default?" }
         spd_monitors:
@@ -256,11 +305,38 @@ deployment:
 | Key | Purpose |
 |---|---|
 | `observations` | Baseline data sent to TrustyAI during deployment. In JSON mode, specify path or files. In dataset mode, observations are generated automatically from `inference_dataset`; configure `observations.batch_size` instead |
-| `name_mapping` | Maps tensor names to human-readable labels so monitors can reference meaningful names |
+| `name_mapping` | Maps opaque tensor names to human-readable labels so monitors can reference meaningful names. Both `inputs` and `outputs` are optional — see [Name mapping](#name-mapping) |
 | `spd_monitors` | Schedules recurring Statistical Parity Difference (SPD) monitors |
 | `identity_monitors` | Optional. Tracks the average value of a named column over time |
 | `trustyai_service_name` | `TrustyAIService` resource name (default `trustyai-service`). |
 | `trustyai_service_account` | ServiceAccount created for TrustyAI RBAC (default `trustyai-user`). |
+
+#### Name mapping
+
+TrustyAI monitors reference features and outcomes by name, but models often
+expose opaque tensor names (e.g. `customer_data_input-3`, `predict`). A
+`name_mapping` block relabels them. Both halves are **optional** because the
+framework derives sensible defaults:
+
+- **Inputs** — when `inference_dataset` is a **`.csv`**, input names are derived
+  automatically from the dataset's column headers. A single flat tensor is
+  mapped by column index; a multi-tensor model reuses the header names. Set
+  `name_mapping.inputs` only to override these derived names.
+- **Outputs** — output names default to the **output names in the model's
+  `config.pbtxt`** (whether you supplied it or the framework generated it),
+  falling back to the names in the first inference response. Set
+  `name_mapping.outputs` only to relabel them.
+
+Provide only the entries you want to change:
+
+```yaml
+        name_mapping:
+          inputs:  { customer_data_input-3: "Is Male-Identifying?" }   # override one column
+          outputs: { predict: "Will Default?" }                        # relabel the outcome
+```
+
+The names you map here are the ones referenced by `spd_monitors`
+(`protected_attribute`, `outcome_name`) and `identity_monitors` (`column_name`).
 
 **Observing fairness metrics:**  
 After deployment, the summary includes a link to the OpenShift metrics browser. Query `trustyai_spd` to view Statistical Parity Difference metrics. If you've configured `identity monitors`, `trustyai_identity` metrics are also available.
@@ -348,6 +424,19 @@ ction/inputs/upi-fraud-detection.json
     rhoai usecase cleanup fraud-detection \
       -c openshift-ai-demos/automation/config-fraud-detection.yaml
 
+```
+
+When the framework generates artifacts for a model — a `config.pbtxt` from an
+ONNX `model_path`, or a request JSON in [dataset mode](#dataset-mode) — their
+paths are listed under the model in the summary, annotated `(generated)`, so you
+can find and inspect them:
+
+```
+✔  upi-fraud-detection
+  Endpoint     : https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com
+  Smoke test   : Passed
+  Config       : .../inputs/upi-fraud-detection/config.pbtxt          (generated)
+  Request      : .../inputs/upi-fraud-detection_generated_request.json  (generated)
 ```
 
 If the endpoint is unreachable from the machine running the CLI (for example, a
