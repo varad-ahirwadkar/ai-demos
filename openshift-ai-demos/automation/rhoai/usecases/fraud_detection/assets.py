@@ -151,6 +151,10 @@ class ModelResult:
     inference_output:   dict[str, Any] | None      = field(default=None, repr=False)
     curl_cmd:           str                        = ""
     request_path:       Path | None                = field(default=None, repr=False)
+    # Local artifacts the framework generated for this model (shown in the
+    # summary so users can inspect them). None when the user supplied their own.
+    generated_config_path:  Path | None            = None
+    generated_request_path: Path | None            = None
     validation_skipped: bool                       = False
     unreachable:        EndpointUnreachable | None = field(default=None, repr=False)
 
@@ -263,10 +267,15 @@ def validate_model_config(model: dict[str, Any]) -> None:
                 f"Model '{name}': 'bias_monitoring.observations.path'/'files' cannot be "
                 "combined with 'inference_dataset' — observations are derived from the dataset."
             )
-        if not (model.get("inference_config_path") or model.get("config_path")):
+        if not (
+            model.get("inference_config_path")
+            or model.get("config_path")
+            or model.get("model_path")
+        ):
             raise ValueError(
                 f"Model '{name}': 'inference_dataset' requires a Triton 'config.pbtxt' via "
-                "'inference_config_path' (or 'config_path')."
+                "'inference_config_path' (or 'config_path'), or a 'model_path' ONNX model "
+                "the framework can generate one from."
             )
 
 

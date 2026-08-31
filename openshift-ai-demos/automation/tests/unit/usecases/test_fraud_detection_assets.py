@@ -150,6 +150,15 @@ class TestValidateModelConfig:
             "bias_monitoring": {"observations": {"batch_size": 50}},
         })
 
+    def test_dataset_mode_with_model_path_is_valid(self) -> None:
+        # model_path (ONNX) satisfies the pbtxt requirement: the framework
+        # generates a config.pbtxt from the model during deployment.
+        validate_model_config({
+            "name": "m",
+            "inference_dataset": "data.csv",
+            "model_path": "model.onnx",
+        })
+
     # --- rejected combinations ---
 
     def test_rejects_both_request_and_dataset(self) -> None:

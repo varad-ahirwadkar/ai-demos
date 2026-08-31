@@ -22,6 +22,11 @@ dev = [
     "pytest-mock>=3.14",
     "ruff>=0.4",
 ]
+# Enables generating a Triton config.pbtxt from an ONNX model when a deployment
+# supplies model_path without config_path. Only needed for that path.
+onnx = [
+    "onnxruntime>=1.17",
+]
 
 [project.scripts]
 rhoai = "rhoai.cli.main:app"

@@ -234,19 +234,55 @@ class TestDeployModelStagingBranch:
         with pytest.raises(ValueError, match="mutually exclusive"):
             _deploy_model(model, "/repo", "plat-ns", "work-ns", 1)
 
-    def test_raises_when_only_model_path_set(self) -> None:
+    def test_model_path_without_config_path_is_allowed(self) -> None:
+        """config_path is optional — model_path alone proceeds past validation
+        (a missing model file then fails artifact validation, not the guard)."""
         from rhoai.usecases.fraud_detection.deploy import _deploy_model
 
         model = {"name": "m", "model_path": "/some/model.onnx"}
-        with pytest.raises(ValueError, match="both be provided together"):
+        with pytest.raises(FileNotFoundError):
             _deploy_model(model, "/repo", "plat-ns", "work-ns", 1)
 
     def test_raises_when_only_config_path_set(self) -> None:
         from rhoai.usecases.fraud_detection.deploy import _deploy_model
 
         model = {"name": "m", "config_path": "/some/config.pbtxt"}
-        with pytest.raises(ValueError, match="both be provided together"):
+        with pytest.raises(ValueError, match="config_path requires model_path"):
             _deploy_model(model, "/repo", "plat-ns", "work-ns", 1)
+
+    def test_generate_staging_pbtxt_writes_and_records_path(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """_generate_staging_pbtxt renders a config.pbtxt from the ONNX model,
+        names it after the ISVC, and records config_path back on the model."""
+        from rhoai.platform import config_generator
+        from rhoai.usecases.fraud_detection.deploy import _generate_staging_pbtxt
+
+        captured: dict = {}
+
+        def _fake_generate(model_path, *, name, max_batch_size, dynamic_batching):
+            captured.update(
+                model_path=model_path, name=name,
+                max_batch_size=max_batch_size, dynamic_batching=dynamic_batching,
+            )
+            return f'name: "{name}"\nmax_batch_size: {max_batch_size}\n'
+
+        monkeypatch.setattr(config_generator, "generate_pbtxt", _fake_generate)
+
+        model_file = tmp_path / "model.onnx"
+        model_file.write_bytes(b"")
+        model = {"name": "loan", "model_path": str(model_file), "max_batch_size": 4}
+
+        result = _generate_staging_pbtxt(model, "loan", str(tmp_path))
+
+        assert result.name == "config.pbtxt"                 # Triton requires this name
+        assert result.parent.name == "loan"                  # per-model subdirectory
+        assert "inputs" in result.parts                      # persistent, discoverable
+        assert result.exists()
+        assert model["config_path"] == str(result)          # recorded for downstream
+        assert captured["name"] == "loan"                    # Triton name = ISVC name
+        assert captured["max_batch_size"] == 4               # per-model override honored
+        assert captured["dynamic_batching"] is True          # default
 
 
 class TestDeleteStagingPod:

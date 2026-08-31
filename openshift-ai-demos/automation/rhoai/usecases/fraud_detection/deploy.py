@@ -43,7 +43,7 @@ from typing import Any
 
 from rich.console import Console
 from rhoai.ocp import resources as ocp_resources
-from rhoai.platform import dsc, inference, manifests, operators, prepare, request_generator, storage, trustyai, trustyai_client
+from rhoai.platform import config_generator, dsc, inference, manifests, operators, prepare, request_generator, storage, trustyai, trustyai_client
 from rhoai.platform.inference import EndpointUnreachable
 from rhoai.usecases.fraud_detection import assets
 from rhoai.usecases.fraud_detection.assets import (
@@ -104,6 +104,39 @@ def _resolve_pbtxt(model: dict[str, Any]) -> Path:
             "'inference_config_path' (or 'config_path') pointing to a Triton config.pbtxt."
         )
     return Path(config_path)
+
+
+def _generate_staging_pbtxt(model: dict[str, Any], name: str, repo_root: str) -> Path:
+    """Generate a Triton ``config.pbtxt`` from a model's local ONNX artifact.
+
+    Used when ``model_path`` is supplied without ``config_path``.  The file is
+    written to ``usecases/fraud_detection/inputs/<name>/config.pbtxt`` — a
+    persistent, discoverable location (mirroring the generated request JSON) so
+    users can inspect exactly what was staged.  The filename stays ``config.pbtxt``
+    because Triton requires it; the per-model subdirectory keeps entries separate.
+    Its path is recorded back onto the model dict as ``config_path`` so every
+    downstream consumer (staging, request generation, name mapping) resolves the
+    same file.
+
+    The Triton model name is set to ``name`` (the InferenceService name) so it
+    matches the model directory Triton serves it from.  Batching is opt-in via
+    the optional per-model ``max_batch_size`` (default 0 = shapes preserved
+    verbatim) and ``dynamic_batching`` (default true) keys.
+    """
+    out_dir = (
+        Path(repo_root) / "automation" / "rhoai" / "usecases"
+        / "fraud_detection" / "inputs" / name
+    )
+    generated = config_generator.write_pbtxt(
+        Path(model["model_path"]),
+        out_dir / "config.pbtxt",
+        name=name,
+        max_batch_size=model.get("max_batch_size", 0),
+        dynamic_batching=model.get("dynamic_batching", True),
+    )
+    # Record so _resolve_pbtxt / _resolve_schema_source / name mapping pick it up.
+    model["config_path"] = str(generated)
+    return generated
 
 
 def _resolve_request_artifacts(
@@ -239,8 +272,10 @@ def _deploy_model(
     Accepts two mutually exclusive model source configurations:
 
     ``model_uri`` — existing path on S3, PVC, Hugging Face, or OCI; used as-is.
-    ``model_path`` + ``config_path`` — local artifact files; the framework stages
-        them onto a PVC in the Triton repository layout and derives the URI.
+    ``model_path`` (+ optional ``config_path``) — local artifact files; the
+        framework stages them onto a PVC in the Triton repository layout and
+        derives the URI.  When ``config_path`` is omitted for an ONNX model, a
+        Triton ``config.pbtxt`` is generated from the model's I/O signature.
 
     Returns a ModelResult that records whether validation was skipped.
     The caller is responsible for surfacing any warnings in the summary.
@@ -250,26 +285,39 @@ def _deploy_model(
     model_path   = model.get("model_path", "")
     config_path  = model.get("config_path", "")
     runtime_name = assets.serving_runtime_name(name)
+    # Track any config.pbtxt the framework generates so the summary can point at it.
+    generated_config: Path | None = None
 
     # --- Validate mutual exclusivity -----------------------------------------
     if model_uri and (model_path or config_path):
         raise ValueError(
             f"Model '{name}': model_uri and model_path/config_path are mutually "
-            "exclusive. Provide either model_uri or both model_path and config_path."
+            "exclusive. Provide either model_uri or model_path (config_path optional)."
         )
-    if bool(model_path) != bool(config_path):
+    if config_path and not model_path:
         raise ValueError(
-            f"Model '{name}': model_path and config_path must both be provided together."
+            f"Model '{name}': config_path requires model_path."
         )
 
     # --- Stage local artifacts onto PVC (Option 2) ---------------------------
-    if model_path and config_path:
+    if model_path:
         pvc_name = model.get("pvc_name") or f"{name}-pvc"
         pvc_size = model.get("pvc_size", "1Gi")
         storage_class = model.get("storage_class", "")
 
         with step("Validating local model artifacts"):
-            storage.validate_local_artifacts(Path(model_path), Path(config_path))
+            storage.validate_local_artifacts(Path(model_path))
+            if config_path:
+                storage.validate_local_artifacts(Path(config_path))
+
+        # config.pbtxt is optional for ONNX models — generate it from the model
+        # when the user did not supply one, then use it everywhere downstream.
+        if config_path:
+            config_file = Path(config_path)
+        else:
+            with step("Generating config.pbtxt from ONNX model"):
+                config_file = _generate_staging_pbtxt(model, name, repo_root)
+            generated_config = config_file
 
         with step(f"Ensuring PVC '{pvc_name}'"):
             pvc_created = storage.create_pvc(pvc_name, namespace, pvc_size,
@@ -281,7 +329,7 @@ def _deploy_model(
                     pvc_name=pvc_name,
                     namespace=namespace,
                     files=assets.triton_file_map(
-                        name, Path(model_path), Path(config_path)
+                        name, Path(model_path), config_file
                     ),
                     timeout=staging_timeout,
                 )
@@ -323,9 +371,14 @@ def _deploy_model(
 
     endpoint = inference.get_inference_url(name, namespace)
     result = ModelResult(name=name, model_uri=model_uri, endpoint=endpoint)
+    result.generated_config_path = generated_config
     with step("Smoke-testing model endpoint") as s:
         request_path, schema_source, payload, curl_cmd = _resolve_request_artifacts(model, repo_root)
         result.request_path    = request_path
+        # Dataset mode writes a KServe v2 request JSON the user can inspect/reuse;
+        # JSON mode reuses the user-supplied file, so there is nothing generated.
+        if not model.get("inference_request"):
+            result.generated_request_path = request_path
         result.inference_input = payload
         result.curl_cmd = render_curl_command_file(
             endpoint.rstrip("/") + inference._TRITON_INFER_PATH.format(model_name=name),
@@ -661,14 +714,19 @@ def print_summary(
     _console.print(f"  Namespace  : {namespace}\n")
 
     # --- Per-model outcome blocks ---
-    # Source paths are omitted — they were already shown during execution via
-    # the model_uri in the header_step label or are implicit from the config.
+    # User-supplied source paths are omitted (shown during execution / implicit
+    # from the config).  Artifacts the framework generated — config.pbtxt and the
+    # request JSON — are surfaced here so users can find and inspect what was staged.
     _console.print("Models\n")
     for r in results:
         smoke_status = "Skipped (endpoint unreachable)" if r.validation_skipped else "Passed"
         _console.print(f"\u2714  {r.name}")
         _console.print(f"  Endpoint     : {r.endpoint}")
         _console.print(f"  Smoke test   : {smoke_status}")
+        if r.generated_config_path is not None:
+            _console.print(f"  Config       : {r.generated_config_path}  (generated)")
+        if r.generated_request_path is not None:
+            _console.print(f"  Request      : {r.generated_request_path}  (generated)")
 
         if not r.validation_skipped:
             if r.inference_input is not None:

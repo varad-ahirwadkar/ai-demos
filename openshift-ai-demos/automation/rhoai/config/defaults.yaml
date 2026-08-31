@@ -38,8 +38,18 @@ deployment:
 
   # List of models to deploy. Each entry is an independent InferenceService.
   # For bias monitoring, supply two entries (e.g. baseline + candidate).
-  # model_uri: reference a model already staged on a PersistentVolumeClaim.
-  #   pvc://<claim-name>/<path>   — model pre-loaded on a PVC
+  #
+  # Model source (mutually exclusive):
+  #   model_uri: reference a model already staged remotely; used as-is.
+  #     pvc://<claim>/<path>, hf://…, oci://…, or an S3 path
+  #   model_path: local artifact staged onto a PVC by the framework.
+  #     config_path (Triton config.pbtxt) is OPTIONAL for ONNX models — when
+  #     omitted, one is generated from the model's I/O signature. Generation is
+  #     tuned per-model with (both optional):
+  #       max_batch_size:   0        # 0 = shapes preserved verbatim (default);
+  #                                  #  > 0 = enable batching (needs a dynamic
+  #                                  #  leading dim on every tensor)
+  #       dynamic_batching: true     # emit a dynamic_batching {} block when batched
   models:
     - name: fraud-detection
       model_uri: pvc://fraud-model-pvc/models

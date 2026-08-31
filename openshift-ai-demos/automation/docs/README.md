@@ -139,7 +139,8 @@ automation/
     │   ├── trustyai.py              TrustyAI Service lifecycle
     │   ├── storage.py               Secrets and PVCs
     │   ├── verify.py                Platform health checks
-    │   └── manifests.py             Shared manifest path resolver
+    │   ├── manifests.py             Shared manifest path resolver
+    │   └── config_generator.py      ONNX model → Triton config.pbtxt
     ├── usecases/
     │   ├── registry.py              Maps CLI names to use-case modules
     │   └── fraud_detection/
