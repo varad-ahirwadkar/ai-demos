@@ -85,17 +85,18 @@ re-init after a previous partial failure, or a second `init` with a different ch
 flag), it **does not reinstall or modify the Subscription**. Instead it:
 
 1. Detects that the CSV is already in `Succeeded` phase.
-2. Verifies it and prints `Operator already installed — skipping install`.
+2. Waits for the existing CSV to be ready (returns immediately, since it is already
+   `Succeeded`) instead of creating or modifying the Subscription.
 3. Continues to apply / wait for DSCI as normal.
+
+The output is the same as a fresh install — no separate "skipping" message is printed:
 
 ```
 Initializing RHOAI platform...
-    Operator already installed — skipping install
-    Applying DSCInitialization
 
-Platform initialized
-  Operator    rhods-operator.3.4.2  3.4.2
-  DSCI        default-dsci  Ready
+  ✔  RHOAI platform initialized
+     Operator  : rhods-operator.3.4.2  3.4.2
+     Platform  : Ready
 ```
 
 This means `init` is **safe to re-run** — it will never accidentally upgrade or
@@ -105,9 +106,9 @@ downgrade an already-running operator. To change the installed version, use
 > **Version-agnostic check:** the "already installed" detection is based solely on the
 > CSV being in `Succeeded` phase — it does **not** compare the installed version against
 > the `--version` or `--channel` flags you pass. If the operator is installed at any
-> version and its CSV is `Succeeded`, `init` will always skip the install step and
-> print `Operator already installed — skipping install`, regardless of whether the
-> requested channel or version differs from what is currently running.
+> version and its CSV is `Succeeded`, `init` will always skip the install step,
+> regardless of whether the requested channel or version differs from what is
+> currently running.
 
 ### Discovering channels and versions
 
@@ -226,11 +227,9 @@ Enables one or more DSC components on an already-initialised platform. Requires
 - Additive and idempotent — only the named components are patched to `Managed`
 - Components not named are left exactly as they are (no accidental disables)
 - If no DataScienceCluster exists yet, one is created from the base manifest before patching
-- **If the operator is not installed, the command exits immediately with an error** —
-  it does not attempt to install anything:
-  ```
-  Error: Operator not found. Run 'rhoai platform init' first.
-  ```
+- **If the operator is not installed, the command fails immediately** with
+  `Operator not found. Run 'rhoai platform init' first.` — it does not attempt to
+  install anything.
 
 ### Syntax
 
@@ -258,29 +257,21 @@ rhoai platform enable <component> [<component> ...]
 | `ogx` | OpenShift AI Extensions |
 | `sparkoperator` | Apache Spark operator |
 
-### Dashboard URL
+### Output
 
-When `dashboard` is enabled (or was already enabled), the CLI automatically looks up
-the RHOAI dashboard URL and prints it at the end of the `enable` output:
+After patching the named components, `enable` echoes the components it just enabled
+followed by every component currently `Managed` in the DataScienceCluster:
 
 ```
-  🌐  Dashboard
-    URL    https://rhods-dashboard-redhat-ods-applications.apps.<cluster>
-    Note   Add to /etc/hosts:  <ingress-ip>  rhods-dashboard-redhat-ods-applications.apps.<cluster>
+Enabling: dashboard, kserve
+
+  ✔  Enabled: dashboard, kserve
+
+  Components
+    ✔  dashboard
+    ✔  kserve
+    ✔  workbenches
 ```
-
-**How the URL is resolved (in priority order):**
-
-1. `ConsoleLink/rhodslink` — created by the dashboard component itself; contains the
-   exact `spec.href` URL that Red Hat intends users to visit
-2. `Route/rhods-dashboard` in `redhat-ods-applications` — fallback for older installs
-   where the ConsoleLink is absent
-
-The `/etc/hosts` note is printed so you can reach the dashboard from a laptop without
-modifying DNS — add the cluster ingress IP against the hostname shown.
-
-> The dashboard URL is **only printed when the `dashboard` component is `Managed`**
-> in the DataScienceCluster. It is not shown for other components.
 
 ### Examples
 
@@ -413,10 +404,10 @@ services across the reinstall.
 
 **Deletion sequence:**
 1. DataScienceCluster — operator deprovisions components gracefully first, then waits
-   for component pods to drain (timeout configurable via `timeouts.dsc_ready`)
+   up to 120s (hardcoded) for component pods to drain
 2. DSCInitialization
 3. ClusterServiceVersion (CSV), Subscription, OperatorGroup, InstallPlans
-4. Cluster-wide sweep of any stale rhods/rhoai/odh CSVs
+4. Cluster-wide sweep of any stale rhods/rhoai/opendatahub CSVs
 5. Dependency operators auto-detected on the cluster:
    - `servicemeshoperator3` (installed when NIM / gateway routing is enabled)
    - `servicemeshoperator` (legacy Maistra v2)
@@ -527,6 +518,8 @@ rhoai platform inspect
 **Sample output:**
 
 ```
+Dumping cluster info...
+
 ⚙  Cluster
   OpenShift    <version>
   Topology     Multi-node  (6 nodes: 3 master, 3 workers)

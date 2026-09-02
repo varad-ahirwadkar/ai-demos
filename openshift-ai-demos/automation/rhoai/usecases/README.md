@@ -19,6 +19,15 @@ Every use case follows the same three-step lifecycle:
 | 2. Verify | `rhoai usecase verify <name> -c config.yaml` |
 | 3. Clean up | `rhoai usecase cleanup <name> -c config.yaml` |
 
+Use `rhoai usecase list` to see every use case registered on your install.
+
+Pass `--delete-platform` to `cleanup` to also remove the DataScienceCluster and
+DSCInitialization after the use-case resources are gone (use with caution):
+
+```bash
+rhoai usecase cleanup <name> -c config.yaml --delete-platform
+```
+
 ---
 
 ## Available use cases
@@ -33,12 +42,14 @@ Every use case follows the same three-step lifecycle:
 
 Every use case uses a YAML configuration file passed with --config (or -c). Settings from the command line override your config file, which overrides the built-in defaults.
 
-Configuration is split into two layers:
+Configuration is grouped into two conceptual layers:
 
 | Layer | Purpose | Shared across use cases? |
 |---|---|---|
-| **Platform** | Platform settings such as `repo_root`, operator, components, storage, and timeouts | Yes |
-| **Deployment** | Use case specific settings, such as namespaces, models, and other deployment options | No |
+| **Platform** | Platform settings such as `repo_root`, `log_level`, `operator`, `components`, `dsc`, `storage`, and `timeouts` | Yes |
+| **Deployment** | Use case specific settings under the `deployment:` block, such as namespace, models, and other options | No |
+
+See [`rhoai/config/defaults.yaml`](../config/defaults.yaml) for the full structure.
 
 `repo_root` must be an **absolute** path to the `openshift-ai-demos` directory.
 Each use case guide documents the deployment settings it supports.

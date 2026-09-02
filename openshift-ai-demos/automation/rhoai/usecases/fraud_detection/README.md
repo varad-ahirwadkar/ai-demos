@@ -28,8 +28,8 @@ Use this use case to deploy one or more predictive fraud detection models on Ope
 **Prerequisites**
 
 - For framework installation, cluster access, and platform requirements, see the [Getting Started](../../../README.md#getting-started) guide.
-- **Compute:** each model deployment requests **2 CPU / 8 GiB** on a worker
-  node. Confirm capacity with `rhoai platform inspect`.
+- **Compute:** each model deployment requests **2 CPU / 8 GiB** (limits also 2
+  CPU / 8 GiB) on a worker node. Confirm capacity with `rhoai platform inspect`.
 
 ---
 
@@ -120,7 +120,7 @@ Each entry under `deployment.models` defines one independent model deployment:
 | Field | Required | Description |
 |---|---|---|
 | `name` | ✔ | Kubernetes resource name for the `InferenceService` and `ServingRuntime` |
-| `model_uri` | ✦ | Reference a model **already staged** on a PVC, currently only `pvc://<claim>/<path>` is supported. |
+| `model_uri` | ✦ | Reference a model **already staged** elsewhere: `pvc://<claim>/<path>`, `hf://…`, `oci://…`, or a plain S3 path (any other string, which applies the S3 secret). |
 | `model_path` | ✦ | Local model file; the framework creates the PVC and stages the Triton layout for you |
 | `config_path` | | Local Triton `config.pbtxt`. **Optional for ONNX models** — when omitted, one is generated from the model's I/O signature (see [Generated config.pbtxt](#generated-configpbtxt)) |
 | `max_batch_size` | | Config generation only — enable batching with this max batch size (default `0` = shapes preserved verbatim). Requires a dynamic leading dim on every tensor |
@@ -185,8 +185,10 @@ The generated file is written to a persistent, discoverable location so you can
 inspect exactly what was staged:
 
 ```
-rhoai/usecases/fraud_detection/inputs/<name>/config.pbtxt
+automation/rhoai/usecases/fraud_detection/inputs/<name>/config.pbtxt
 ```
+
+(relative to `repo_root`, i.e. your `openshift-ai-demos` directory.)
 
 Its path is printed in the deploy summary under the model, annotated
 `(generated)`. It is also reused as the request schema in
@@ -213,7 +215,7 @@ deployment:
 > pulls in ONNX Runtime, which is required for config generation.
 >
 > A standalone version of this generator is also available at
-> [`tools/generate_config_pbtxt.py`](../../../tools/README_generate_config_pbtxt.md)
+> [`tools/generate_config_pbtxt.py`](../../../../../tools/README_generate_config_pbtxt.md)
 > for generating a `config.pbtxt` outside of a deployment.
 
 ### Inference inputs
@@ -291,8 +293,10 @@ deployment:
           batch_size: 250   
         name_mapping:
           # inputs/outputs are optional — see "Name mapping" below.
-          inputs:  { customer_data_input-3: "Is Male-Identifying?" }
-          outputs: { predict: "Will Default?" }
+          inputs:  
+            customer_data_input-3: "Is Male-Identifying?"
+          outputs: 
+            predict: "Will Default?" 
         spd_monitors:
           - protected_attribute: "Is Male-Identifying?"
             privileged_value:    1.0
@@ -533,8 +537,9 @@ rhoai usecase cleanup fraud-detection -c config-fraud-detection.yaml
 rhoai usecase cleanup fraud-detection -c config-fraud-detection.yaml --delete-platform
 ```
 
-Removes the `InferenceService` and `ServingRuntime` for each model in reverse
-deploy order. Pass `--delete-platform` to also remove the DataScienceCluster and
+Removes each model's `InferenceService`, then its `ServingRuntime` (reversing the
+creation order, in which the runtime is applied before the service). Pass
+`--delete-platform` to also remove the DataScienceCluster and
 DSCInitialization. When TrustyAI was deployed, cleanup adds a dedicated removal
 phase (TrustyAI service, KServe logger restore, CA bundle, RBAC) after the models
 are gone.
@@ -578,7 +583,8 @@ Removed
 
 Common issues specific to this use case. For platform-wide problems (operator
 install, timeouts, `rhoai: command not found`), see the
-[framework troubleshooting guide](../../../docs/troubleshooting.md).
+[Troubleshooting / FAQ](../../../README.md#troubleshooting--faq) section of the
+automation README.
 
 | Symptom | Cause / fix |
 |---|---|

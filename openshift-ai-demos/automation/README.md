@@ -22,14 +22,16 @@ continuing.
 | | |
 |---|---|
 | OpenShift | OCP 4.19+ |
-| Architectures | `ppc64le`, `x86_64` |
+| Architectures | `ppc64le` |
 | Python | ≥ 3.12 |
 
-> **The framework orchestrates your manifests and models — it does not ship
+> **The framework orchestrates your manifests and models, it does not ship
 > them.** It applies existing YAML in dependency order and waits for health.
-> Every use case requires **external assets you provide** (a model repository, a
-> Triton `config.pbtxt`, and a dataset or request payload); each use-case guide
-> lists exactly what it needs. See [Deploy a use case](#3-deploy-a-use-case).
+> Every use case requires **external assets you provide** — at minimum a model
+> and an inference input (a dataset or request payload). Other assets are
+> generated for you when omitted: for ONNX models the Triton `config.pbtxt` is
+> auto-generated from the model's I/O signature. Each use-case guide lists exactly
+> what it needs. See [Deploy a use case](#3-deploy-a-use-case).
 ---
 
 ## How it works
@@ -175,8 +177,8 @@ Use-case index and shared config concepts:
 
 ## Troubleshooting / FAQ
 
-Most common issues — see the [full troubleshooting guide](docs/troubleshooting.md)
-for causes and detailed fixes.
+Most common issues and their quick fixes. For use-case-specific problems, see the
+Troubleshooting section of that use case's guide.
 
 | Symptom | Quick fix |
 |---|---|
@@ -187,7 +189,3 @@ for causes and detailed fixes.
 | Endpoint returns `503` during verify | Wait for the pod; add the ingress IP to `/etc/hosts` if the hostname won't resolve |
 | Operations time out on a slow cluster | Raise the relevant `timeouts:` key in your config |
 | Any command fails with no clear error | Re-run with `rhoai --log-level DEBUG <subcommand>` |
-
-**→ [Full troubleshooting guide](docs/troubleshooting.md)**
-</content>
-</invoke>

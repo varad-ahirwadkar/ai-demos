@@ -28,13 +28,9 @@ deployment:
   trustyai_service_name:    trustyai-service
   trustyai_service_account: trustyai-user
 
-  # Dataset mode: inference_dataset is the single source of truth. The smoke
-  # test is the first generated request, and observations are the whole dataset
-  # batched by bias_monitoring.observations.batch_size. config_path (the Triton
-  # config.pbtxt) supplies the request schema — do NOT set inference_request or
-  # bias_monitoring.observations.path/.files in this mode (validated up front).
+  # Dataset mode: inference_dataset is the single source of truth.
   models:
-    - name: demo-loan-nn-onnx-alpha
+    - name: upi-fraud-detection
       model_path:  /Users/varad/Desktop/automation-framework/model.onnx
       pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
       pvc_size:    1Gi
@@ -46,14 +42,8 @@ deployment:
           batch_size: 250   # observations per generated KServe request
 
         # Rename opaque internal column names to human-readable labels.
-        # Inputs are auto-derived from the CSV headers (single flat tensor →
-        # columnIndex), title-cased: num_children → "Num Children",
-        # is_male → "Is Male", employment_length → "Employment Length", etc.
+        # Inputs are auto-derived from the CSV headers.
         # Outputs labels are derived from config.pbtxt
-        # Set 'inputs' or 'outputs' only to override those derived labels.
-        # name_mapping:
-        #   outputs:
-        #     predict: "Will Default?"
 
         # SPD fairness monitors: validated immediately before scheduling.
         spd_monitors:

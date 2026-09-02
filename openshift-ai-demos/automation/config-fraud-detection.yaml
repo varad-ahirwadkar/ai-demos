@@ -30,7 +30,7 @@ deployment:
   models:
     # Dataset mode: inference_dataset is the single source of truth for the
     # smoke test.
-    - name: demo-loan-nn-onnx-alpha
+    - name: upi-fraud-detection
       model_path:  /Users/varad/Desktop/automation-framework/model.onnx
       pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
       pvc_size:    1Gi
