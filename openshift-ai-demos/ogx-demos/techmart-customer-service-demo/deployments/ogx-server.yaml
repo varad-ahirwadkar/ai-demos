@@ -203,7 +203,7 @@ spec:
         
         # Remote LLM configuration
         - name: VLLM_URL
-          value: http://llama-32-3b-instruct-predictor.llama.svc.cluster.local:8080/v1
+          value: http://qwen3-4b-predictor.ogx-sandbox.svc.cluster.local:8080/v1
         - name: VLLM_MAX_TOKENS
           value: "80"
         

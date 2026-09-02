@@ -15,7 +15,7 @@ This demo showcases an **e-commerce customer service scenario** for **TechMart**
 - **Look up order details** using MCP tools that query a PostgreSQL database
 - **Provide intelligent responses** by synthesizing both static and dynamic information
 
-The configuration utilizes a [meta-llama/Llama-3.2-3B-Instruct](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct) model deployed via vLLM, integrated with FAISS vector store for RAG and FastMCP server for database access.
+The configuration utilizes a [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) model deployed via vLLM, integrated with FAISS vector store for RAG and FastMCP server for database access.
 
 ## How It Works
 
@@ -29,7 +29,7 @@ OGX Distribution
     │   └─→ Policy Documents (return-policy.txt, shipping-policy.txt)
     ├─→ MCP (FastMCP Server)
     │   └─→ PostgreSQL Database (12 sample orders)
-    └─→ LLM (vLLM - Llama 3.2 3B Instruct)
+    └─→ LLM (vLLM - Qwen3 4B Instruct 2507)
     ↓
 AI Response (combines policy info + order data)
 ```
@@ -61,35 +61,34 @@ cd ai-demos/openshift-ai-demos
 
 ### Model Configuration
 
-We will be deploying the [meta-llama/Llama-3.2-3B-Instruct](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct) model and use it as self-hosted vLLM backend (with an OpenAI-compatible API).
+We will be deploying the [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) model and use it as self-hosted vLLM backend (with an OpenAI-compatible API).
 
 Deploy the vLLM runtime and model:
 ```bash
-oc process -n redhat-ods-applications vllm-cpu-runtime-template | oc create -f -
-oc create -f model-serving/llama-32-3b-instruct-isvc.yaml
+oc process -n redhat-ods-applications vllm-cpu-runtime-template | oc apply -f -
+oc create -f model-serving/generative-models/vllm/qwen3-4b-instruct-2507.yaml
 ```
 
 Model arguments:
 ```
     model:
       args:
-      - --enable-chunked-prefill        # not supported on power
+      - --max-model-len=8196
       - --enable-auto-tool-choice
-      - --tool-call-parser=llama3_json
-      - --max-model-len=8192
-      - --chat-template=/app/data/template/tool_chat_template_llama3.2_json.jinja
+      - --tool-call-parser=hermes
+      - --gpu-memory-utilization=0.4
       env:
       - name: VLLM_CPU_KVCACHE_SPACE
-        value: "14"
+        value: "12"
 ```
 Resources:
 ```
-        limits:
-          cpu: "32"
-          memory: 48Gi
-        requests:
-          cpu: "32"
-          memory: 48Gi
+      limits:
+        cpu: "32"
+        memory: 40Gi
+      requests:
+        cpu: "32"
+        memory: 40Gi
 ```
 
 ## OGX Deployment Steps
@@ -293,9 +292,9 @@ env:
   
   # Remote LLM configuration
   - name: INFERENCE_MODEL
-    value: "llama-32-3b-instruct"
+    value: "qwen3-4b"
   - name: VLLM_URL
-    value: http://llama-32-3b-instruct-predictor.llama.svc.cluster.local:8080/v1
+    value: http://qwen3-4b-predictor.ogx-sandbox.svc.cluster.local:8080/v1
   - name: VLLM_TLS_VERIFY
     value:  "false"
   - name: VLLM_API_TOKEN
