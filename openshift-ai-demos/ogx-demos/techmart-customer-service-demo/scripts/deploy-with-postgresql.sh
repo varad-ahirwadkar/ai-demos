@@ -57,27 +57,27 @@ echo "   📋 Initialization logs:"
 oc logs job/techmart-db-init | sed 's/^/      /'
 echo ""
 
-# Step 5: Deploy MCP Server
-echo "🔧 Step 5: Deploying MCP Server..."
+# Step 4: Deploy MCP Server
+echo "🔧 Step 4: Deploying MCP Server..."
 oc apply -f deployments/techmart-mcp-server.yaml
 echo "✅ MCP Server deployment created"
 echo ""
 
-# Step 6: Deploy UI
-echo "🌐 Step 6: Deploying UI..."
+# Step 5: Deploy UI
+echo "🌐 Step 5: Deploying UI..."
 oc apply -f deployments/techmart-ui.yaml
 echo "✅ UI deployment created"
 echo ""
 
-# Step 7: Wait for deployments
-echo "⏳ Step 7: Waiting for all deployments to be ready..."
+# Step 6: Wait for deployments
+echo "⏳ Step 6: Waiting for all deployments to be ready..."
 oc wait --for=condition=available deployment/techmart-mcp-server --timeout=180s
 oc wait --for=condition=available deployment/techmart-ui --timeout=180s
 echo "✅ All deployments are ready"
 echo ""
 
-# Step 8: Get route
-echo "🌍 Step 8: Getting application URL..."
+# Step 7: Get route
+echo "🌍 Step 7: Getting application URL..."
 ROUTE=$(oc get route techmart-ui -o jsonpath='{.spec.host}' 2>/dev/null || echo "Route not found")
 if [ "$ROUTE" != "Route not found" ]; then
     echo "✅ Application URL: https://$ROUTE"

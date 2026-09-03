@@ -49,31 +49,46 @@ def get_db_connection():
     )
 
 
-def load_orders() -> list[dict[str, Any]]:
-    """
-    Fetch all orders from PostgreSQL and return them as a list of plain dicts.
-    Dates are serialised to ISO-8601 strings; price is cast to str to avoid
-    Decimal serialisation issues downstream.
-    """
+def _row_to_order(row: dict) -> dict[str, Any]:
+    """Normalise a raw DB row dict to a plain serialisable order dict."""
+    order = dict(row)
+    if order.get('order_date'):
+        order['order_date'] = order['order_date'].strftime('%Y-%m-%d')
+    if order.get('delivery_date'):
+        order['delivery_date'] = order['delivery_date'].strftime('%Y-%m-%d')
+    if 'price' in order:
+        order['price'] = str(order['price'])
+    return order
+
+
+def _fetch_all_orders() -> list[dict[str, Any]]:
+    """Query all orders from PostgreSQL. Called on every request that needs them."""
     orders = []
     try:
         with get_db_connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute("SELECT * FROM orders ORDER BY order_date DESC")
-                rows = cursor.fetchall()
-                for row in rows:
-                    order = dict(row)
-                    if order.get('order_date'):
-                        order['order_date'] = order['order_date'].strftime('%Y-%m-%d')
-                    if order.get('delivery_date'):
-                        order['delivery_date'] = order['delivery_date'].strftime('%Y-%m-%d')
-                    if 'price' in order:
-                        order['price'] = str(order['price'])
-                    orders.append(order)
-        logger.info(f"Loaded {len(orders)} orders from database")
+                orders = [_row_to_order(dict(row)) for row in cursor.fetchall()]
+        logger.info(f"Fetched {len(orders)} orders from database")
     except Exception as e:
-        logger.error(f"Error loading orders from database: {e}")
+        logger.error(f"Error fetching orders from database: {e}")
     return orders
+
+
+def _fetch_order_by_id(order_id: str) -> dict[str, Any] | None:
+    """Query a single order by order_id. Returns None if not found."""
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT * FROM orders WHERE order_id = %s",
+                    (order_id,)
+                )
+                row = cursor.fetchone()
+                return _row_to_order(dict(row)) if row else None
+    except Exception as e:
+        logger.error(f"Error fetching order {order_id} from database: {e}")
+        return None
 
 
 def _normalize_is_opened(value: Any) -> bool:
@@ -102,21 +117,18 @@ def _order_not_found(order_id: str) -> dict[str, Any]:
     }
 
 
-# Load orders at startup
-ORDERS = load_orders()
-
-
 # ---------------------------------------------------------------------------
 # MCP resource
 # ---------------------------------------------------------------------------
 
 @mcp.resource("orders://info")
 def get_orders_resource() -> str:
-    """Expose a summary of currently loaded orders as an MCP resource."""
+    """Expose a live summary of orders as an MCP resource."""
+    orders = _fetch_all_orders()
     return json.dumps({
-        "orders_count": len(ORDERS),
+        "orders_count": len(orders),
         "data_source": "PostgreSQL Database",
-        "sample_orders": [order['order_id'] for order in ORDERS[:5]],
+        "sample_orders": [order['order_id'] for order in orders[:5]],
     })
 
 
@@ -127,29 +139,31 @@ def get_orders_resource() -> str:
 @mcp.tool()
 def reload_orders() -> dict[str, Any]:
     """
-    ADMINISTRATIVE TOOL — Refresh the in-memory order cache from PostgreSQL.
+    ADMINISTRATIVE TOOL — Verify database connectivity and return current order count.
+
+    Orders are always read directly from PostgreSQL on every request, so there
+    is no in-memory cache to refresh. This tool exists to let the AI confirm
+    that the database is reachable and report how many orders are present.
 
     USE THIS TOOL when:
     - Asked to reload, refresh, or sync orders.
-    - Data may have changed in the database since the server started.
+    - The user wants to confirm the database has the latest data.
 
     DO NOT USE THIS TOOL for:
     - Looking up order details (use get_order instead).
     - Any customer-facing request.
 
     Returns:
-        success (bool): True if the reload completed without error.
-        orders_count (int): Number of orders now loaded in memory.
+        success (bool): True if the database query completed without error.
+        orders_count (int): Number of orders currently in the database.
         message (str): Human-readable status summary.
     """
-    global ORDERS
-    new_orders = load_orders()
-    success = len(new_orders) > 0
-    ORDERS = new_orders
+    orders = _fetch_all_orders()
+    success = len(orders) > 0
     return {
         "success": success,
-        "message": f"Reloaded {len(ORDERS)} orders from database." if success else "Reload attempted but no orders were returned. Check database connectivity.",
-        "orders_count": len(ORDERS),
+        "message": f"Database is reachable. {len(orders)} orders available." if success else "No orders returned. Check database connectivity.",
+        "orders_count": len(orders),
     }
 
 
@@ -181,29 +195,28 @@ def get_order(order_id: str) -> dict[str, Any]:
     Returns on failure:
         success (False), error ("ORDER_NOT_FOUND"), message (str).
     """
-    for order in ORDERS:
-        if order['order_id'] == order_id:
-            status_enum, status_display = _normalize_status(order['status'])
-            return {
-                "success": True,
-                "order_id": order['order_id'],
-                "customer_email": order['customer_email'],
-                "product_name": order['product_name'],
-                "category": order['category'],
-                "order_date": order['order_date'],
-                "delivery_date": order['delivery_date'],
-                "price": float(order['price']),
-                "status": status_enum,
-                "status_display": status_display,
-                "is_opened": _normalize_is_opened(order['is_opened']),
-            }
+    order = _fetch_order_by_id(order_id)
+    if order is None:
+        return _order_not_found(order_id)
 
-    return _order_not_found(order_id)
+    status_enum, status_display = _normalize_status(order['status'])
+    return {
+        "success": True,
+        "order_id": order['order_id'],
+        "customer_email": order['customer_email'],
+        "product_name": order['product_name'],
+        "category": order['category'],
+        "order_date": order['order_date'],
+        "delivery_date": order['delivery_date'],
+        "price": float(order['price']),
+        "status": status_enum,
+        "status_display": status_display,
+        "is_opened": _normalize_is_opened(order['is_opened']),
+    }
 
 
 if __name__ == "__main__":
     logger.info("🚀 Orders MCP Server starting...")
-    logger.info(f"📊 Loaded {len(ORDERS)} orders from PostgreSQL database")
     logger.info(f"🌐 Server will run on http://0.0.0.0:{PORT}")
     logger.info("🔧 Available tools: reload_orders, get_order")
     mcp.run(transport="sse")

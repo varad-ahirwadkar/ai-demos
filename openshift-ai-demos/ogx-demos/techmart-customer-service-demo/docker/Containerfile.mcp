@@ -9,10 +9,17 @@ LABEL name="techmart-mcp-server" \
 WORKDIR /app
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY requirements.mcp.txt .
 
 # Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt --extra-index=https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple
+# Use the RH index as the primary source (required for Power/ppc64le builds where
+# not all wheels are available on PyPI). PyPI is kept as fallback for packages the
+# RH index does not carry.
+# Note: the previous --extra-index= flag (missing -url) was silently ignored by pip.
+RUN pip install --no-cache-dir \
+      --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple \
+      --extra-index-url https://pypi.org/simple \
+      -r requirements.mcp.txt
 
 # Copy application files
 COPY scripts/orders_mcp_server.py .

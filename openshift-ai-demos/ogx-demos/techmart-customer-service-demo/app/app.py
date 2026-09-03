@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'techmart-demo-secret-key-change-in-production')
 
+# Limit uploaded files to 5 MB to prevent blocking the server on large uploads.
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024
+
 # Configuration
 OGX_URL = os.environ.get('OGX_URL', 'http://localhost:8321')
 MCP_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:9001/sse')

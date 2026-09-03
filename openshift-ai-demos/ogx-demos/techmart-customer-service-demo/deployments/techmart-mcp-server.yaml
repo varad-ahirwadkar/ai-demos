@@ -47,6 +47,20 @@ spec:
                 secretKeyRef:
                   name: techmart-db-secret
                   key: database-password
+          readinessProbe:
+            httpGet:
+              path: /sse
+              port: 9001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /sse
+              port: 9001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
           resources:
             requests:
               memory: "256Mi"

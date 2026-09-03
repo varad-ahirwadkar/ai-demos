@@ -15,7 +15,13 @@ NC='\033[0m' # No Color
 
 # Configuration
 REGISTRY="${CONTAINER_REGISTRY:-quay.io}"
-REGISTRY_USER="${REGISTRY_USER:-vahirwad}"
+
+if [ -z "${REGISTRY_USER}" ]; then
+    echo -e "${RED}Error: REGISTRY_USER is not set.${NC}"
+    echo "Please export your registry username before running this script:"
+    echo "  export REGISTRY_USER=your-quay-username"
+    exit 1
+fi
 MCP_TAG="${MCP_TAG:-mcp-server}"
 UI_TAG="${UI_TAG:-ui}"
 DB_INIT_TAG="${DB_INIT_TAG:-db-init}"

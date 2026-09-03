@@ -37,7 +37,20 @@ spec:
                 secretKeyRef:
                   name: techmart-ui-secret
                   key: secret-key
-                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
           resources:
             requests:
               memory: "256Mi"
@@ -88,4 +101,6 @@ metadata:
   name: techmart-ui-secret
 type: Opaque
 stringData:
-  secret-key: "change-this-in-production-to-a-random-secret-key"
+  # Generate a strong random value before deploying:
+  #   python -c "import secrets; print(secrets.token_hex(32))"
+  secret-key: "CHANGE_ME"

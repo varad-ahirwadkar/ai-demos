@@ -7,10 +7,16 @@ USER root
 WORKDIR /app
 
 # Copy requirements
-COPY requirements.txt .
+COPY requirements.ui.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt --extra-index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple
+# Use the RH index as the primary source (required for Power/ppc64le builds where
+# not all wheels are available on PyPI). PyPI is kept as fallback for packages the
+# RH index does not carry.
+RUN pip install --no-cache-dir \
+      --index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple \
+      --extra-index-url https://pypi.org/simple \
+      -r requirements.ui.txt
 
 # Copy application files
 COPY app/ /app/
@@ -32,5 +38,5 @@ EXPOSE 8080
 ENV FLASK_APP=app.py
 ENV PYTHONUNBUFFERED=1
 
-# Run the application
-CMD ["python", "app.py"]
+# Run with gunicorn — 2 workers prevent blocking on concurrent LLM requests
+CMD ["gunicorn", "--workers", "2", "--bind", "0.0.0.0:8080", "--timeout", "660", "app:app"]
