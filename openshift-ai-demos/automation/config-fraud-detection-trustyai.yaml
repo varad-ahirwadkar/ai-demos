@@ -7,7 +7,7 @@
 #   rhoai usecase deploy fraud-detection --config config-fraud-detection-trustyai.yaml
 
 # Absolute path to the root of the openshift-ai-demos repository.
-repo_root: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos
+repo_root: /path/to/ai-demos/openshift-ai-demos
 
 operator:
   channel: stable-3.5
@@ -31,10 +31,10 @@ deployment:
   # Dataset mode: inference_dataset is the single source of truth.
   models:
     - name: upi-fraud-detection
-      model_path:  /Users/varad/Desktop/automation-framework/model.onnx
+      model_path:  /path/to/model.onnx
       pvc_name:    my-fraud-model-pvc   # optional; defaults to <name>-pvc
       pvc_size:    1Gi
-      inference_dataset: /Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_detection/inputs/training/csv/batch_01.csv
+      inference_dataset: /path/to/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_detection/inputs/training/csv/batch_01.csv
 
       bias_monitoring:
         # Observations are generated from inference_dataset, batched by size.

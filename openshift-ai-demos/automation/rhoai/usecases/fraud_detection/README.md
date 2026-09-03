@@ -512,12 +512,9 @@ Next steps
 
     # upi-fraud-detection
     curl -sk -X POST \
-      https://upi-fraud-detection-test-fraud.apps.rdr-varad-421.ocp-rhoai.com/v2/models/upi-
-fraud-detection/infer \
+      https://upi-fraud-detection-test-fraud.apps.<cluster>/v2/models/upi-fraud-detection/infer \
       -H 'Content-Type: application/json' \
-      -d
-@/Users/varad/Desktop/repos/ai-demos/openshift-ai-demos/automation/rhoai/usecases/fraud_dete
-ction/inputs/upi-fraud-detection.json
+      -d @openshift-ai-demos/automation/rhoai/usecases/fraud_detection/inputs/upi-fraud-detection.json
 
   Clean up deployment
 
