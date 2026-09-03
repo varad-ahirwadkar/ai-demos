@@ -203,9 +203,9 @@ spec:
         
         # Remote LLM configuration
         - name: VLLM_URL
-          value: http://10.20.180.75:8000/v1 #http://qwen3-4b-predictor.ogx-sandbox.svc.cluster.local:8080/v1
+          value: http://qwen3-4b-predictor.ogx-sandbox.svc.cluster.local:8080/v1 #http://10.20.180.75:8000/v1 
         - name: VLLM_MAX_TOKENS
-          value: "80"
+          value: "1024"
         
         # Inline embeddings (sentence-transformers)
         - name: ENABLE_SENTENCE_TRANSFORMERS
