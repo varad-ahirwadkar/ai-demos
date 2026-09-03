@@ -10,10 +10,6 @@ import uuid
 import logging
 from datetime import datetime
 import requests
-import csv
-import io
-import psycopg2
-from psycopg2.extras import execute_values
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,15 +21,6 @@ app.secret_key = os.environ.get('SECRET_KEY', 'techmart-demo-secret-key-change-i
 # Configuration
 OGX_URL = os.environ.get('OGX_URL', 'http://localhost:8321')
 MCP_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:9001/sse')
-
-# Database configuration
-# Use host.containers.internal for containers to reach host PostgreSQL
-# Use localhost for local Python execution
-DB_HOST = os.environ.get('DB_HOST', 'host.containers.internal')
-DB_PORT = os.environ.get('DB_PORT', '5432')
-DB_NAME = os.environ.get('DB_NAME', 'techmart')
-DB_USER = os.environ.get('DB_USER', 'techmart')
-DB_PASSWORD = os.environ.get('DB_PASSWORD', 'techmart123')
 
 # Universal instruction for all scenarios
 INSTRUCTIONS = """You are a helpful and professional customer service assistant.
@@ -52,21 +39,33 @@ RESPONSE REQUIREMENTS:
 
 IMPORTANT: You MUST provide a final answer after using tools. Be helpful, accurate, and thorough."""
 
+# Helpers to handle model items that may be typed objects or raw tuples
+def _model_type(m):
+    if isinstance(m, tuple):
+        return m[1] if len(m) > 1 else None
+    return getattr(m, 'model_type', None)
+
+def _model_id(m):
+    if isinstance(m, tuple):
+        return m[0]
+    return getattr(m, 'identifier', None)
+
 # Initialize OGX client
 try:
     client = OgxClient(base_url=OGX_URL)
     logger.info(f"✅ Connected to OGX at {OGX_URL}")
-    
+
     # Extract LLM model ID dynamically
-    # .list() returns a SyncPage; use .data to get the list of model objects
-    models = client.models.list().data
-    llm_model = next((m for m in models if m.model_type == "llm"), None)
+    # .list() may return a SyncPage (.data) or a plain iterable of tuples/objects
+    models_response = client.models.list()
+    models = models_response.data if hasattr(models_response, 'data') else list(models_response)
+    llm_model = next((m for m in models if _model_type(m) == "llm"), None)
     
     if not llm_model:
         logger.error("❌ No LLM model found in OGX")
         raise RuntimeError("No LLM model available")
     
-    MODEL_ID = llm_model.identifier
+    MODEL_ID = _model_id(llm_model)
     logger.info(f"✅ Using LLM model: {MODEL_ID}")
         
 except Exception as e:
@@ -80,7 +79,10 @@ VECTOR_STORE_ID = None
 def get_or_create_vector_store():
     """Get or create vector store for RAG"""
     global VECTOR_STORE_ID
-    
+
+    if not client:
+        return None
+
     if VECTOR_STORE_ID:
         return VECTOR_STORE_ID
     
@@ -94,15 +96,20 @@ def get_or_create_vector_store():
                 return VECTOR_STORE_ID
         
         # Get models to find embedding model
-        models = client.models.list().data
-        embedding_model = next((m for m in models if m.model_type == "embedding"), None)
-        
+        models_response = client.models.list()
+        models = models_response.data if hasattr(models_response, 'data') else list(models_response)
+        embedding_model = next((m for m in models if _model_type(m) == "embedding"), None)
+
         if not embedding_model:
             logger.error("No embedding model found")
             return None
-        
-        embedding_model_id = embedding_model.identifier
-        embedding_dimension = int(embedding_model.metadata.get("embedding_dimension", 384))
+
+        embedding_model_id = _model_id(embedding_model)
+        embedding_dimension = int(
+            embedding_model.metadata.get("embedding_dimension", 384)
+            if hasattr(embedding_model, 'metadata')
+            else 384
+        )
         
         # Create new vector store
         vector_store = client.vector_stores.create(
@@ -234,122 +241,6 @@ def upload_rag_document():
         
     except Exception as e:
         logger.error(f"❌ Error uploading RAG document: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/upload/mcp', methods=['POST'])
-def upload_mcp_data():
-    """Upload CSV data for MCP server and save to PostgreSQL database"""
-    try:
-        if 'file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
-        
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-        
-        if not file.filename.endswith('.csv'):
-            return jsonify({'error': 'Only CSV files are supported'}), 400
-        
-        logger.info(f"Uploading MCP data: {file.filename}")
-        
-        # Read CSV file
-        file_content = file.read().decode('utf-8')
-        csv_reader = csv.DictReader(io.StringIO(file_content))
-        orders = list(csv_reader)
-        
-        # Connect to database
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            database=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD
-        )
-        cursor = conn.cursor()
-        
-        # Prepare data for insertion
-        order_data = []
-        for row in orders:
-            # Handle both 'category' and 'product_category' column names
-            category = row.get('category', row.get('product_category', 'General'))
-            
-            order_data.append((
-                row['order_id'],
-                row['customer_email'],
-                row['product_name'],
-                category,
-                float(row['price']),
-                row['order_date'],
-                row['delivery_date'],
-                row['status'],
-                row['is_opened']
-            ))
-        
-        # Insert orders (upsert - update if exists)
-        insert_query = """
-            INSERT INTO orders (
-                order_id, customer_email, product_name, category,
-                price, order_date, delivery_date, status, is_opened
-            ) VALUES %s
-            ON CONFLICT (order_id) DO UPDATE SET
-                customer_email = EXCLUDED.customer_email,
-                product_name = EXCLUDED.product_name,
-                category = EXCLUDED.category,
-                price = EXCLUDED.price,
-                order_date = EXCLUDED.order_date,
-                delivery_date = EXCLUDED.delivery_date,
-                status = EXCLUDED.status,
-                is_opened = EXCLUDED.is_opened
-        """
-        execute_values(cursor, insert_query, order_data)
-        conn.commit()
-        
-        row_count = len(orders)
-        cursor.close()
-        conn.close()
-        
-        logger.info(f"✅ Saved {row_count} orders to PostgreSQL database")
-        
-        # Automatically trigger reload via OGX (calls MCP reload_orders tool)
-        reload_success = False
-        reload_message = ""
-        try:
-            if client and MODEL_ID:
-                logger.info("🔄 Triggering automatic reload of MCP data from database...")
-                response = client.with_options(timeout=600.0).responses.create(
-                    model=MODEL_ID,
-                    input="Reload the orders data from the database",
-                    stream=False,
-                    max_tool_calls=5,
-                    instructions="Call the reload_orders tool to refresh the MCP server data.",
-                    tools=[{
-                        "type": "mcp",
-                        "server_label": "TechMartOrdersServer",
-                        "server_url": MCP_SERVER_URL,
-                    }],
-                )
-                reload_message = response.output_text if hasattr(response, 'output_text') else "Reload triggered"
-                reload_success = True
-                logger.info(f"✅ Auto-reload completed: {reload_message}")
-        except Exception as reload_error:
-            logger.warning(f"⚠️ Auto-reload failed (manual reload may be needed): {reload_error}")
-            reload_message = f"Auto-reload failed: {str(reload_error)}"
-        
-        return jsonify({
-            'success': True,
-            'message': f'CSV file "{file.filename}" saved to database and {"reloaded" if reload_success else "ready"}',
-            'filename': file.filename,
-            'rows': row_count,
-            'saved_to': 'PostgreSQL Database',
-            'auto_reload': reload_success,
-            'reload_message': reload_message,
-            'note': 'Data saved to PostgreSQL. ' + ('Data automatically reloaded!' if reload_success else 'Ask AI to reload: "Reload the orders data"')
-        })
-        
-    except Exception as e:
-        logger.error(f"❌ Error uploading MCP data: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

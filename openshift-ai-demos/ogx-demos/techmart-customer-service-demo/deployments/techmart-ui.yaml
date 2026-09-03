@@ -38,25 +38,6 @@ spec:
                   name: techmart-ui-secret
                   key: secret-key
                   optional: true
-            - name: DB_HOST
-              value: "techmart-postgresql"
-            - name: DB_PORT
-              value: "5432"
-            - name: DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: techmart-db-secret
-                  key: database-name
-            - name: DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: techmart-db-secret
-                  key: database-user
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: techmart-db-secret
-                  key: database-password
           resources:
             requests:
               memory: "256Mi"

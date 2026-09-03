@@ -583,21 +583,6 @@
             </div>
 
             <div class="sidebar-section">
-                <h3>📊 Upload MCP Data</h3>
-                <div class="upload-area" id="mcpUploadArea">
-                    <div class="upload-icon">📊</div>
-                    <div class="upload-text">
-                        Click or drag to upload<br>
-                        <small>(CSV files with order data)</small>
-                    </div>
-                </div>
-                <input type="file" id="mcpFileInput" class="file-input" accept=".csv">
-                <button class="button" onclick="document.getElementById('mcpFileInput').click()">
-                    Choose File
-                </button>
-            </div>
-
-            <div class="sidebar-section">
                 <h3>⚙️ System Status</h3>
                 <div class="status-panel" id="statusPanel">
                     <div class="status-item">
@@ -649,9 +634,7 @@
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
         const ragFileInput = document.getElementById('ragFileInput');
-        const mcpFileInput = document.getElementById('mcpFileInput');
         const ragUploadArea = document.getElementById('ragUploadArea');
-        const mcpUploadArea = document.getElementById('mcpUploadArea');
 
         // Initialize
         checkStatus();
@@ -672,11 +655,9 @@
 
         // File upload handlers
         ragFileInput.addEventListener('change', () => uploadFile('rag'));
-        mcpFileInput.addEventListener('change', () => uploadFile('mcp'));
 
         // Drag and drop for RAG
         setupDragAndDrop(ragUploadArea, ragFileInput);
-        setupDragAndDrop(mcpUploadArea, mcpFileInput);
 
         function setupDragAndDrop(area, input) {
             ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
