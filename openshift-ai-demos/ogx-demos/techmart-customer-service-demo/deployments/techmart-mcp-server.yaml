@@ -48,15 +48,13 @@ spec:
                   name: techmart-db-secret
                   key: database-password
           readinessProbe:
-            httpGet:
-              path: /sse
+            tcpSocket:
               port: 9001
             initialDelaySeconds: 10
             periodSeconds: 5
             failureThreshold: 3
           livenessProbe:
-            httpGet:
-              path: /sse
+            tcpSocket:
               port: 9001
             initialDelaySeconds: 30
             periodSeconds: 10
