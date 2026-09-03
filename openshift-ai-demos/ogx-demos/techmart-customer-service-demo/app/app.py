@@ -6,7 +6,6 @@ Integrates with OGX (RAG + MCP) for intelligent customer support
 from flask import Flask, render_template, request, jsonify, session
 from ogx_client import OgxClient
 import os
-import uuid
 import logging
 from datetime import datetime
 import requests
@@ -186,9 +185,7 @@ def chat():
         })
         
     except Exception as e:
-        logger.error(f"❌ Error in chat endpoint: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"❌ Error in chat endpoint: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/upload/rag', methods=['POST'])
@@ -240,9 +237,7 @@ def upload_rag_document():
         })
         
     except Exception as e:
-        logger.error(f"❌ Error uploading RAG document: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"❌ Error uploading RAG document: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/status', methods=['GET'])
@@ -256,17 +251,15 @@ def status():
         try:
             # Try to connect to the MCP server SSE endpoint
             # SSE endpoints return 200 with text/event-stream content-type
-            response = requests.get(MCP_SERVER_URL, timeout=10, stream=True)
-            
-            logger.info(f"MCP status check - Status: {response.status_code}, Content-Type: {response.headers.get('content-type', 'N/A')}")
-            
-            # Check if server is responding with valid SSE endpoint
-            if response.status_code == 200 or 'text/event-stream' in response.headers.get('content-type', ''):
-                mcp_status = "connected"
-                logger.info("✅ MCP Server detected as connected")
-            else:
-                mcp_status = "error"
-                logger.warning(f"⚠️ MCP Server returned unexpected response")
+            with requests.get(MCP_SERVER_URL, timeout=5, stream=True) as response:
+                logger.info(f"MCP status check - Status: {response.status_code}, Content-Type: {response.headers.get('content-type', 'N/A')}")
+
+                if response.status_code == 200 or 'text/event-stream' in response.headers.get('content-type', ''):
+                    mcp_status = "connected"
+                    logger.info("✅ MCP Server detected as connected")
+                else:
+                    mcp_status = "error"
+                    logger.warning("⚠️ MCP Server returned unexpected response")
         except Exception as e:
             logger.error(f"❌ MCP status check failed: {e}")
             mcp_status = "disconnected"
@@ -344,6 +337,7 @@ def clear_session():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(host='0.0.0.0', port=port, debug=debug)
 
 # Made with Bob

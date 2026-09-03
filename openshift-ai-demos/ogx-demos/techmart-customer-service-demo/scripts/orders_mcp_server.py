@@ -19,12 +19,13 @@ DB_PORT = os.getenv('DB_PORT', '5432')
 DB_NAME = os.getenv('DB_NAME', 'techmart')
 DB_USER = os.getenv('DB_USER', 'llamastack')
 DB_PASSWORD = os.getenv('DB_PASSWORD', 'llamastack')
+PORT = int(os.getenv("PORT", "9001"))
 
 # Initialize FastMCP server
 mcp = FastMCP(
     "TechMart Orders Server",
     host="0.0.0.0",
-    port=int(os.getenv("PORT", "9001")),
+    port=PORT,
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=False,
         allowed_hosts=["*"],
@@ -56,21 +57,19 @@ def load_orders() -> list[dict[str, Any]]:
     """
     orders = []
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM orders ORDER BY order_date DESC")
-        rows = cursor.fetchall()
-        for row in rows:
-            order = dict(row)
-            if order.get('order_date'):
-                order['order_date'] = order['order_date'].strftime('%Y-%m-%d')
-            if order.get('delivery_date'):
-                order['delivery_date'] = order['delivery_date'].strftime('%Y-%m-%d')
-            if 'price' in order:
-                order['price'] = str(order['price'])
-            orders.append(order)
-        cursor.close()
-        conn.close()
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT * FROM orders ORDER BY order_date DESC")
+                rows = cursor.fetchall()
+                for row in rows:
+                    order = dict(row)
+                    if order.get('order_date'):
+                        order['order_date'] = order['order_date'].strftime('%Y-%m-%d')
+                    if order.get('delivery_date'):
+                        order['delivery_date'] = order['delivery_date'].strftime('%Y-%m-%d')
+                    if 'price' in order:
+                        order['price'] = str(order['price'])
+                    orders.append(order)
         logger.info(f"Loaded {len(orders)} orders from database")
     except Exception as e:
         logger.error(f"Error loading orders from database: {e}")
@@ -144,10 +143,12 @@ def reload_orders() -> dict[str, Any]:
         message (str): Human-readable status summary.
     """
     global ORDERS
-    ORDERS = load_orders()
+    new_orders = load_orders()
+    success = len(new_orders) > 0
+    ORDERS = new_orders
     return {
-        "success": True,
-        "message": f"Reloaded {len(ORDERS)} orders from database.",
+        "success": success,
+        "message": f"Reloaded {len(ORDERS)} orders from database." if success else "Reload attempted but no orders were returned. Check database connectivity.",
         "orders_count": len(ORDERS),
     }
 
@@ -200,26 +201,9 @@ def get_order(order_id: str) -> dict[str, Any]:
     return _order_not_found(order_id)
 
 
-def get_server_info() -> dict[str, Any]:
-    """Return static metadata about this MCP server."""
-    return {
-        "name": "TechMart Orders Server",
-        "version": "1.0.0",
-        "description": (
-            "MCP server providing raw order data for TechMart customer service. "
-            "Return eligibility and refund calculations are performed by the AI agent "
-            "using retrieved policy documents from the knowledge base."
-        ),
-        "port": 9001,
-        "transport": "sse",
-        "tools": ["reload_orders", "get_order"],
-    }
-
-
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "9001"))
     logger.info("🚀 Orders MCP Server starting...")
     logger.info(f"📊 Loaded {len(ORDERS)} orders from PostgreSQL database")
-    logger.info(f"🌐 Server will run on http://0.0.0.0:{port}")
+    logger.info(f"🌐 Server will run on http://0.0.0.0:{PORT}")
     logger.info("🔧 Available tools: reload_orders, get_order")
     mcp.run(transport="sse")

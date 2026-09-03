@@ -10,7 +10,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt --extra-index=https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple
+RUN pip install --no-cache-dir -r requirements.txt --extra-index-url https://console.redhat.com/api/pypi/public-rhai/rhoai/3.5/cpu-ubi9/simple
 
 # Copy application files
 COPY app/ /app/
