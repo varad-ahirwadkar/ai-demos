@@ -53,48 +53,48 @@ SHARED_DIR="ogx-demos/shared"
 # pgvector is intentionally excluded — OGX uses inline::faiss + shared postgres.
 # See deployments/pgvector.yaml for the manifest if needed.
 RES_KEYS=(
+    ogx_postgres
+    ogx_server
     app_postgres
     db_init
     mcp_server
     ui
-    ogx_postgres
-    ogx_server
 )
 
 RES_LABELS=(
+    "OGX Postgres (shared)"
+    "OGX Server"
     "App PostgreSQL (order data)"
     "DB Init Job (schema + sample data)"
     "TechMart MCP Server"
     "TechMart UI"
-    "OGX Postgres (shared)"
-    "OGX Server"
 )
 
 RES_YAMLS=(
+    "${SHARED_DIR}/postgres.yaml"
+    "${DEPLOY_DIR}/ogx-server.yaml"
     "${DEPLOY_DIR}/postgresql-mcp.yaml"
     "${DEPLOY_DIR}/db-init-job.yaml"
     "${DEPLOY_DIR}/techmart-mcp-server.yaml"
     "${DEPLOY_DIR}/techmart-ui.yaml"
-    "${SHARED_DIR}/postgres.yaml"
-    "${DEPLOY_DIR}/ogx-server.yaml"
 )
 
 # readiness wait commands — empty string means skip
 RES_WAITS=(
+    "oc wait --for=condition=ready pod -l app=postgres --timeout=180s"
+    "oc wait --for=condition=ready pod -l app=techmart-ogx --timeout=300s"
     "oc wait --for=condition=ready pod -l app=techmart-postgresql --timeout=180s"
     "oc wait --for=condition=complete job/techmart-db-init --timeout=180s"
     "oc wait --for=condition=available deployment/techmart-mcp-server --timeout=180s"
     "oc wait --for=condition=available deployment/techmart-ui --timeout=180s"
-    "oc wait --for=condition=ready pod -l app=postgres --timeout=180s"
-    "oc wait --for=condition=ready pod -l app=ogx --timeout=300s"
 )
 
 # pre-deploy cleanup — empty string means none
 RES_PRE_DEPLOY=(
     ""
+    ""
+    ""
     "oc delete job techmart-db-init --ignore-not-found=true"
-    ""
-    ""
     ""
     ""
 )
@@ -190,10 +190,13 @@ deploy_resource() {
         fi
     fi
 
-    # Show DB init logs after the job completes
+    # Show DB init logs and delete the job after it completes
     if [[ "${RES_KEYS[$i]}" == "db_init" ]]; then
         info "Init job logs:"
         oc logs job/techmart-db-init 2>/dev/null | sed 's/^/   /' || true
+        info "Deleting completed init job..."
+        oc delete job techmart-db-init --ignore-not-found=true
+        success "Init job deleted"
     fi
 
     # Print UI route after the UI deploys

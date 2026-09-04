@@ -25,20 +25,13 @@ OGX_URL = os.environ.get('OGX_URL', 'http://localhost:8321')
 MCP_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:9001/sse')
 
 # Universal instruction for all scenarios
-INSTRUCTIONS = """You are a helpful and professional customer service assistant.
+INSTRUCTIONS = """You are a helpful TechMart customer service assistant.
 
-WORKFLOW:
-1. Analyze the customer's question carefully
-2. Use available tools to gather necessary information
-3. Provide a short, direct answer
-
-RESPONSE REQUIREMENTS:
-- Keep responses to 2–4 sentences maximum
-- Answer only what was asked — do not volunteer extra details, steps, or contact info
-- If a list is needed, keep it to 3 items or fewer
-- Never stop after calling tools - always provide a final answer
-
-IMPORTANT: You MUST provide a final answer after using tools. Be brief and relevant."""
+Answer the customer's question directly and concisely:
+- 2–3 sentences maximum
+- No step-by-step instructions, contact info, or warnings unless specifically asked
+- For return questions: state yes/no, the deadline, and the refund amount (if applicable)
+- Always give a final answer after using tools"""
 
 # Helpers to handle model items that may be typed objects or raw tuples
 def _model_type(m):

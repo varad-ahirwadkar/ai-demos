@@ -364,7 +364,9 @@ To test additional scenarios, connect to the PostgreSQL database and insert a ne
 
 ```bash
 oc exec -it deployment/techmart-postgresql -- psql -U postgres -d techmart
+```
 
+```bash
 INSERT INTO orders (
   order_id,
   customer_email,
