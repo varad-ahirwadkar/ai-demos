@@ -301,7 +301,8 @@
 
         .status-item {
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
+            gap: 3px;
             padding: 8px 0;
             border-bottom: 1px solid #e5e7eb;
         }
@@ -310,17 +311,59 @@
             border-bottom: none;
         }
 
+        .status-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #9ca3af;
+        }
+
         .status-value {
             font-weight: 600;
             color: #1f2937;
+            word-break: break-word;
+        }
+
+        .status-value.mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-value.connected,
+        .status-value.disconnected {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-transform: capitalize;
+        }
+
+        .status-value.connected::before,
+        .status-value.disconnected::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
         }
 
         .status-value.connected {
             color: #10b981;
         }
 
+        .status-value.connected::before {
+            background: #10b981;
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+        }
+
         .status-value.disconnected {
             color: #ef4444;
+        }
+
+        .status-value.disconnected::before {
+            background: #ef4444;
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
         }
 
         .loading {
@@ -586,16 +629,12 @@
                 <h3>⚙️ System Status</h3>
                 <div class="status-panel" id="statusPanel">
                     <div class="status-item">
-                        <span>Llama Stack:</span>
+                        <span class="status-label">OGX Server</span>
                         <span class="status-value" id="llamaStatus">Checking...</span>
                     </div>
                     <div class="status-item">
-                        <span>MCP Server:</span>
-                        <span class="status-value" id="mcpStatus">Checking...</span>
-                    </div>
-                    <div class="status-item">
-                        <span>Model:</span>
-                        <span class="status-value" id="modelStatus">-</span>
+                        <span class="status-label">Model</span>
+                        <span class="status-value mono" id="modelStatus">-</span>
                     </div>
                 </div>
             </div>
@@ -930,16 +969,13 @@
                 document.getElementById('llamaStatus').textContent = data.ogx_stack.status;
                 document.getElementById('llamaStatus').className = `status-value ${data.ogx_stack.status}`;
 
-                document.getElementById('mcpStatus').textContent = data.mcp_server.status;
-                document.getElementById('mcpStatus').className = `status-value ${data.mcp_server.status}`;
-
-                document.getElementById('modelStatus').textContent = data.model_id;
+                const modelEl = document.getElementById('modelStatus');
+                modelEl.textContent = data.model_id;
+                modelEl.title = data.model_id;
             } catch (error) {
                 console.error('Error checking status:', error);
                 document.getElementById('llamaStatus').textContent = 'error';
                 document.getElementById('llamaStatus').className = 'status-value disconnected';
-                document.getElementById('mcpStatus').textContent = 'error';
-                document.getElementById('mcpStatus').className = 'status-value disconnected';
             }
         }
 

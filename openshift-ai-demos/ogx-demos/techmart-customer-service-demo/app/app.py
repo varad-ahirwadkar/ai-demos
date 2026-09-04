@@ -6,9 +6,9 @@ Integrates with OGX (RAG + MCP) for intelligent customer support
 from flask import Flask, render_template, request, jsonify, session
 from ogx_client import OgxClient
 import os
+import re
 import logging
 from datetime import datetime
-import requests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,34 +27,76 @@ MCP_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:9001/sse')
 # Universal instruction for all scenarios
 INSTRUCTIONS = """You are a helpful TechMart customer service assistant.
 
-Today's date is April 21, 2024. Use this as "now" for every date calculation
-(days remaining, whether a return window has expired). Never assume any other date.
+Today's date is April 21, 2024. Use this exact date as "now" for every date
+calculation (days remaining, whether a return window has expired). Never assume
+any other date.
 
-Answer the customer's question directly and concisely:
-- 2–3 sentences maximum
-- No step-by-step instructions, contact info, or warnings unless specifically asked
-- Always give a final answer after using tools
+CRITICAL — GROUNDING RULES (apply to every answer):
+- For ANY question about policy — shipping times, delivery, returns, refunds,
+  restocking fees, warranties, gift returns, etc. — you MUST first use the
+  file_search tool to retrieve the relevant text from the policy document, and
+  base your answer ONLY on that retrieved text.
+- For questions about a specific order, use the get_order tool.
+- Use ONLY facts from retrieved policy text or order tool results. Never guess,
+  assume, or invent details such as day ranges, fees, or dates. If the retrieved
+  policy does not contain the answer, say you don't have that information rather
+  than making something up.
+- Quote the policy's exact numbers (e.g. shipping "3-5 business days"); do not
+  paraphrase them into different ranges.
 
-For return eligibility questions, always include:
-1. Yes or no
-2. The return deadline (delivery date + the allowed return window from policy)
-   and how many days remain relative to today
-3. If the item is opened: the restocking fee percentage and the calculated refund
-   amount, where refund = price − (price × restocking fee)
+=== HOW TO ANSWER A RETURN ELIGIBILITY QUESTION ===
+Before writing your answer, work through these steps IN ORDER inside a section
+that starts with "Reasoning:". Do the math carefully, one line per step:
 
-How to reason about a return:
-- Look up the item's category and opened status from the order tool.
-- Take the return window and restocking fee from the retrieved policy document —
-  match them to the item's exact category (e.g. electronics) and its opened
-  status. Do not reuse a number from a different row.
-- The restocking fee applies because the item is opened, not because of timing.
-  Do NOT confuse it with condition-based partial-refund deductions (missing
-  accessories, damaged packaging, signs of use); those apply only when the
-  customer describes that condition.
-- Double-check your arithmetic before answering.
+1. Order facts (from the get_order tool): category, delivery_date, price,
+   is_opened.
+2. Return window: read the number of days for THIS item's exact category from
+   the policy (electronics and standard items have different windows). Write it
+   as "window = N days".
+3. Deadline = delivery_date + window. Compute the actual calendar date.
+4. Days remaining = deadline − today (April 21, 2024). If deadline is on or
+   after today, the item is ELIGIBLE; otherwise NOT eligible.
+5. Restocking fee: if is_opened is false, the fee is 0%. If is_opened is true,
+   read the restocking fee percentage for THIS item's exact category from the
+   policy's "Restocking Fees" section. NEVER use the 20% missing-accessories
+   number or any other condition-based deduction unless the customer explicitly
+   says accessories are missing or the item is damaged. The restocking fee
+   applies because the item is opened, not because of timing.
+6. Fee amount = price × fee%. Refund = price − fee amount. Show the arithmetic.
 
-CRITICAL: Only use facts from retrieved policy documents or order tool results.
-Never guess, assume, or invent policy details."""
+=== THEN WRITE THE FINAL ANSWER ===
+After the reasoning section, write "Answer:" followed by 2-3 sentences maximum
+that state: yes/no, the deadline and days remaining, and (if opened) the
+restocking fee percentage, fee amount, and refund. No step-by-step instructions,
+contact info, or warnings unless specifically asked.
+
+For non-return questions, skip the reasoning section and just answer directly and
+concisely (2-3 sentences), always giving a final answer after using tools."""
+
+def _strip_special_tokens(text: str) -> str:
+    """Remove chat-template special tokens that can leak into the output.
+
+    Some models emit delimiter tokens such as ``<|...|>`` (channel markers, stop
+    tokens, or trailing IDs) that should never be shown to the customer.
+    """
+    return re.sub(r"<\|[^|]*\|>", "", text).strip()
+
+
+def _extract_final_answer(text: str) -> str:
+    """Return only the customer-facing answer, dropping any 'Reasoning:' section.
+
+    The model is prompted to think under a 'Reasoning:' heading and then write
+    the reply under 'Answer:'. We show only the text after the last 'Answer:'.
+    If no such heading is present (e.g. non-return questions), return the text
+    unchanged. Any leaked special tokens are stripped from the result.
+    """
+    marker = "answer:"
+    lower = text.lower()
+    idx = lower.rfind(marker)
+    if idx != -1:
+        text = text[idx + len(marker):]
+    return _strip_special_tokens(text)
+
 
 # Helpers to handle model items that may be typed objects or raw tuples
 def _model_type(m):
@@ -196,7 +238,12 @@ def chat():
         
         # Extract response text
         bot_response = response.output_text if hasattr(response, 'output_text') else str(response)
-        
+
+        # The model is instructed to think step by step under a "Reasoning:"
+        # heading and then give the customer-facing reply under "Answer:". Show
+        # only the final answer in the UI, dropping the internal reasoning.
+        bot_response = _extract_final_answer(bot_response)
+
         return jsonify({
             'response': bot_response,
             'timestamp': datetime.now().isoformat()
@@ -264,36 +311,19 @@ def upload_rag_document():
 
 @app.route('/api/status', methods=['GET'])
 def status():
-    """Check system status"""
+    """Check system status.
+
+    The app itself never calls the MCP server — OGX invokes MCP tools in-cluster —
+    so the app's reachability to MCP is not a meaningful health signal and is not
+    reported here.
+    """
     try:
         ogx_stack_status = "connected" if client else "disconnected"
-        
-        # Try to ping MCP server
-        mcp_status = "unknown"
-        try:
-            # Try to connect to the MCP server SSE endpoint
-            # SSE endpoints return 200 with text/event-stream content-type
-            with requests.get(MCP_SERVER_URL, timeout=5, stream=True) as response:
-                logger.info(f"MCP status check - Status: {response.status_code}, Content-Type: {response.headers.get('content-type', 'N/A')}")
 
-                if response.status_code == 200 or 'text/event-stream' in response.headers.get('content-type', ''):
-                    mcp_status = "connected"
-                    logger.info("✅ MCP Server detected as connected")
-                else:
-                    mcp_status = "error"
-                    logger.warning("⚠️ MCP Server returned unexpected response")
-        except Exception as e:
-            logger.error(f"❌ MCP status check failed: {e}")
-            mcp_status = "disconnected"
-        
         return jsonify({
             'ogx_stack': {
                 'status': ogx_stack_status,
                 'url': OGX_URL
-            },
-            'mcp_server': {
-                'status': mcp_status,
-                'url': MCP_SERVER_URL
             },
             'model_id': MODEL_ID,
             'vector_store_id': VECTOR_STORE_ID
