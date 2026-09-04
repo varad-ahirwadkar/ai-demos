@@ -113,36 +113,23 @@ echo ""
 SUCCESS_COUNT=0
 FAIL_COUNT=0
 
+build_image() {
+    local name=$1; local dockerfile=$2; local image=$3
+    if build_and_push "${name}" "${dockerfile}" "." "${image}"; then
+        ((SUCCESS_COUNT++))
+    else
+        ((FAIL_COUNT++))
+    fi
+}
+
 case "${TARGET}" in
-  ui|all)
-    if build_and_push "UI Application" \
-        "docker/Containerfile.ui" \
-        "." \
-        "${UI_IMAGE}"; then
-        ((SUCCESS_COUNT++))
-    else
-        ((FAIL_COUNT++))
-    fi
-    ;;&  # fall-through only when TARGET=all
-  mcp|all)
-    if build_and_push "MCP Server" \
-        "docker/Containerfile.mcp" \
-        "." \
-        "${MCP_IMAGE}"; then
-        ((SUCCESS_COUNT++))
-    else
-        ((FAIL_COUNT++))
-    fi
-    ;;&
-  db-init|all)
-    if build_and_push "Database Initializer" \
-        "docker/Containerfile.db-init" \
-        "." \
-        "${DB_INIT_IMAGE}"; then
-        ((SUCCESS_COUNT++))
-    else
-        ((FAIL_COUNT++))
-    fi
+  ui)      build_image "UI Application"      "docker/Containerfile.ui"      "${UI_IMAGE}" ;;
+  mcp)     build_image "MCP Server"          "docker/Containerfile.mcp"     "${MCP_IMAGE}" ;;
+  db-init) build_image "Database Initializer" "docker/Containerfile.db-init" "${DB_INIT_IMAGE}" ;;
+  all)
+    build_image "UI Application"       "docker/Containerfile.ui"      "${UI_IMAGE}"
+    build_image "MCP Server"           "docker/Containerfile.mcp"     "${MCP_IMAGE}"
+    build_image "Database Initializer" "docker/Containerfile.db-init" "${DB_INIT_IMAGE}"
     ;;
   *)
     echo -e "${RED}Unknown target: ${TARGET}${NC}"
