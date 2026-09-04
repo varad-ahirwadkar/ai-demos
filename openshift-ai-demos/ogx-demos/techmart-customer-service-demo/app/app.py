@@ -27,6 +27,9 @@ MCP_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:9001/sse')
 # Universal instruction for all scenarios
 INSTRUCTIONS = """You are a helpful TechMart customer service assistant.
 
+Today's date is April 21, 2024. Use this as "now" for every date calculation
+(days remaining, whether a return window has expired). Never assume any other date.
+
 Answer the customer's question directly and concisely:
 - 2–3 sentences maximum
 - No step-by-step instructions, contact info, or warnings unless specifically asked
@@ -34,12 +37,24 @@ Answer the customer's question directly and concisely:
 
 For return eligibility questions, always include:
 1. Yes or no
-2. The return deadline (delivery date + allowed days from policy)
-3. If the item is opened: state the restocking fee percentage and the calculated refund amount
+2. The return deadline (delivery date + the allowed return window from policy)
+   and how many days remain relative to today
+3. If the item is opened: the restocking fee percentage and the calculated refund
+   amount, where refund = price − (price × restocking fee)
 
-Restocking fee reason: it applies because the item is opened, not because of timing.
+How to reason about a return:
+- Look up the item's category and opened status from the order tool.
+- Take the return window and restocking fee from the retrieved policy document —
+  match them to the item's exact category (e.g. electronics) and its opened
+  status. Do not reuse a number from a different row.
+- The restocking fee applies because the item is opened, not because of timing.
+  Do NOT confuse it with condition-based partial-refund deductions (missing
+  accessories, damaged packaging, signs of use); those apply only when the
+  customer describes that condition.
+- Double-check your arithmetic before answering.
 
-CRITICAL: Only use facts from retrieved policy documents or order tool results. Never guess, assume, or invent policy details."""
+CRITICAL: Only use facts from retrieved policy documents or order tool results.
+Never guess, assume, or invent policy details."""
 
 # Helpers to handle model items that may be typed objects or raw tuples
 def _model_type(m):
@@ -224,8 +239,12 @@ def upload_rag_document():
             chunking_strategy={
                 "type": "static",
                 "static": {
-                    "max_chunk_size_tokens": 400,
-                    "chunk_overlap_tokens": 100,
+                    # Larger chunks keep each policy section (e.g. the full
+                    # Restocking Fees or Return Time Limits block) intact so the
+                    # right numbers are retrieved together instead of split
+                    # across chunks.
+                    "max_chunk_size_tokens": 800,
+                    "chunk_overlap_tokens": 150,
                 },
             },
         )

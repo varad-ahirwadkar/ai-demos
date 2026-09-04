@@ -7,10 +7,13 @@ Shipping Information:
 - Orders are processed within 24 hours on business days
 - Tracking number sent via email once shipped
 
-Return Time Limits:
-- Standard items can be returned within 30 days of delivery
-- Electronics must be returned within 15 days of delivery
-- Opened software and personalized items cannot be returned
+Return Time Limits (return window by product category):
+- Standard items: return window is 30 days after the delivery date.
+- Electronics: return window is 15 days after the delivery date.
+- Opened software and personalized items: cannot be returned at all.
+The return deadline is the delivery date plus the return window for that
+category. An order is eligible for return only if today's date is on or before
+that deadline.
 
 Return Conditions:
 Items must be in original condition with original packaging intact. All accessories, manuals, and tags must be included. Items showing signs of use may receive partial refund or be rejected.
@@ -25,18 +28,34 @@ How to Return an Item:
 7. Refund will be processed within 5-7 business days after we receive the item
 
 Refund Amounts:
-- Full refund: Item returned within time limit, original condition, all components included
-- Partial refund: Missing accessories (20% deduction), damaged packaging (10% deduction), signs of use (15-30% deduction)
-- No refund: Returned after time limit, significantly damaged, missing major components
+The refund starts from the item price. For an opened item, subtract the
+restocking fee for its category (see the Restocking Fees section): refund =
+price minus (price times restocking fee percentage).
+- Full refund (price minus any applicable restocking fee): item returned within
+  the return window, in original condition, with all components included.
+- No refund: returned after the return window, significantly damaged, or missing
+  major components.
+
+Condition-Based Deductions (SEPARATE from restocking fees):
+These extra deductions apply ONLY when the returned item arrives in the described
+condition. They are not charged on a normal opened return.
+- Missing accessories: 20% deduction
+- Damaged packaging: 10% deduction
+- Signs of use: 15-30% deduction
 
 Defective or Wrong Items:
 If you receive a defective item or wrong item, we will provide a full replacement within 90 days at no cost. Return shipping is free and there is no restocking fee. Contact customer service immediately.
 
-Restocking Fees:
-- Unopened items: No restocking fee
-- Opened standard items: 10% restocking fee
-- Opened electronics: 15% restocking fee
-- Large items over 50 pounds: Additional $25 handling fee
+Restocking Fees (the fee charged on a return, based on category and opened status):
+A restocking fee is charged only because an item has been opened; it does not
+depend on how many days are left in the return window.
+- Unopened items (any category): 0% restocking fee (no fee).
+- Opened standard items: 10% restocking fee.
+- Opened electronics: 15% restocking fee.
+- Large items over 50 pounds: additional $25 handling fee on top of the above.
+Refund for an opened return = price minus (price times the restocking fee
+percentage above). Example: an opened electronics item priced at $89.99 has a
+15% restocking fee of $13.50, so the refund is $76.49.
 
 Return Shipping Costs:
 - Free return shipping for defective items, wrong items, or TechMart errors
