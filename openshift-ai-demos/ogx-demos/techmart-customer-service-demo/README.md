@@ -1,21 +1,21 @@
 # TechMart Customer Service Assistant
 
-An intelligent customer service assistant built on Red Hat OpenShift AI OGX, showcasing a hybrid RAG (Retrieval-Augmented Generation) + MCP (Model Context Protocol) architecture for e-commerce support.
+A customer service assistant for an e-commerce platform, built on Red Hat OpenShift AI. This demo showcases a hybrid **RAG** (Retrieval-Augmented Generation) and **MCP** (Model Context Protocol) architecture for answering customer queries using both enterprise knowledge and external tools.
 
-OGX is an OpenAI-compatible platform that enables you to build and run AI applications anywhere, without changing your code. It provides a unified interface for models, tools and data. Ensures a consistent API layer across environments
-
-In this demo, OGX acts as the core orchestration layer, seamlessly combining RAG, MCP and model inference.
-
+**What is OGX?**   
+OGX is a Red Hat OpenShift AI component that provides a unified, OpenAI-compatible API for models, tools, and data sources. In this demo, OGX orchestrates retrieval, tool calling, and model inference through a single API, allowing the assistant to combine RAG and MCP seamlessly.
 
 ## Demo Overview
 
-This demo showcases an **e-commerce customer service scenario** for **TechMart**, a fictional electronics retailer, demonstrating how OGX can:
+This demo is based on **TechMart**, a fictional electronics retailer, and demonstrates three common customer support workflows:
 
-- **Answer policy questions** using RAG to retrieve information from company documents
-- **Look up order details** using MCP tools that query a PostgreSQL database
-- **Provide intelligent responses** by synthesizing both static and dynamic information
 
-The configuration utilizes a [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) model deployed via vLLM, integrated with FAISS vector store for RAG and FastMCP server for database access.
+The demo demonstrates how the assistant can:
+- **Answer policy questions** by retrieving relevant information from company documents using RAG.
+- **Look up order details** by invoking MCP tools that query a PostgreSQL database.
+- **Combine policy and order information** to answer questions that require both sources.
+
+The demo uses the [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) model served with vLLM, a FAISS vector store for document retrieval, and a FastMCP server for database access.
 
 ## How It Works
 
@@ -38,353 +38,283 @@ AI Response (combines policy info + order data)
 
 ## Prerequisites
 
-#### Ensure the following are set up before deployment:
+Before you begin, make sure you have the following.
 
-1. OpenShift Cluster with OpenShift AI
-- KServe enabled via Data Science Cluster (DSC)
-- OGX enabled via Data Science Cluster (DSC)
+### Cluster
 
-2. Container Registry
-Access to a registry (for example, Quay.io) to push and pull images
+- An OpenShift cluster with **OpenShift AI** installed.
+- A **DataScienceCluster (DSC)** configured with **KServe** (model serving) and **OGX** enabled.  
+See the [openshift-ai-demos README](../../README.md#2-clone-and-configure-openshift-ai) for instructions on configuring the DSCInitialization and DataScienceCluster resources.
 
-### Project Setup
-Create and switch to the demo project:
+
+### Resource summary
+
+Approximate resource requests for the demo components:
+
+| Component | CPU | Memory | Storage |
+|-----------|----:|-------:|---------|
+| Model (`qwen3-4b`) | 32 | 40Gi | — |
+| App PostgreSQL | 200m | 256Mi | 1Gi PVC |
+| MCP server | 200m | 256Mi | — |
+| UI | 200m | 256Mi | — |
+| OGX Server | best-effort* | best-effort* | — |
+| OGX PostgreSQL (shared) | best-effort* | best-effort* | — |
+| Database initialization job | best-effort* | best-effort* | — |
+
+\* No explicit resource requests are configured. These components run with best-effort scheduling and consume resources as available.
+
+The model is the primary resource consumer. Plan for approximately **33 CPU cores** and **41 GiB of memory** to run the complete demo.
+
+### Local tools
+
+- [`oc`](https://docs.openshift.com/container-platform/latest/cli_reference/openshift_cli/getting-started-cli.html), logged in to your OpenShift cluster (`oc login ...`)
+- [`podman`](https://podman.io/) to build and push container images
+- Access to a container registry (for example, [Quay.io](https://quay.io)) where you can push images that your OpenShift cluster can pull
+One
+
+---
+
+## Setup
+
+Complete the first three steps, then choose one deployment method:  
+a scripted **Quick start** or a **Manual walkthrough**.
+
+### Step 1: Clone the repository and create the project
+
 ```bash
+https://github.com/IBM/ai-demos.git
+cd ai-demos/openshift-ai-demos
+
+# Create (or switch to) the demo project
 oc new-project ogx-sandbox || oc project ogx-sandbox
 ```
 
-Reference base directory:
-```
-cd ai-demos/openshift-ai-demos
-```
----
+> **Note:** The manifests are configured for the `ogx-sandbox` namespace. If you use a different namespace, update the service hostnames in `deployments/ogx-server.yaml` and `deployments/techmart-ui.yaml` to match your project name.
 
-### Model Configuration
+> Unless otherwise noted, run all remaining commands from the `ai-demos/openshift-ai-demos` directory.
 
-We will be deploying the [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) model and use it as self-hosted vLLM backend (with an OpenAI-compatible API).
+### Step 2: Deploy the model
 
-Deploy the vLLM runtime and model:
+Deploy the Qwen3-4B model using vLLM. The model exposes an OpenAI-compatible API that is used by both the Quick start and Manual deployment paths.
+
 ```bash
+# Register the vLLM CPU serving runtime
 oc process -n redhat-ods-applications vllm-cpu-runtime-template | oc apply -f -
+
+# Deploy the Qwen3-4B model
 oc create -f model-serving/generative-models/vllm/qwen3-4b-instruct-2507.yaml
 ```
 
-Model arguments:
-```
-    model:
-      args:
-      - --max-model-len=8196
-      - --enable-auto-tool-choice
-      - --tool-call-parser=hermes
-      - --gpu-memory-utilization=0.4
-      env:
-      - name: VLLM_CPU_KVCACHE_SPACE
-        value: "12"
-
-> **Note**: This model configuration uses CPU-based inference for portability. For GPU-based inference, remove `VLLM_CPU_KVCACHE_SPACE` and adjust `--gpu-memory-utilization` accordingly.
-```
-Resources:
-```
-      limits:
-        cpu: "32"
-        memory: 40Gi
-      requests:
-        cpu: "32"
-        memory: 40Gi
-```
-
-## OGX Deployment Steps
-#### Step 1: Deploy Postgres for OGX
-
-This deploys a shared PostgreSQL instance used by OGX for internal state (vector store metadata, conversation history, file records). It also creates the `postgres-credentials` Secret that the OGX server reads at startup.
-
-```
-oc create -f ogx-demos/shared/postgres.yaml
-```
-
-#### Step 2: Deploy OGX Distribution
+The model may take several minutes to become ready. Wait until the inference service reports `READY=True`:
 
 ```bash
-oc create -f ogx-demos/techmart-customer-service-demo/deployments/ogx-server.yaml 
-
-# Wait for OGX to be ready
-oc wait --for=condition=ready pod -l app=ogx --timeout=300s
+oc get inferenceservice qwen3-4b -w
 ```
 
-## MCP and UI Deployment Steps
+### Step 3: Build and push the container images
 
-#### Step 1: Build Container Images
-Build and push all required images:
+
+Build and push the demo's three container images: the UI, MCP server, and database initialization job. The script verifies that you are authenticated with the container registry and prompts you to run `podman login` if needed.
+
 ```bash
-# Builds and pushes:
-# - TechMart MCP server
-# - TechMart UI application
-# - PostgreSQL (for MCP)
-
+# Registry namespace or username
 export REGISTRY_USER=your-quay-username
+
+# Optional: export CONTAINER_REGISTRY=quay.io (default)
+
 sh ogx-demos/techmart-customer-service-demo/scripts/build-and-push-all.sh
 ```
 
-**Quick Deployment Option**
+> **Note:** If your images are stored in a private registry, configure an image pull secret in the `ogx-sandbox` namespace so OpenShift can pull them.
 
-For a simplified setup, you can use the automated script below. It performs Steps 2–4 (PostgreSQL, database initialization, MCP server and UI deployment) automatically:
-```
-sh scripts/deploy-with-postgresql.sh
-```
+### Step 4: Deploy the demo
 
-#### Step 2: Deploy PostgreSQL Database
-Deploy the database with persistent storage:
-```bash
-# Deploy PostgreSQL with persistent volume
-% oc apply -f ogx-demos/techmart-customer-service-demo/deployments/postgresql-mcp.yaml
-secret/techmart-db-secret created
-persistentvolumeclaim/techmart-postgresql-pvc created
-deployment.apps/techmart-postgresql created
+Choose one of the following deployment methods.
 
-# Wait for PostgreSQL to be ready
-% oc wait --for=condition=ready pod -l app=techmart-postgresql --timeout=300s
-pod/techmart-postgresql-58cccdd7f4-s6fdb condition met
-```
+#### Option A: Quick start (recommended)
 
-#### Step 3: Initialize Database
-Load schema and sample order data:
+
+`manage-demo.sh` automates the deployment of all demo components, applying resources in the required order and waiting for each component to become ready.
+
 
 ```bash
-# Run database initialization Job
-% oc apply -f ogx-demos/techmart-customer-service-demo/deployments/db-init-job.yaml 
-job.batch/techmart-db-init created
-configmap/techmart-db-scripts created
-configmap/techmart-db-data created
-
-# Check Job status
-% oc logs job/techmart-db-init
-🗄️  Creating database schema...
-psql:/scripts/schema.sql:4: NOTICE:  table "orders" does not exist, skipping
-DROP TABLE
-CREATE TABLE
-CREATE INDEX
-CREATE INDEX
-CREATE INDEX
-CREATE INDEX
-CREATE FUNCTION
-CREATE TRIGGER
-📊 Loading sample data...
-📊 Loading orders from CSV...
-   Found 10 orders
-💾 Inserting orders into database...
-✅ Inserted 10 orders
-✅ Database initialization complete!
-✅ Database initialization complete!
-
-# Verify data was loaded
-oc exec -it deployment/techmart-postgresql -- psql -U postgres -d techmart -c "SELECT COUNT(*) FROM orders;"
- count 
--------
-    10
-(1 row)
+# Deploy all demo components
+bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh deploy --all
 ```
 
-#### Step 4: Deploy MCP Server
-Deploy the MCP server connected to PostgreSQL:
-```bash
-% oc apply -f  ogx-demos/techmart-customer-service-demo/deployments/techmart-mcp-server.yaml 
-deployment.apps/techmart-mcp-server created
-service/techmart-mcp-server created
-route.route.openshift.io/techmart-mcp-server created
-
-# Verify MCP server is running
-% oc wait --for=condition=ready pod -l app=techmart-mcp-server --timeout=300s
-pod/techmart-mcp-server-6b55b64f9b-tjj96 condition met
-```
-
-
-#### Step 5: Deploy UI Application
+Additional commands:
 
 ```bash
-# Deploy Flask UI
-% oc apply -f ogx-demos/techmart-customer-service-demo/deployments/techmart-ui.yaml 
-deployment.apps/techmart-ui created
-service/techmart-ui created
-route.route.openshift.io/techmart-ui created
-secret/techmart-ui-secret created
+# Interactively select which resources to deploy
+bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh deploy
 
-# Wait for TechMart UI to be ready
-% oc wait --for=condition=ready pod -l app=techmart-ui --timeout=300s
-pod/techmart-ui-86784bf7b8-np6rp condition met
-
-# Get the route URL
-UI_ROUTE=https://$(oc get route techmart-ui -o jsonpath='{.spec.host}')
-echo "Access the demo at: $UI_ROUTE"
+# Delete all deployed resources
+bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh delete --all
 ```
 
+> **Note:** `manage-demo.sh` assumes the model is already running. Complete [Step 2](#step-2--deploy-the-model) before using it.
 
-#### Step 6: Upload Policy Documents
+After the deployment completes, continue to [Step 5](#step-5--open-the-ui-and-upload-the-policy-document).
 
-Access the UI and upload policy documents for RAG:
-- `data/return-policy.txt` — covers both return policy and shipping information
+#### Option B: Manual, step by step
 
-**Note**: 
-- Sample Order data is already loaded in PostgreSQL via the init Job.
+Use this path to deploy each component individually and better understand how the demo is assembled. It performs the same deployment as the Quick start.
 
-- All order details and the return policy document have been generated by the BOB Assistant.
----
+##### 4.1 Deploy the shared PostgreSQL instance
+OGX uses this PostgreSQL instance to store its internal state, including vector store metadata, conversation history, and uploaded file records. It also creates the `postgres-credentials` Secret that the OGX server reads at startup.
 
-## Configuration
-
-### PostgreSQL Database
-
-**Connection Details:**
-- **Host**: `postgresql-mcp.llama.svc.cluster.local`
-- **Port**: 5432
-- **Database**: `techmart`
-- **User**: `postgres`
-- **Password**: `postgres123` (stored in Secret)
-- **Storage**: 1Gi PersistentVolumeClaim
-
-**Schema:**
-```sql
-CREATE TABLE orders (
-    id SERIAL PRIMARY KEY,
-    order_id VARCHAR(50) UNIQUE NOT NULL,
-    customer_email VARCHAR(255) NOT NULL,
-    product_name VARCHAR(255) NOT NULL,
-    category VARCHAR(100) NOT NULL,
-    price DECIMAL(10, 2) NOT NULL,
-    order_date DATE NOT NULL,
-    delivery_date DATE NOT NULL,
-    status VARCHAR(50) NOT NULL,
-    is_opened VARCHAR(10) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+```bash
+oc create -f ogx-demos/shared/postgres.yaml
+oc wait --for=condition=ready pod -l app=postgres --timeout=300s
 ```
 
-### MCP Server Configuration
+##### 4.2: Deploy the OGX Distribution
+This is the OGX orchestration layer that coordinates RAG, MCP tools, and model inference.
 
-The MCP server provides two tools:
-
-**1. `get_order(order_id: str)`**
-- Retrieves complete order details directly from PostgreSQL (no in-memory cache)
-- Returns: order_id, customer_email, product_name, category, order_date, delivery_date, price, status, is_opened
-
-**2. `reload_orders()`**
-- Verifies database connectivity and returns the current order count
-- Orders are always read live from the DB, so there is no cache to flush; this tool is useful to confirm the database is reachable after an update
-
-> **Design note**: Return eligibility and refund calculations are intentionally not implemented as a server-side tool. Instead, the LLM applies the return policy rules retrieved from the RAG knowledge base (`return-policy.txt`) to the raw order data returned by `get_order`. This showcases the hybrid RAG + MCP capability of OGX.
-
-### OGX Configuration
-
-Key settings in [`ogx-server.yaml`](deployments/ogx-server.yaml):
-
-```yaml
-env:
-  # Inline FAISS vector store
-  - name: ENABLE_FAISS
-    value: "faiss"
-  
-  # Inline embeddings (sentence-transformers)
-  - name: ENABLE_SENTENCE_TRANSFORMERS
-    value: "sentence-transformers"
-  - name: EMBEDDING_PROVIDER
-    value: "sentence-transformers"
-  
-  # Remote LLM configuration
-  - name: INFERENCE_MODEL
-    value: "qwen3-4b"
-  - name: VLLM_URL
-    value: http://qwen3-4b-predictor.ogx-sandbox.svc.cluster.local:8080/v1
-  - name: VLLM_TLS_VERIFY
-    value: "false"
-  - name: VLLM_API_TOKEN
-    value: "fake"
-  - name: VLLM_MAX_TOKENS
-    value: "1024"
+```bash
+oc create -f ogx-demos/techmart-customer-service-demo/deployments/ogx-server.yaml
+oc wait --for=condition=ready pod -l app=ogx --timeout=300s
 ```
+
+##### 4.3: Deploy the application database (PostgreSQL)
+This PostgreSQL instance stores the sample order data that the MCP server exposes as tools.
+
+```bash
+oc apply -f ogx-demos/techmart-customer-service-demo/deployments/postgresql-mcp.yaml
+oc wait --for=condition=ready pod -l app=techmart-postgresql --timeout=300s
+```
+
+##### 4.4: Initialize the database
+This Job creates the schema and loads the sample orders
+
+```bash
+oc apply -f ogx-demos/techmart-customer-service-demo/deployments/db-init-job.yaml
+oc wait --for=condition=complete job/techmart-db-init --timeout=300s
+
+# (Optional) confirm the data loaded
+oc exec -it deployment/techmart-postgresql -- \
+  psql -U postgres -d techmart -c "SELECT COUNT(*) FROM orders;"
+```
+
+##### 4.5: Deploy the MCP server 
+This exposes the order database through MCP tools that OGX can invoke.
+
+```bash
+oc apply -f ogx-demos/techmart-customer-service-demo/deployments/techmart-mcp-server.yaml
+oc wait --for=condition=ready pod -l app=techmart-mcp-server --timeout=300s
+```
+
+##### 4.6: Deploy the UI 
+This is the Flask chat interface users interact with.
+
+```bash
+oc apply -f ogx-demos/techmart-customer-service-demo/deployments/techmart-ui.yaml
+oc wait --for=condition=ready pod -l app=techmart-ui --timeout=300s
+```
+
+### Step 5: Open the UI and upload the policy document
+
+Retrieve the UI URL and open it in your browser:
+
+```bash
+echo "Access the demo at: https://$(oc get route techmart-ui -o jsonpath='{.spec.host}')"
+```
+
+The **TechMart Customer Service** chat interface includes a file upload panel. Upload the policy document so the assistant can answer policy questions using RAG.
+
+
+```text
+ogx-demos/techmart-customer-service-demo/data/return-policy.txt
+```
+This document contains the sample return policy and shipping information.
+
+
+> **Note:** The sample order data is loaded automatically by the database initialization job.
+
+The demo is now ready. Try asking questions about the return policy or look up one of the sample orders.
 
 ---
 
-## Sample Orders
+## Try the Demo
 
-The demo includes 10 sample orders stored in PostgreSQL generated by BOB AI assistant (showing 5 examples):
+The following examples demonstrate the assistant's capabilities, progressing from RAG, to MCP, and finally to hybrid queries that combine both.
 
-| Order ID | Customer Email | Product | Category | Price | Order Date | Delivery Date | Status | Opened |
-|----------|----------------|---------|----------|-------|------------|---------------|--------|--------|
-| ORD-2024-001 | john.doe@email.com | Laptop Pro 15 | Electronics | $1,299.99 | Mar 15 | Mar 20 | Delivered | yes |
-| ORD-2024-002 | jane.smith@email.com | Wireless Mouse | Electronics | $29.99 | Apr 1 | Apr 5 | Delivered | no |
-| ORD-2024-003 | bob.wilson@email.com | Office Chair | Furniture | $249.99 | Mar 25 | Apr 2 | Delivered | yes |
-| ORD-2024-004 | alice.brown@email.com | Desk Lamp | Home & Office | $45.99 | Apr 10 | Apr 15 | Delivered | no |
-| ORD-2024-005 | charlie.davis@email.com | Mechanical Keyboard | Electronics | $89.99 | Apr 5 | Apr 12 | Delivered | yes |
+### 1. Policy question (RAG only)
 
-> **Note on eligibility examples**: The expected responses in this README were written against a reference date of April 21, 2024. Because the MCP server uses the real current date, eligibility results and days-remaining counts will differ when you run the demo today. The logic is correct — only the specific numbers will vary.
+**Try:**
+> what is your return policy in general?
 
----
+**How it works**
+- Retrieves relevant content from `return-policy.txt` using RAG.
+- Generates a natural language response based on the retrieved context.
 
-## Example Interactions
-
-### 1. Policy Question (RAG Only)
-
-**Question**: "what is your return policy in general ?"
-
-**What happens**:
-- RAG retrieves relevant sections from `return-policy.txt`
-- LLM synthesizes the information into a natural response
-
-**Expected Response**:
+**Expected response:**
 ```
 The return policy at TechMart allows customers to return standard items within 30 days of delivery, electronics within 15 days, and opened software and personalized items cannot be returned. Items must be in original condition with original packaging intact, and all accessories, manuals, and tags must be included. If an item is returned after the time limit, it may receive a partial refund or be rejected.
 ```
 
-### 2. Order Lookup (MCP Only)
+### 2. Order lookup (MCP)
 
-**Question**: "What's the status of order ORD-2024-001?"
+**Try:**
 
-**What happens**:
-- MCP tool `get_order_by_id()` queries PostgreSQL database
-- Returns order details
+> What's the status of order ORD-2024-001?
 
-**Expected Response**:
+**How it works**
+- Invokes the `get_order()` MCP tool.
+- Retrieves the order details from the PostgreSQL database.
+- Generates a response based on the returned order information.
+
+**Expected response:**
 ```
 The status of order ORD-2024-001 is "Delivered". The order was delivered on March 20, 2024, and the customer has opened the package. If you need any further assistance or have questions about your order, please don't hesitate to contact us.
 ```
 
-### 3. Combined Query (RAG + MCP)
+### 3. Return eligibility (RAG + MCP), using a non-eligible order.
 
-**Question**: "Can I return order ORD-2024-001?"
+**Try:**
 
-**What happens**:
-1. RAG retrieves return policy rules from `return-policy.txt`
-2. MCP fetches order details via `get_order()` (delivery date, category, opened status)
-3. LLM applies the policy rules to the order data to determine eligibility
-4. AI synthesizes both sources to provide a complete answer
+> Can I return order ORD-2024-001?
 
-**Expected Response**:
+**How it works**
+- Retrieves the relevant return policy from `return-policy.txt` using RAG.
+- Invokes the `get_order()` MCP tool to retrieve the order details, including the delivery date, product category, and opened status.
+- Applies the return policy to the order data to determine whether the item is eligible for return.
+- Generates a response that combines information from both sources.
+
+**Expected response:**
 ```
 Unfortunately, order ORD-2024-001 is not eligible for return. The return window expired 17 days ago, and you are outside the allowed timeframe.
 ```
 
-### 4. Eligible Return (RAG + MCP)
+### 4. Return eligibility (RAG + MCP), using an eligible order.
 
-**Question**: "Can I return order ORD-2024-005?"
+**Try:**
 
-**What happens**:
-- MCP checks eligibility: delivered April 12, 6 days ago
-- Electronics have 15-day window → eligible
+> Can I return order ORD-2024-005?
 
-**Expected Response**:
+**How it works**
+
+- Retrieves the relevant return policy from `return-policy.txt` using RAG.
+- Invokes the `get_order()` MCP tool to retrieve the order details, including the delivery date, product category, and opened status.
+- Applies the return policy to the order data to determine whether the item is eligible for return.
+- Generates a response that combines information from both sources.
+
+**Expected response:**
 ```
 The order ORD-2024-005 is eligible for return. You have 6 days remaining in the return window, and the estimated refund amount is $76.49. Additionally, there is a restocking fee of 15% ($13.50) and you can return the item within 15 days of delivery.
 ```
 
-### 5. Shipping Policy Question (RAG)
+### 5. Shipping policy (RAG)
 
-**Question**: "How long does shipping take?"
+**Try:**
 
-**What happens**:
-- RAG retrieves shipping information from `return-policy.txt` (the Shipping Information section)
-- LLM provides natural response
+> How long does shipping take?
 
-**Expected Response**:
+**How it works**
+- Retrieves the shipping information from `return-policy.txt` using RAG.
+- Generates a natural language response based on the retrieved policy information.
+
+**Expected response:**
 ```
 Standard shipping takes 3-5 business days. We also offer:
 - Express shipping: 1-2 business days
@@ -395,34 +325,79 @@ Orders are processed within 24 hours on business days.
 
 ---
 
-## Update Order Database
+## Troubleshooting
 
-#### Add data using CLI:
+| Symptom | Likely cause | What to check |
+|---------|--------------|---------------|
+| Model pod remains in `Pending` | Insufficient CPU or memory resources | Run `oc describe inferenceservice qwen3-4b` and verify node capacity. |
+| `ImagePullBackOff` for the UI, MCP server, or DB-init pods | Images were not pushed, or the namespace cannot pull from a private registry | Verify [Step 3](#step-3--build-and-push-the-container-images) completed successfully. If using a private registry, configure an image pull secret for the `ogx-sandbox` namespace. |
+| MCP server crashes or cannot retrieve orders | The database is unavailable or was not initialized | Verify the PostgreSQL pod is running and the database initialization job completed successfully (`oc get job techmart-db-init`). |
+| Policy questions return no or incorrect information | The policy document has not been uploaded | Upload `return-policy.txt` through the UI (see [Step 5](#step-5-open-the-ui-and-upload-the-policy-document)). |
+| OGX pod is not ready | The shared PostgreSQL instance or model is unavailable | Verify the shared PostgreSQL deployment is running and the model reports `READY=True`. |
+
+To inspect a failing component, view its logs:
+
+```bash
+oc logs deployment/<name>
+oc logs job/techmart-db-init
+```
+
+For example:
+
+- `oc logs deployment/techmart-mcp-server`
+- `oc logs deployment/techmart-ui`
+---
+
+## Reference
+
+### Sample orders
+
+The sample orders are stored in [`data/orders.csv`](data/orders.csv)  and loaded automatically by the database initialization job.
+
+### Key OGX settings
+
+The OGX deployment is configured in [`ogx-server.yaml`](deployments/ogx-server.yaml):
+
+### Add a sample order
+
+To test additional scenarios, connect to the PostgreSQL database and insert a new order:
+
 ```bash
 oc exec -it deployment/techmart-postgresql -- psql -U postgres -d techmart
 
-INSERT INTO orders (order_id, customer_email, product_name, category, price, order_date, delivery_date, status, is_opened)
-VALUES ('ORD-2024-011', 'customer@example.com', 'New Product', 'Electronics', 599.99, '2024-04-20', '2024-04-22', 'Delivered', 'No');
+INSERT INTO orders (
+  order_id,
+  customer_email,
+  product_name,
+  category,
+  price,
+  order_date,
+  delivery_date,
+  status,
+  is_opened
+)
+VALUES (
+  'ORD-2024-011',
+  'customer@example.com',
+  'New Product',
+  'Electronics',
+  599.99,
+  '2024-04-20',
+  '2024-04-22',
+  'Delivered',
+  'No'
+);
 ```
 
-#### Add data using UI:
+New orders are available immediately. The MCP server reads directly from the database, so no restart is required.
 
-You can upload a CSV file with new orders using UI
 
-#### Reload Orders in MCP Server:
-
-After updating the database, ask the AI assistant (from UI) to reload the orders:
-```
-"Please reload the orders from the database"
-```
-
-The AI will call the `reload_orders()` MCP tool, which refreshes the in-memory cache without restarting the server.
-
-####  Re-run Init Job:
-```bash
-oc delete job techmart-db-init
-oc apply -f deployments/db-init-job.yaml
-```
+> **Reset the sample data:** To restore the original sample orders, recreate the database initialization job. This drops the `orders` table and reloads the default data, removing any orders you added.
+>
+> ```bash
+> oc delete job techmart-db-init
+> oc apply -f ogx-demos/techmart-customer-service-demo/deployments/db-init-job.yaml
+> ```
 
 ---
 

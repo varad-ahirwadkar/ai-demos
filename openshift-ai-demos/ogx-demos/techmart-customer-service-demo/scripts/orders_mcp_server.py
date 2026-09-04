@@ -1,6 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 import json
+from datetime import datetime
 from typing import Any
 import os
 import logging
@@ -11,14 +12,20 @@ from psycopg2.extras import RealDictCursor
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Static reference date for demo consistency (April 21, 2024).
+# All date calculations (e.g. days since delivery) in check_return_eligibility
+# are relative to this date so the demo produces consistent results regardless
+# of when it is actually run.
+DEMO_TODAY = datetime(2024, 4, 21)
+
 # Database connection parameters from environment.
 # Use host.containers.internal to reach a host-side PostgreSQL from a container,
 # or localhost for a plain Python process on the same machine.
 DB_HOST = os.getenv('DB_HOST', 'host.containers.internal')
 DB_PORT = os.getenv('DB_PORT', '5432')
 DB_NAME = os.getenv('DB_NAME', 'techmart')
-DB_USER = os.getenv('DB_USER', 'llamastack')
-DB_PASSWORD = os.getenv('DB_PASSWORD', 'llamastack')
+DB_USER = os.getenv('DB_USER', 'techmart')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'techmart123')
 PORT = int(os.getenv("PORT", "9001"))
 
 # Initialize FastMCP server
@@ -128,6 +135,7 @@ def get_orders_resource() -> str:
     return json.dumps({
         "orders_count": len(orders),
         "data_source": "PostgreSQL Database",
+        "demo_date": DEMO_TODAY.strftime('%Y-%m-%d'),
         "sample_orders": [order['order_id'] for order in orders[:5]],
     })
 
