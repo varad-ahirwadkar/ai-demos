@@ -30,6 +30,9 @@ UI_IMAGE="${REGISTRY}/${REGISTRY_USER}/techmart:${UI_TAG}"
 MCP_IMAGE="${REGISTRY}/${REGISTRY_USER}/techmart:${MCP_TAG}"
 DB_INIT_IMAGE="${REGISTRY}/${REGISTRY_USER}/techmart:${DB_INIT_TAG}"
 
+# Optional single-image selector: ui | mcp | db-init
+TARGET="${1:-all}"
+
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}TechMart Container Image Builder${NC}"
 echo -e "${BLUE}========================================${NC}"
@@ -37,6 +40,7 @@ echo ""
 echo -e "${YELLOW}Configuration:${NC}"
 echo -e "  Registry: ${REGISTRY}"
 echo -e "  User: ${REGISTRY_USER}"
+echo -e "  Target:   ${TARGET}"
 
 echo ""
 echo -e "${YELLOW}Images to build:${NC}"
@@ -109,35 +113,43 @@ echo ""
 SUCCESS_COUNT=0
 FAIL_COUNT=0
 
-# 1. Build UI Image
-if build_and_push "UI Application" \
-    "docker/Containerfile.ui" \
-    "." \
-    "${UI_IMAGE}"; then
-    ((SUCCESS_COUNT++))
-else
-    ((FAIL_COUNT++))
-fi
-
-# 2. Build MCP Server Image
-if build_and_push "MCP Server" \
-    "docker/Containerfile.mcp" \
-    "." \
-    "${MCP_IMAGE}"; then
-    ((SUCCESS_COUNT++))
-else
-    ((FAIL_COUNT++))
-fi
-
-# 3. Build DB Init Image
-if build_and_push "Database Initializer" \
-    "docker/Containerfile.db-init" \
-    "." \
-    "${DB_INIT_IMAGE}"; then
-    ((SUCCESS_COUNT++))
-else
-    ((FAIL_COUNT++))
-fi
+case "${TARGET}" in
+  ui|all)
+    if build_and_push "UI Application" \
+        "docker/Containerfile.ui" \
+        "." \
+        "${UI_IMAGE}"; then
+        ((SUCCESS_COUNT++))
+    else
+        ((FAIL_COUNT++))
+    fi
+    ;;&  # fall-through only when TARGET=all
+  mcp|all)
+    if build_and_push "MCP Server" \
+        "docker/Containerfile.mcp" \
+        "." \
+        "${MCP_IMAGE}"; then
+        ((SUCCESS_COUNT++))
+    else
+        ((FAIL_COUNT++))
+    fi
+    ;;&
+  db-init|all)
+    if build_and_push "Database Initializer" \
+        "docker/Containerfile.db-init" \
+        "." \
+        "${DB_INIT_IMAGE}"; then
+        ((SUCCESS_COUNT++))
+    else
+        ((FAIL_COUNT++))
+    fi
+    ;;
+  *)
+    echo -e "${RED}Unknown target: ${TARGET}${NC}"
+    echo "Usage: $0 [ui|mcp|db-init|all]"
+    exit 1
+    ;;
+esac
 
 # Summary
 echo -e "${BLUE}========================================${NC}"
