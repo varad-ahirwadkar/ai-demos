@@ -31,7 +31,9 @@ Answer the customer's question directly and concisely:
 - 2–3 sentences maximum
 - No step-by-step instructions, contact info, or warnings unless specifically asked
 - For return questions: state yes/no, the deadline, and the refund amount (if applicable)
-- Always give a final answer after using tools"""
+- Always give a final answer after using tools
+
+CRITICAL: Only use facts from retrieved policy documents or order tool results. Never guess, assume, or invent policy details. If the policy document does not cover a case, say you cannot confirm."""
 
 # Helpers to handle model items that may be typed objects or raw tuples
 def _model_type(m):
