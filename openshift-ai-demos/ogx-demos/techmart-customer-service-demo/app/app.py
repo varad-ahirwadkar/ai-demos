@@ -30,10 +30,16 @@ INSTRUCTIONS = """You are a helpful TechMart customer service assistant.
 Answer the customer's question directly and concisely:
 - 2–3 sentences maximum
 - No step-by-step instructions, contact info, or warnings unless specifically asked
-- For return questions: state yes/no, the deadline, and the refund amount (if applicable)
 - Always give a final answer after using tools
 
-CRITICAL: Only use facts from retrieved policy documents or order tool results. Never guess, assume, or invent policy details. If the policy document does not cover a case, say you cannot confirm."""
+For return eligibility questions, always include:
+1. Yes or no
+2. The return deadline (delivery date + allowed days from policy)
+3. If the item is opened: state the restocking fee percentage and the calculated refund amount
+
+Restocking fee reason: it applies because the item is opened, not because of timing.
+
+CRITICAL: Only use facts from retrieved policy documents or order tool results. Never guess, assume, or invent policy details."""
 
 # Helpers to handle model items that may be typed objects or raw tuples
 def _model_type(m):
