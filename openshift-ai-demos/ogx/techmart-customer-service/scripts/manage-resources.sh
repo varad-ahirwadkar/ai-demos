@@ -72,6 +72,26 @@ create_db_init_configmaps() {
         app=techmart component=db-init --overwrite >/dev/null
 }
 
+# ---------------------------------------------------------------------------
+# 'oc wait' fails immediately with "no matching resources found" when nothing
+# matches the selector yet. That is fine for pods created directly by a
+# manifest, but the OGX pod is created asynchronously by the OGX operator, so
+# poll for it to appear before waiting on readiness.
+# ---------------------------------------------------------------------------
+wait_for_pod() {
+    local selector="$1" timeout="${2:-300}" waited=0
+    while [[ $waited -lt $timeout ]]; do
+        if [[ -n "$(oc get pod -l "$selector" -o name 2>/dev/null)" ]]; then
+            oc wait --for=condition=ready pod -l "$selector" --timeout="$((timeout - waited))s"
+            return $?
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    error "No pod matching '${selector}' appeared within ${timeout}s"
+    return 1
+}
+
 RES_KEYS=(
     ogx_postgres
     ogx_server
@@ -102,7 +122,7 @@ RES_YAMLS=(
 # readiness wait commands — empty string means skip
 RES_WAITS=(
     "oc wait --for=condition=ready pod -l app=postgres --timeout=180s"
-    "oc wait --for=condition=ready pod -l app=techmart-ogx --timeout=300s"
+    "wait_for_pod app.kubernetes.io/instance=techmart-ogx 300"
     "oc wait --for=condition=ready pod -l app=techmart-postgresql --timeout=180s"
     "oc wait --for=condition=complete job/techmart-db-init --timeout=180s"
     "oc wait --for=condition=available deployment/techmart-mcp-server --timeout=180s"

@@ -173,7 +173,9 @@ This is the OGX orchestration layer that coordinates RAG, MCP tools, and model i
 
 ```bash
 oc create -f ogx/techmart-customer-service/deployments/ogx-server.yaml
-oc wait --for=condition=ready pod -l app=ogx --timeout=300s
+# The OGX operator creates the pod asynchronously, so give it a moment to
+# appear before waiting on readiness.
+oc wait --for=condition=ready pod -l app.kubernetes.io/instance=techmart-ogx --timeout=300s
 ```
 
 ##### 4.3: Deploy the application database (PostgreSQL)

@@ -119,7 +119,8 @@ except Exception as e:
     client = None
     MODEL_ID = None
 
-# Get vector store ID (will be created on first RAG upload)
+# Last-resolved vector store ID, reported by /api/status. The store itself is
+# looked up by name on every use, so this is a reporting value, not a cache.
 VECTOR_STORE_ID = None
 
 def get_or_create_vector_store():
@@ -129,16 +130,19 @@ def get_or_create_vector_store():
     if not client:
         return None
 
-    if VECTOR_STORE_ID:
-        return VECTOR_STORE_ID
-    
     try:
-        # Try to list existing vector stores
+        # Always resolve by name rather than trusting VECTOR_STORE_ID. The app
+        # runs under multiple gunicorn workers, each with its own copy of this
+        # global: when one worker replaces the store on upload, the others would
+        # otherwise keep using an ID that no longer exists. The lookup is a
+        # single in-cluster request, so re-resolving is cheap.
         vector_stores = client.vector_stores.list()
         for vs in vector_stores:
             if vs.name == "techmart_policy_store":
                 VECTOR_STORE_ID = vs.id
-                logger.info(f"✅ Using existing vector store: {VECTOR_STORE_ID}")
+                # Debug, not info: this now runs on every lookup, and the UI
+                # polls /api/files.
+                logger.debug(f"Using existing vector store: {VECTOR_STORE_ID}")
                 return VECTOR_STORE_ID
         
         # Get models to find embedding model
@@ -176,25 +180,33 @@ def get_or_create_vector_store():
         return None
 
 def reset_vector_store():
-    """Delete the existing policy vector store so the next upload re-indexes cleanly.
+    """Drop already-indexed content so the next upload replaces it instead of adding to it.
 
-    Uploads rebuild the store from scratch: this removes the current
-    ``techmart_policy_store`` (and its indexed chunks) and clears the cached ID,
-    so ``get_or_create_vector_store`` creates a fresh, empty store for the new
-    file. Without this, re-uploading an edited policy would leave the previous
-    version's chunks in the store and retrieval could return stale numbers.
+    Re-uploading an edited policy must not leave the previous version's chunks
+    behind — retrieval would mix old and new numbers. Deleting the store is how
+    we guarantee that, but it is only worth doing when the store actually holds
+    files. On a new instance the store is empty (or does not exist yet), so
+    there is nothing to replace: keep it and let the upload populate it.
+    Deleting and recreating an empty store just churns IDs for no benefit.
     """
     global VECTOR_STORE_ID
     if not client:
         return
     try:
         for vs in client.vector_stores.list():
-            if vs.name == "techmart_policy_store":
-                client.vector_stores.delete(vector_store_id=vs.id)
-                logger.info(f"🗑️  Deleted existing vector store for clean re-index: {vs.id}")
+            if vs.name != "techmart_policy_store":
+                continue
+            if not any(True for _ in client.vector_stores.files.list(vector_store_id=vs.id)):
+                logger.info(f"↩️  Vector store is empty, reusing it for this upload: {vs.id}")
+                VECTOR_STORE_ID = vs.id
+                return
+            client.vector_stores.delete(vector_store_id=vs.id)
+            logger.info(f"🗑️  Deleted existing vector store for clean re-index: {vs.id}")
+            VECTOR_STORE_ID = None
+            return
         VECTOR_STORE_ID = None
     except Exception as e:
-        logger.warning(f"Could not delete existing vector store (continuing): {e}")
+        logger.warning(f"Could not reset existing vector store (continuing): {e}")
 
 @app.route('/')
 def index():
@@ -292,8 +304,9 @@ def upload_rag_document():
         
         logger.info(f"Uploading RAG document: {file.filename}")
 
-        # Rebuild the store from scratch so this upload fully replaces any
-        # previous document version — no stale chunks left behind to retrieve.
+        # Clear any previously indexed document so this upload fully replaces
+        # it — no stale chunks left behind to retrieve. No-op when the store is
+        # already empty.
         reset_vector_store()
 
         # Get or create vector store
