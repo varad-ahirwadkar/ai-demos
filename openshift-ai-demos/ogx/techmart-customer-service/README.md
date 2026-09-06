@@ -258,7 +258,7 @@ The following examples demonstrate the assistant's capabilities, progressing fro
 ### 1. Policy question (RAG only)
 
 **Try:**
-> what is your return policy in general?
+> What is your return policy in general?
 
 **How it works**
 - Retrieves relevant content from `return-policy.txt` using RAG.
@@ -378,6 +378,12 @@ To test additional scenarios, connect to the PostgreSQL database and insert a ne
 oc exec -it deployment/techmart-postgresql -- psql -U postgres -d techmart
 ```
 
+> **Use dates on or before 2024-04-21.** So the demo gives the same answers
+> whenever it is run, `check_return_eligibility()` treats **2024-04-21** as
+> "today" (`DEMO_TODAY` in [`mcp-server/server.py`](mcp-server/server.py)). A
+> `delivery_date` after that is a package that has not arrived yet, and the
+> assistant will report more days remaining than the return window allows.
+
 ```bash
 INSERT INTO orders (
   order_id,
@@ -396,14 +402,19 @@ VALUES (
   'New Product',
   'Electronics',
   599.99,
-  '2024-04-20',
-  '2024-04-22',
+  '2024-04-10',
+  '2024-04-15',
   'Delivered',
   'No'
 );
 ```
 
 New orders are available immediately. The MCP server reads directly from the database, so no restart is required.
+
+Asking *"Can I return order ORD-2024-011?"* now returns a consistent result: an
+unopened electronics item delivered on 2024-04-15 has a 15-day window closing
+2024-04-30, so 9 days remain and the full $599.99 is refunded with no
+restocking fee.
 
 
 > **Reset the sample data:** To restore the original sample orders, recreate the database initialization job. This drops the `orders` table and reloads the default data, removing any orders you added.

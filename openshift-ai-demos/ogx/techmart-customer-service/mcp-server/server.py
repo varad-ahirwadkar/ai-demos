@@ -272,7 +272,7 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
     category = order['category']
     price = float(order['price'])
     is_opened = _normalize_is_opened(order['is_opened'])
-    _, status_display = _normalize_status(order['status'])
+    status_enum, status_display = _normalize_status(order['status'])
     delivery_date_str = order['delivery_date']
 
     result: dict[str, Any] = {
@@ -287,11 +287,21 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
         "today": DEMO_TODAY.strftime('%Y-%m-%d'),
     }
 
-    # An order that has not been delivered yet cannot be returned.
-    if not delivery_date_str:
+    # The return window opens on delivery, so gate on the status and not just
+    # the delivery date. Orders still in transit or processing carry an
+    # *estimated* delivery_date, which would otherwise be mistaken for the day
+    # the customer received the item.
+    if status_enum != "DELIVERED":
         result.update(
             eligible=False,
             reason=f"Order has not been delivered yet (status: {status_display}).",
+        )
+        return result
+
+    if not delivery_date_str:
+        result.update(
+            eligible=False,
+            reason="Order is marked delivered but has no delivery date on record.",
         )
         return result
 
