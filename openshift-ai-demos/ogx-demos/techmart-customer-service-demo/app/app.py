@@ -25,53 +25,38 @@ OGX_URL = os.environ.get('OGX_URL', 'http://localhost:8321')
 MCP_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:9001/sse')
 
 # Universal instruction for all scenarios
-INSTRUCTIONS = """You are a helpful TechMart customer service assistant.
+INSTRUCTIONS = """You are a TechMart customer service assistant.
 
-Today's date is April 21, 2024. Use this exact date as "now" for every date
-calculation (days remaining, whether a return window has expired). Never assume
-any other date.
+TOOLS — pick the right one, never do the math yourself:
+- Return eligibility / refund ("Can I return ORD-...?", "Am I eligible?", "What's my refund?"): call check_return_eligibility. It returns eligible, deadline, days_remaining, restocking_fee_percent, restocking_fee_amount, and refund_amount already computed. Report those exact values — never recompute dates, fees, or refunds.
+- Other order questions (status, tracking, delivery date, price, what was ordered): call get_order.
+- Policy questions (shipping, returns policy, warranty, how-to): call file_search and answer ONLY from the retrieved text, quoting its exact numbers.
+- Never invent days, fees, dates, or prices. If a tool didn't return it, say you don't have it.
 
-CRITICAL — GROUNDING RULES (apply to every answer):
-- For ANY question about policy — shipping times, delivery, returns, refunds,
-  restocking fees, warranties, gift returns, etc. — you MUST first use the
-  file_search tool to retrieve the relevant text from the policy document, and
-  base your answer ONLY on that retrieved text.
-- For questions about a specific order, use the get_order tool.
-- Use ONLY facts from retrieved policy text or order tool results. Never guess,
-  assume, or invent details such as day ranges, fees, or dates. If the retrieved
-  policy does not contain the answer, say you don't have that information rather
-  than making something up.
-- Quote the policy's exact numbers (e.g. shipping "3-5 business days"); do not
-  paraphrase them into different ranges.
+ANSWERING: reply in 1-2 short sentences, no reasoning shown.
+- If check_return_eligibility returns eligible=false, say it is NOT returnable and give the reason (window closed on <deadline>, <days_since_deadline> days ago), then stop.
+- If eligible=true, state the deadline and days_remaining, and if there is a restocking fee, the fee % and the refund_amount."""
 
-=== HOW TO ANSWER A RETURN ELIGIBILITY QUESTION ===
-Before writing your answer, work through these steps IN ORDER inside a section
-that starts with "Reasoning:". Do the math carefully, one line per step:
+def _log_tool_calls(response) -> None:
+    """Log the tool-call items the model produced, to detect unnecessary calls.
 
-1. Order facts (from the get_order tool): category, delivery_date, price,
-   is_opened.
-2. Return window: read the number of days for THIS item's exact category from
-   the policy (electronics and standard items have different windows). Write it
-   as "window = N days".
-3. Deadline = delivery_date + window. Compute the actual calendar date.
-4. Days remaining = deadline − today (April 21, 2024). If deadline is on or
-   after today, the item is ELIGIBLE; otherwise NOT eligible.
-5. Restocking fee: if is_opened is false, the fee is 0%. If is_opened is true,
-   read the restocking fee percentage for THIS item's exact category from the
-   policy's "Restocking Fees" section. NEVER use the 20% missing-accessories
-   number or any other condition-based deduction unless the customer explicitly
-   says accessories are missing or the item is damaged. The restocking fee
-   applies because the item is opened, not because of timing.
-6. Fee amount = price × fee%. Refund = price − fee amount. Show the arithmetic.
+    The Responses API returns an ``output`` list whose items include tool calls
+    (e.g. ``file_search_call``, ``mcp_call``/``mcp_tool_call``). We log the type
+    of each so we can see, per question, whether RAG (file_search) was invoked
+    when it wasn't needed.
+    """
+    output = getattr(response, "output", None)
+    if not output:
+        return
+    types = []
+    for item in output:
+        item_type = getattr(item, "type", None) or (
+            item.get("type") if isinstance(item, dict) else None
+        )
+        if item_type and item_type != "message":
+            types.append(item_type)
+    logger.info(f"Tool calls this turn: {types or 'none'}")
 
-=== THEN WRITE THE FINAL ANSWER ===
-After the reasoning section, write "Answer:" followed by 2-3 sentences maximum
-that state: yes/no, the deadline and days remaining, and (if opened) the
-restocking fee percentage, fee amount, and refund. No step-by-step instructions,
-contact info, or warnings unless specifically asked.
-
-For non-return questions, skip the reasoning section and just answer directly and
-concisely (2-3 sentences), always giving a final answer after using tools."""
 
 def _strip_special_tokens(text: str) -> str:
     """Remove chat-template special tokens that can leak into the output.
@@ -80,22 +65,6 @@ def _strip_special_tokens(text: str) -> str:
     tokens, or trailing IDs) that should never be shown to the customer.
     """
     return re.sub(r"<\|[^|]*\|>", "", text).strip()
-
-
-def _extract_final_answer(text: str) -> str:
-    """Return only the customer-facing answer, dropping any 'Reasoning:' section.
-
-    The model is prompted to think under a 'Reasoning:' heading and then write
-    the reply under 'Answer:'. We show only the text after the last 'Answer:'.
-    If no such heading is present (e.g. non-return questions), return the text
-    unchanged. Any leaked special tokens are stripped from the result.
-    """
-    marker = "answer:"
-    lower = text.lower()
-    idx = lower.rfind(marker)
-    if idx != -1:
-        text = text[idx + len(marker):]
-    return _strip_special_tokens(text)
 
 
 # Helpers to handle model items that may be typed objects or raw tuples
@@ -226,23 +195,31 @@ def chat():
             "server_url": MCP_SERVER_URL,
         })
         
-        # Create response using OGX
+        # Create response using OGX.
+        # Each question needs one tool call (check_return_eligibility, get_order,
+        # or file_search); the cap leaves a little headroom while avoiding wasted
+        # model passes on CPU. Cap output tokens so answers stay short —
+        # generation length is the main latency driver on the CPU runtime.
         response = client.with_options(timeout=600.0).responses.create(
             model=MODEL_ID,
             input=user_message,
             stream=False,
-            max_tool_calls=10,
+            max_tool_calls=3,
+            max_output_tokens=250,
             instructions=INSTRUCTIONS,
             tools=tools,
         )
         
+        # Log which tools the model actually invoked, so we can spot unnecessary
+        # RAG (file_search) calls on questions that don't need policy lookup.
+        _log_tool_calls(response)
+
         # Extract response text
         bot_response = response.output_text if hasattr(response, 'output_text') else str(response)
 
-        # The model is instructed to think step by step under a "Reasoning:"
-        # heading and then give the customer-facing reply under "Answer:". Show
-        # only the final answer in the UI, dropping the internal reasoning.
-        bot_response = _extract_final_answer(bot_response)
+        # Strip any chat-template special tokens (e.g. <|...|>) that can leak
+        # into the model output before showing it to the customer.
+        bot_response = _strip_special_tokens(bot_response)
 
         return jsonify({
             'response': bot_response,

@@ -678,8 +678,9 @@
         // Initialize
         checkStatus();
         loadUploadedFiles();
-        setInterval(checkStatus, 30000); // Check status every 30 seconds
-        setInterval(loadUploadedFiles, 30000); // Refresh files list every 30 seconds
+        // Poll status periodically. The uploaded-files list changes only on
+        // upload (refreshed there), so it is not polled on a timer.
+        setInterval(checkStatus, 60000); // Check status every 60 seconds
 
         // Send message on Enter key
         messageInput.addEventListener('keypress', (e) => {
