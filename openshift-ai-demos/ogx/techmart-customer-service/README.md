@@ -122,7 +122,7 @@ export REGISTRY_USER=your-quay-username
 
 # Optional: export CONTAINER_REGISTRY=quay.io (default)
 
-sh ogx-demos/techmart-customer-service-demo/scripts/build-and-push-all.sh
+sh ogx/techmart-customer-service/scripts/build-and-push-all.sh
 ```
 
 > **Note:** If your images are stored in a private registry, configure an image pull secret in the `ogx-sandbox` namespace so OpenShift can pull them.
@@ -139,17 +139,17 @@ Choose one of the following deployment methods.
 
 ```bash
 # Deploy all demo components
-bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh deploy --all
+bash ogx/techmart-customer-service/scripts/manage-resources.sh deploy --all
 ```
 
 Additional commands:
 
 ```bash
 # Interactively select which resources to deploy
-bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh deploy
+bash ogx/techmart-customer-service/scripts/manage-resources.sh deploy
 
 # Delete all deployed resources
-bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh delete --all
+bash ogx/techmart-customer-service/scripts/manage-resources.sh delete --all
 ```
 
 > **Note:** `manage-resources.sh` assumes the model is already running. Complete [Step 2](#step-2--deploy-the-model) before using it.
@@ -164,7 +164,7 @@ Use this path to deploy each component individually and better understand how th
 OGX uses this PostgreSQL instance to store its internal state, including vector store metadata, conversation history, and uploaded file records. It also creates the `postgres-credentials` Secret that the OGX server reads at startup.
 
 ```bash
-oc create -f ogx-demos/shared/postgres.yaml
+oc create -f ogx/shared/ogx-metadata-postgres.yaml
 oc wait --for=condition=ready pod -l app=postgres --timeout=300s
 ```
 
@@ -172,7 +172,7 @@ oc wait --for=condition=ready pod -l app=postgres --timeout=300s
 This is the OGX orchestration layer that coordinates RAG, MCP tools, and model inference.
 
 ```bash
-oc create -f ogx-demos/techmart-customer-service-demo/deployments/ogx-server.yaml
+oc create -f ogx/techmart-customer-service/deployments/ogx-server.yaml
 oc wait --for=condition=ready pod -l app=ogx --timeout=300s
 ```
 
@@ -180,15 +180,29 @@ oc wait --for=condition=ready pod -l app=ogx --timeout=300s
 This PostgreSQL instance stores the sample order data that the MCP server exposes as tools.
 
 ```bash
-oc apply -f ogx-demos/techmart-customer-service-demo/deployments/postgresql-mcp.yaml
+oc apply -f ogx/techmart-customer-service/deployments/postgresql.yaml
 oc wait --for=condition=ready pod -l app=techmart-postgresql --timeout=300s
 ```
 
 ##### 4.4: Initialize the database
-This Job creates the schema and loads the sample orders
+This Job creates the schema and loads the sample orders. It reads both from
+ConfigMaps generated from the files in `db-init/` and `data/`, so create those
+first.
 
 ```bash
-oc apply -f ogx-demos/techmart-customer-service-demo/deployments/db-init-job.yaml
+DEMO=ogx/techmart-customer-service
+
+# Generate the ConfigMaps the Job mounts
+oc create configmap techmart-db-scripts \
+  --from-file=$DEMO/db-init/schema.sql \
+  --from-file=$DEMO/db-init/init_db.py \
+  --dry-run=client -o yaml | oc apply -f -
+
+oc create configmap techmart-db-data \
+  --from-file=$DEMO/data/orders.csv \
+  --dry-run=client -o yaml | oc apply -f -
+
+oc apply -f $DEMO/deployments/db-init-job.yaml
 oc wait --for=condition=complete job/techmart-db-init --timeout=300s
 
 # (Optional) confirm the data loaded
@@ -200,7 +214,7 @@ oc exec -it deployment/techmart-postgresql -- \
 This exposes the order database through MCP tools that OGX can invoke.
 
 ```bash
-oc apply -f ogx-demos/techmart-customer-service-demo/deployments/techmart-mcp-server.yaml
+oc apply -f ogx/techmart-customer-service/deployments/techmart-mcp-server.yaml
 oc wait --for=condition=ready pod -l app=techmart-mcp-server --timeout=300s
 ```
 
@@ -208,7 +222,7 @@ oc wait --for=condition=ready pod -l app=techmart-mcp-server --timeout=300s
 This is the Flask chat interface users interact with.
 
 ```bash
-oc apply -f ogx-demos/techmart-customer-service-demo/deployments/techmart-ui.yaml
+oc apply -f ogx/techmart-customer-service/deployments/techmart-ui.yaml
 oc wait --for=condition=ready pod -l app=techmart-ui --timeout=300s
 ```
 
@@ -224,7 +238,7 @@ The **TechMart Customer Service** chat interface includes a file upload panel. U
 
 
 ```text
-ogx-demos/techmart-customer-service-demo/data/return-policy.txt
+ogx/techmart-customer-service/data/return-policy.txt
 ```
 This document contains the sample return policy and shipping information.
 
@@ -394,8 +408,12 @@ New orders are available immediately. The MCP server reads directly from the dat
 >
 > ```bash
 > oc delete job techmart-db-init
-> oc apply -f ogx-demos/techmart-customer-service-demo/deployments/db-init-job.yaml
+> oc apply -f ogx/techmart-customer-service/deployments/db-init-job.yaml
 > ```
+>
+> If you edited `data/orders.csv`, regenerate the `techmart-db-data` ConfigMap
+> first (see [Step 4.4](#44-initialize-the-database)) — the Job loads what is in
+> the ConfigMap, not what is on disk.
 
 ---
 

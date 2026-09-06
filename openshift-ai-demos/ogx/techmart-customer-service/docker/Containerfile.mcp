@@ -18,9 +18,9 @@ COPY requirements.mcp.txt .
 #   --extra-index-url https://pypi.org/simple
 RUN pip install --no-cache-dir -r requirements.mcp.txt
 
-# Copy application files
-COPY scripts/orders_mcp_server.py .
-COPY data/orders.csv .
+# Copy application files. The server reads orders from PostgreSQL, not from
+# data/orders.csv — that file is seed data for the db-init job only.
+COPY mcp-server/server.py .
 
 # Expose MCP server port
 EXPOSE 9001
@@ -28,4 +28,4 @@ EXPOSE 9001
 # Run the MCP server with python directly — avoids the fastmcp CLI which
 # pulls in joserfc/cryptography and fails on python:3.12-slim due to an
 # OpenSSL symbol mismatch (EVP_idea_ecb, version OPENSSL_3.0.0).
-CMD ["python", "orders_mcp_server.py"]
+CMD ["python", "server.py"]

@@ -151,7 +151,7 @@ if [ ${FAIL_COUNT} -eq 0 ]; then
     echo ""
     echo -e "${YELLOW}Next steps:${NC}"
     echo -e "  1. Update image references in deployment YAMLs if needed"
-    echo -e "  2. Deploy to OpenShift: ./deploy-with-postgresql.sh"
+    echo -e "  2. Deploy to OpenShift: bash scripts/manage-resources.sh deploy --all"
     echo ""
     exit 0
 else

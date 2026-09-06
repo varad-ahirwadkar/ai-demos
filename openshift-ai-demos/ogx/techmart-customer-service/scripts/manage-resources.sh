@@ -3,10 +3,10 @@
 #
 # Run from the openshift-ai-demos/ directory:
 #
-#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh deploy
-#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh delete
-#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh deploy --all
-#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh delete --all
+#   bash ogx/techmart-customer-service/scripts/manage-resources.sh deploy
+#   bash ogx/techmart-customer-service/scripts/manage-resources.sh delete
+#   bash ogx/techmart-customer-service/scripts/manage-resources.sh deploy --all
+#   bash ogx/techmart-customer-service/scripts/manage-resources.sh delete --all
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -32,9 +32,9 @@ preflight() {
         error "Not logged in to OpenShift. Run 'oc login' first."
         exit 1
     fi
-    if [[ ! -f "ogx-demos/techmart-customer-service-demo/deployments/techmart-ui.yaml" ]]; then
+    if [[ ! -f "ogx/techmart-customer-service/deployments/techmart-ui.yaml" ]]; then
         error "Script must be run from the openshift-ai-demos/ directory."
-        error "Example: bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh ${ACTION}"
+        error "Example: bash ogx/techmart-customer-service/scripts/manage-resources.sh ${ACTION}"
         exit 1
     fi
     info "Cluster : $(oc whoami --show-server 2>/dev/null)"
@@ -46,12 +46,32 @@ preflight() {
 # Resource catalogue — parallel indexed arrays (works on bash 3+)
 # Index i in every array describes the same resource.
 # ---------------------------------------------------------------------------
-DEMO_DIR="ogx-demos/techmart-customer-service-demo"
+DEMO_DIR="ogx/techmart-customer-service"
 DEPLOY_DIR="${DEMO_DIR}/deployments"
-SHARED_DIR="ogx-demos/shared"
+SHARED_DIR="ogx/shared"
 
-# pgvector is intentionally excluded — OGX uses inline::faiss + shared postgres.
-# See deployments/pgvector.yaml for the manifest if needed.
+# ---------------------------------------------------------------------------
+# The DB init job mounts its schema, loader, and seed data from ConfigMaps.
+# Those are generated from the files on disk so there is exactly one copy of
+# each — see db-init/ and data/orders.csv.
+# ---------------------------------------------------------------------------
+# The caller evals this with '|| true', so failures must exit explicitly —
+# the Job cannot run without these ConfigMaps.
+create_db_init_configmaps() {
+    info "Generating DB init ConfigMaps from files on disk..."
+    oc create configmap techmart-db-scripts \
+        --from-file="${DEMO_DIR}/db-init/schema.sql" \
+        --from-file="${DEMO_DIR}/db-init/init_db.py" \
+        --dry-run=client -o yaml | oc apply -f - || {
+            error "Failed to create ConfigMap techmart-db-scripts"; exit 1; }
+    oc create configmap techmart-db-data \
+        --from-file="${DEMO_DIR}/data/orders.csv" \
+        --dry-run=client -o yaml | oc apply -f - || {
+            error "Failed to create ConfigMap techmart-db-data"; exit 1; }
+    oc label configmap techmart-db-scripts techmart-db-data \
+        app=techmart component=db-init --overwrite >/dev/null
+}
+
 RES_KEYS=(
     ogx_postgres
     ogx_server
@@ -71,9 +91,9 @@ RES_LABELS=(
 )
 
 RES_YAMLS=(
-    "${SHARED_DIR}/postgres.yaml"
+    "${SHARED_DIR}/ogx-metadata-postgres.yaml"
     "${DEPLOY_DIR}/ogx-server.yaml"
-    "${DEPLOY_DIR}/postgresql-mcp.yaml"
+    "${DEPLOY_DIR}/postgresql.yaml"
     "${DEPLOY_DIR}/db-init-job.yaml"
     "${DEPLOY_DIR}/techmart-mcp-server.yaml"
     "${DEPLOY_DIR}/techmart-ui.yaml"
@@ -94,7 +114,7 @@ RES_PRE_DEPLOY=(
     ""
     ""
     ""
-    "oc delete job techmart-db-init --ignore-not-found=true"
+    "oc delete job techmart-db-init --ignore-not-found=true; create_db_init_configmaps"
     ""
     ""
 )
