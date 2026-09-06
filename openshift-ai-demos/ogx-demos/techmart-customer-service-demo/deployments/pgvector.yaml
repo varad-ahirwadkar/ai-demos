@@ -1,7 +1,7 @@
 # NOTE: This manifest is NOT used in the current demo deployment.
 # OGX uses inline::faiss for vector storage and the shared postgres (ogx-demos/shared/postgres.yaml)
 # for all other internal state. pgvector is kept here for reference only.
-# Do not include this in the manage-demo.sh catalogue or deploy it alongside the demo.
+# Do not include this in the manage-resources.sh catalogue or deploy it alongside the demo.
 
 apiVersion: v1
 kind: PersistentVolumeClaim

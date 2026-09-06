@@ -1,12 +1,12 @@
 #!/bin/bash
-# manage-demo.sh — Deploy or delete TechMart OGX demo resources
+# manage-resources.sh — Deploy or delete TechMart OGX demo resources
 #
 # Run from the openshift-ai-demos/ directory:
 #
-#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh deploy
-#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh delete
-#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh deploy --all
-#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh delete --all
+#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh deploy
+#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh delete
+#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh deploy --all
+#   bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh delete --all
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -34,7 +34,7 @@ preflight() {
     fi
     if [[ ! -f "ogx-demos/techmart-customer-service-demo/deployments/techmart-ui.yaml" ]]; then
         error "Script must be run from the openshift-ai-demos/ directory."
-        error "Example: bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh ${ACTION}"
+        error "Example: bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh ${ACTION}"
         exit 1
     fi
     info "Cluster : $(oc whoami --show-server 2>/dev/null)"
@@ -268,10 +268,10 @@ FLAG="${2:-}"
 
 if [[ -z "$ACTION" || ( "$ACTION" != "deploy" && "$ACTION" != "delete" ) ]]; then
     printf "${BOLD}Usage (run from openshift-ai-demos/):${NC}\n"
-    echo "  bash ${DEMO_DIR}/scripts/manage-demo.sh deploy           # interactive"
-    echo "  bash ${DEMO_DIR}/scripts/manage-demo.sh delete           # interactive"
-    echo "  bash ${DEMO_DIR}/scripts/manage-demo.sh deploy --all     # deploy everything"
-    echo "  bash ${DEMO_DIR}/scripts/manage-demo.sh delete --all     # delete everything"
+    echo "  bash ${DEMO_DIR}/scripts/manage-resources.sh deploy           # interactive"
+    echo "  bash ${DEMO_DIR}/scripts/manage-resources.sh delete           # interactive"
+    echo "  bash ${DEMO_DIR}/scripts/manage-resources.sh deploy --all     # deploy everything"
+    echo "  bash ${DEMO_DIR}/scripts/manage-resources.sh delete --all     # delete everything"
     exit 1
 fi
 

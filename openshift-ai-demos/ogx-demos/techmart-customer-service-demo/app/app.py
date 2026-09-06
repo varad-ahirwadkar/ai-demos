@@ -25,46 +25,64 @@ OGX_URL = os.environ.get('OGX_URL', 'http://localhost:8321')
 MCP_SERVER_URL = os.environ.get('MCP_SERVER_URL', 'http://localhost:9001/sse')
 
 # Universal instruction for all scenarios
-INSTRUCTIONS = """You are a TechMart customer service assistant.
+INSTRUCTIONS = """You are a TechMart customer service assistant. Today is April 21, 2024. Be friendly, natural, and concise, and answer only what the question asks. Never show your reasoning.
 
-TOOLS — pick the right one, never do the math yourself:
-- Return eligibility / refund ("Can I return ORD-...?", "Am I eligible?", "What's my refund?"): call check_return_eligibility. It returns eligible, deadline, days_remaining, restocking_fee_percent, restocking_fee_amount, and refund_amount already computed. Report those exact values — never recompute dates, fees, or refunds.
+TOOLS — pick the right one, and never do the math yourself:
+- Return eligibility / refund ("Can I return ORD-...?", "Am I eligible?", "What's my refund?"): you MUST call check_return_eligibility and base your answer entirely on it. It returns eligible, deadline, days_remaining, return_window_days, restocking_fee_percent, restocking_fee_amount, and refund_amount already computed. Use those exact values — never decide eligibility yourself and never recompute dates, fees, or refunds. Do NOT use get_order for these questions.
 - Other order questions (status, tracking, delivery date, price, what was ordered): call get_order.
-- Policy questions (shipping, returns policy, warranty, how-to): call file_search and answer ONLY from the retrieved text, quoting its exact numbers.
-- Never invent days, fees, dates, or prices. If a tool didn't return it, say you don't have it.
+- Policy questions — anything about shipping times or costs, the return/refund policy, fees, warranty, or how to return an item: you MUST call file_search FIRST, then answer ONLY from the retrieved text, quoting its exact numbers. Never answer a policy question from memory, and do NOT say you don't have the information unless file_search actually returned nothing.
+- Never invent days, fees, dates, or prices.
 
-ANSWERING: reply in 1-2 short sentences, no reasoning shown.
-- If check_return_eligibility returns eligible=false, say it is NOT returnable and give the reason (window closed on <deadline>, <days_since_deadline> days ago), then stop.
-- If eligible=true, state the deadline and days_remaining, and if there is a restocking fee, the fee % and the refund_amount."""
+ANSWER FORMATS (fill the <values> from the tool output):
+- Return eligible=true: "The order <id> is eligible for return. You have <days_remaining> days remaining in the return window, and the estimated refund amount is $<refund_amount>." If restocking_fee_percent > 0, add: " Additionally, there is a restocking fee of <restocking_fee_percent>% ($<restocking_fee_amount>) and you can return the item within <return_window_days> days of delivery."
+- Return eligible=false: "Unfortunately, order <id> is not eligible for return. The return window expired <days_since_deadline> days ago, and you are outside the allowed timeframe."
+- Order status/details: state the status, delivery date, and (if relevant) whether the package was opened, in 1-2 natural sentences.
+- Policy questions: answer from the retrieved text in a natural sentence or a short bulleted list, keeping the policy's exact numbers."""
+
+def _item_attr(item, key):
+    """Read an attribute from a Responses API output item (object or dict)."""
+    if isinstance(item, dict):
+        return item.get(key)
+    return getattr(item, key, None)
+
 
 def _log_tool_calls(response) -> None:
-    """Log the tool-call items the model produced, to detect unnecessary calls.
+    """Log the tool-call items the model produced, to detect misrouted calls.
 
     The Responses API returns an ``output`` list whose items include tool calls
-    (e.g. ``file_search_call``, ``mcp_call``/``mcp_tool_call``). We log the type
-    of each so we can see, per question, whether RAG (file_search) was invoked
-    when it wasn't needed.
+    (e.g. ``file_search_call``, ``mcp_call``/``mcp_tool_call``,
+    ``mcp_list_tools``). For MCP calls we also log the specific tool name (e.g.
+    ``get_order`` vs ``check_return_eligibility``) so we can see, per question,
+    exactly which tool the model routed to — the item type alone hides that.
     """
     output = getattr(response, "output", None)
     if not output:
         return
-    types = []
+    calls = []
     for item in output:
-        item_type = getattr(item, "type", None) or (
-            item.get("type") if isinstance(item, dict) else None
-        )
-        if item_type and item_type != "message":
-            types.append(item_type)
-    logger.info(f"Tool calls this turn: {types or 'none'}")
+        item_type = _item_attr(item, "type")
+        if not item_type or item_type == "message":
+            continue
+        if item_type in ("mcp_call", "mcp_tool_call"):
+            name = _item_attr(item, "name")
+            calls.append(f"{item_type}:{name}" if name else item_type)
+        else:
+            calls.append(item_type)
+    logger.info(f"Tool calls this turn: {calls or 'none'}")
 
 
 def _strip_special_tokens(text: str) -> str:
     """Remove chat-template special tokens that can leak into the output.
 
     Some models emit delimiter tokens such as ``<|...|>`` (channel markers, stop
-    tokens, or trailing IDs) that should never be shown to the customer.
+    tokens, or trailing IDs) that should never be shown to the customer. We strip
+    both complete ``<|...|>`` tokens anywhere in the text and an unterminated
+    ``<|...`` at the very end, which happens when generation is cut off
+    (e.g. hitting max_output_tokens) mid-token.
     """
-    return re.sub(r"<\|[^|]*\|>", "", text).strip()
+    text = re.sub(r"<\|[^|]*\|>", "", text)   # complete tokens anywhere
+    text = re.sub(r"<\|[^|]*$", "", text)      # unterminated token at the end
+    return text.strip()
 
 
 # Helpers to handle model items that may be typed objects or raw tuples
@@ -157,6 +175,27 @@ def get_or_create_vector_store():
         logger.error(f"❌ Error with vector store: {e}")
         return None
 
+def reset_vector_store():
+    """Delete the existing policy vector store so the next upload re-indexes cleanly.
+
+    Uploads rebuild the store from scratch: this removes the current
+    ``techmart_policy_store`` (and its indexed chunks) and clears the cached ID,
+    so ``get_or_create_vector_store`` creates a fresh, empty store for the new
+    file. Without this, re-uploading an edited policy would leave the previous
+    version's chunks in the store and retrieval could return stale numbers.
+    """
+    global VECTOR_STORE_ID
+    if not client:
+        return
+    try:
+        for vs in client.vector_stores.list():
+            if vs.name == "techmart_policy_store":
+                client.vector_stores.delete(vector_store_id=vs.id)
+                logger.info(f"🗑️  Deleted existing vector store for clean re-index: {vs.id}")
+        VECTOR_STORE_ID = None
+    except Exception as e:
+        logger.warning(f"Could not delete existing vector store (continuing): {e}")
+
 @app.route('/')
 def index():
     """Render the main chat interface"""
@@ -221,6 +260,16 @@ def chat():
         # into the model output before showing it to the customer.
         bot_response = _strip_special_tokens(bot_response)
 
+        # If the model produced no usable text (e.g. it exhausted its tool-call
+        # budget or emitted only tokens we stripped), degrade to a readable
+        # message instead of showing an empty chat bubble.
+        if not bot_response:
+            logger.warning("Empty model response after processing; returning fallback message")
+            bot_response = (
+                "Sorry, I wasn't able to generate a response for that. "
+                "Please try rephrasing your question."
+            )
+
         return jsonify({
             'response': bot_response,
             'timestamp': datetime.now().isoformat()
@@ -242,7 +291,11 @@ def upload_rag_document():
             return jsonify({'error': 'No file selected'}), 400
         
         logger.info(f"Uploading RAG document: {file.filename}")
-        
+
+        # Rebuild the store from scratch so this upload fully replaces any
+        # previous document version — no stale chunks left behind to retrieve.
+        reset_vector_store()
+
         # Get or create vector store
         vector_store_id = get_or_create_vector_store()
         if not vector_store_id:

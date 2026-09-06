@@ -134,25 +134,25 @@ Choose one of the following deployment methods.
 #### Option A: Quick start (recommended)
 
 
-`manage-demo.sh` automates the deployment of all demo components, applying resources in the required order and waiting for each component to become ready.
+`manage-resources.sh` automates the deployment of all demo components, applying resources in the required order and waiting for each component to become ready.
 
 
 ```bash
 # Deploy all demo components
-bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh deploy --all
+bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh deploy --all
 ```
 
 Additional commands:
 
 ```bash
 # Interactively select which resources to deploy
-bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh deploy
+bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh deploy
 
 # Delete all deployed resources
-bash ogx-demos/techmart-customer-service-demo/scripts/manage-demo.sh delete --all
+bash ogx-demos/techmart-customer-service-demo/scripts/manage-resources.sh delete --all
 ```
 
-> **Note:** `manage-demo.sh` assumes the model is already running. Complete [Step 2](#step-2--deploy-the-model) before using it.
+> **Note:** `manage-resources.sh` assumes the model is already running. Complete [Step 2](#step-2--deploy-the-model) before using it.
 
 After the deployment completes, continue to [Step 5](#step-5--open-the-ui-and-upload-the-policy-document).
 
@@ -276,10 +276,8 @@ The status of order ORD-2024-001 is "Delivered". The order was delivered on Marc
 > Can I return order ORD-2024-001?
 
 **How it works**
-- Retrieves the relevant return policy from `return-policy.txt` using RAG.
-- Invokes the `get_order()` MCP tool to retrieve the order details, including the delivery date, product category, and opened status.
-- Applies the return policy to the order data to determine whether the item is eligible for return.
-- Generates a response that combines information from both sources.
+- Invokes the `check_return_eligibility()` MCP tool, which looks up the order and deterministically applies the return policy — computing the return deadline, whether the window is still open, the restocking fee, and the refund amount.
+- Generates a natural-language response from the tool's computed values, so the dates and amounts are always exact.
 
 **Expected response:**
 ```
@@ -294,10 +292,8 @@ Unfortunately, order ORD-2024-001 is not eligible for return. The return window 
 
 **How it works**
 
-- Retrieves the relevant return policy from `return-policy.txt` using RAG.
-- Invokes the `get_order()` MCP tool to retrieve the order details, including the delivery date, product category, and opened status.
-- Applies the return policy to the order data to determine whether the item is eligible for return.
-- Generates a response that combines information from both sources.
+- Invokes the `check_return_eligibility()` MCP tool, which looks up the order and deterministically applies the return policy — computing the return deadline, days remaining, the restocking fee, and the refund amount.
+- Generates a natural-language response from the tool's computed values, so the dates and amounts are always exact.
 
 **Expected response:**
 ```
