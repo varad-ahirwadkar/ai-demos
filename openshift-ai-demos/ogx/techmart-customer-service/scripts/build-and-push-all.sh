@@ -6,6 +6,11 @@
 # Note: We don't use 'set -e' here because we want to continue building
 # all images even if one fails, and report the summary at the end
 
+# Resolve the demo root from this script's own location so the script works
+# from any working directory. Uses $0 rather than BASH_SOURCE so it behaves
+# the same whether invoked as 'bash ...' or 'sh ...'.
+DEMO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -115,7 +120,10 @@ FAIL_COUNT=0
 
 build_image() {
     local name=$1; local dockerfile=$2; local image=$3
-    if build_and_push "${name}" "${dockerfile}" "." "${image}"; then
+    # Containerfile paths and the build context are both anchored to the demo
+    # root, so COPY paths inside the Containerfiles resolve the same way no
+    # matter where the script is invoked from.
+    if build_and_push "${name}" "${DEMO_DIR}/${dockerfile}" "${DEMO_DIR}" "${image}"; then
         ((SUCCESS_COUNT++))
     else
         ((FAIL_COUNT++))
