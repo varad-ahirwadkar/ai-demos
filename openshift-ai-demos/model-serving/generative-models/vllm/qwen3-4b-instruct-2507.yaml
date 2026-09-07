@@ -34,5 +34,5 @@ spec:
           cpu: "32"
           memory: 40Gi
       runtime: vllm-cpu-runtime
-      storageUri: pvc://qwen3-4b-instruct-2507-pvc/qwen3-4b-instruct-2507
+      storageUri: hf://Qwen/Qwen3-4B-Instruct-2507
     timeout: 900

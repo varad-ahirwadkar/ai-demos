@@ -66,7 +66,7 @@ Explore Responsible AI workflows, LLM safety evaluation, and real-time guardrail
 ---
 
 ### OGX
-Build assistants on OGX, combining RAG, MCP tool calling, and model inference behind a single OpenAI-compatible API.
+Build AI applications with model inference, RAG, tool calling, and agentic workflows through a single OpenAI-compatible API.
 
 [→ Explore OGX](ogx/)
 
