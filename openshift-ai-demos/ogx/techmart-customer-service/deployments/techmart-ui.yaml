@@ -1,3 +1,16 @@
+# The Secret comes first: 'oc apply -f' creates documents in file order, and
+# the Deployment's pod fails with CreateContainerConfigError until the Secret
+# it reads SECRET_KEY from exists.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: techmart-ui-secret
+type: Opaque
+stringData:
+  # Generate a strong random value before deploying:
+  #   python -c "import secrets; print(secrets.token_hex(32))"
+  secret-key: "CHANGE_ME"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -94,13 +107,3 @@ spec:
   tls:
     termination: edge
     insecureEdgeTerminationPolicy: Redirect
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: techmart-ui-secret
-type: Opaque
-stringData:
-  # Generate a strong random value before deploying:
-  #   python -c "import secrets; print(secrets.token_hex(32))"
-  secret-key: "CHANGE_ME"

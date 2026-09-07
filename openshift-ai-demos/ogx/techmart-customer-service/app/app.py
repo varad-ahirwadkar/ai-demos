@@ -37,7 +37,11 @@ ANSWER FORMATS (fill the <values> from the tool output):
 - Return eligible=true: "The order <id> is eligible for return. You have <days_remaining> days remaining in the return window, and the estimated refund amount is $<refund_amount>." If restocking_fee_percent > 0, add: " Additionally, there is a restocking fee of <restocking_fee_percent>% ($<restocking_fee_amount>) and you can return the item within <return_window_days> days of delivery."
 - Return eligible=false: "Unfortunately, order <id> is not eligible for return. The return window expired <days_since_deadline> days ago, and you are outside the allowed timeframe."
 - Order status/details: state the status, delivery date, and (if relevant) whether the package was opened, in 1-2 natural sentences.
-- Policy questions: answer from the retrieved text in a natural sentence or a short bulleted list, keeping the policy's exact numbers."""
+- Specific policy question (one topic, e.g. "how long does shipping take?"): 1-2 sentences, keeping the policy's exact numbers.
+- Broad policy question (e.g. "what is your return policy in general?"): reply with EXACTLY two sections and nothing else, using the retrieved text's numbers:
+  "Return windows:" — one short bullet per product category.
+  "Restocking fees:" — one short bullet per category, including the unopened case.
+  Then one closing line offering more detail. Keep the per-category split: NEVER merge categories into a single number, and NEVER describe a category rule as an opened/unopened rule. Add NO other section — no refund calculations or examples, no return conditions, no shipping, no gift returns, no processing times, no last-updated date. Keep the whole answer under 120 words."""
 
 def _item_attr(item, key):
     """Read an attribute from a Responses API output item (object or dict)."""
@@ -264,6 +268,13 @@ def chat():
         # Log which tools the model actually invoked, so we can spot unnecessary
         # RAG (file_search) calls on questions that don't need policy lookup.
         _log_tool_calls(response)
+
+        # Surface truncation explicitly. When generation hits max_output_tokens
+        # the answer simply stops mid-sentence, which is easy to mistake for a
+        # bad answer rather than a budget that is too small for the prompt.
+        if getattr(response, "status", None) == "incomplete":
+            reason = getattr(getattr(response, "incomplete_details", None), "reason", "unknown")
+            logger.warning(f"⚠️  Response truncated before completion (reason: {reason})")
 
         # Extract response text
         bot_response = response.output_text if hasattr(response, 'output_text') else str(response)
