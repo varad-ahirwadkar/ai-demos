@@ -155,37 +155,6 @@ def get_orders_resource() -> str:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def reload_orders() -> dict[str, Any]:
-    """
-    ADMINISTRATIVE TOOL — Verify database connectivity and return current order count.
-
-    Orders are always read directly from PostgreSQL on every request, so there
-    is no in-memory cache to refresh. This tool exists to let the AI confirm
-    that the database is reachable and report how many orders are present.
-
-    USE THIS TOOL when:
-    - Asked to reload, refresh, or sync orders.
-    - The user wants to confirm the database has the latest data.
-
-    DO NOT USE THIS TOOL for:
-    - Looking up order details (use get_order instead).
-    - Any customer-facing request.
-
-    Returns:
-        success (bool): True if the database query completed without error.
-        orders_count (int): Number of orders currently in the database.
-        message (str): Human-readable status summary.
-    """
-    orders = _fetch_all_orders()
-    success = len(orders) > 0
-    return {
-        "success": success,
-        "message": f"Database is reachable. {len(orders)} orders available." if success else "No orders returned. Check database connectivity.",
-        "orders_count": len(orders),
-    }
-
-
-@mcp.tool()
 def get_order(order_id: str) -> dict[str, Any]:
     """
     Look up a single order by its order ID and return its raw details.
@@ -346,5 +315,5 @@ def check_return_eligibility(order_id: str) -> dict[str, Any]:
 if __name__ == "__main__":
     logger.info("🚀 Orders MCP Server starting...")
     logger.info(f"🌐 Server will run on http://0.0.0.0:{PORT}")
-    logger.info("🔧 Available tools: reload_orders, get_order, check_return_eligibility")
+    logger.info("🔧 Available tools: get_order, check_return_eligibility")
     mcp.run(transport="sse")

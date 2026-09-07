@@ -37,4 +37,3 @@ A customer service assistant for a fictional electronics retailer, combining RAG
 
 - [OGX Documentation](https://ogx-ai.github.io/)
 - [Red Hat OpenShift AI Docs](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed)
-- [Model Context Protocol](https://modelcontextprotocol.io/)

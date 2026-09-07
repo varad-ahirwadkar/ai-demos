@@ -36,10 +36,6 @@ AI Response (combines policy info + order data)
 
 Complete the [OGX prerequisites](../README.md#prerequisites).
 
-### Demo-specific requirements
-
-The model is pulled directly from Hugging Face at runtime, so no S3 secret is required.
-
 ### Resource summary
 
 Approximate resource requests for the demo components:
@@ -384,7 +380,7 @@ that supplies the environment. The most commonly customized settings are:
 | `VLLM_URL` | `http://qwen3-4b-predictor.ogx-sandbox.svc.cluster.local:8080/v1` | In-cluster endpoint for the Qwen3-4B model. Update if the model name or namespace changes. |
 | `VLLM_MAX_TOKENS` | `1024` | Maximum number of tokens generated in a response. |
 | `ENABLE_FAISS` | `faiss` | Enables the inline FAISS vector store used for RAG. |
-| `ENABLE_SENTENCE_TRANSFORMERS` | `true` | Uses in-process sentence-transformer embeddings. |
+| `ENABLE_SENTENCE_TRANSFORMERS` | `true` | Uses inline sentence-transformer embeddings. |
 | `POSTGRES_*` | `postgres-credentials` Secret | Configures the PostgreSQL connection used by OGX. |
 | `tool_runtime` providers | `file-search`, `model-context-protocol` | Enables RAG and MCP tool calling. |
 ---
